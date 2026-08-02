@@ -37,6 +37,21 @@ jobs:
       - run: npm run db:generate
       - run: npm run db:validate
       - run: npm run db:migrate:deploy
+      - name: Validate APM-004 upgrade migration
+        shell: bash
+        run: |
+          export PGPASSWORD=apm
+          createdb -h localhost -U apm apm_upgrade
+          upgrade_root="$RUNNER_TEMP/apm-upgrade-$GITHUB_RUN_ID"
+          mkdir -p "$upgrade_root/prisma/migrations"
+          cp prisma/schema.prisma "$upgrade_root/prisma/schema.prisma"
+          cp -R prisma/migrations/20260802000000_init "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802010000_apm_002_authorization "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802020000_apm_003_audit_service "$upgrade_root/prisma/migrations/"
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade?schema=public" \
+            npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade?schema=public" \
+            npm run db:migrate:deploy
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build

@@ -63,8 +63,30 @@ intersected server-side with the caller's `ALL`, `DEPARTMENT`, `PROJECT`, or `SE
 Database integration tests are enabled with `RUN_DATABASE_INTEGRATION=1` after applying migrations
 to a disposable PostgreSQL database. GitHub Actions runs this path automatically.
 
+## APM-004 configuration and durable jobs
+
+APM-004 adds versioned runtime settings, company capability switches, transactional Outbox events,
+and PostgreSQL-backed durable jobs. Configuration changes update the current value, append a
+revision, write the success audit, and append the Outbox event in one transaction.
+
+System endpoints:
+
+- `GET /api/configuration` requires `CONFIGURATION_READ`.
+- `PUT /api/configuration/settings/{key}` requires `CONFIGURATION_WRITE` and accepts `value`,
+  `version`, and `reason`.
+- `PUT /api/configuration/capabilities/{code}` requires `CONFIGURATION_WRITE` and accepts `enabled`,
+  `version`, and `reason`.
+- `POST /api/jobs/{jobId}/replay` requires the admin-only `JOB_REPLAY` permission, a `reason`, and a
+  job in `DEAD_LETTER` state.
+
+`runJobBatch` in `src/workers/job-runner.ts` materializes undispatched events, claims due jobs with
+`FOR UPDATE SKIP LOCKED`, and dispatches by stable job type. Handlers receive the stable
+`idempotencyKey` and must use it when they call an external side effect. Failures use capped
+exponential backoff; exhausted jobs retain all attempts and wait for an audited manual replay.
+
 ## Current scope
 
 APM-001 establishes the runtime and database tooling. APM-002 establishes authorization and the
-project-member boundary. APM-003 establishes full-system audit infrastructure. Runtime
-configuration, capability switches, Outbox, and durable jobs start with APM-004.
+project-member boundary. APM-003 establishes full-system audit infrastructure. APM-004 establishes
+runtime configuration, company capability switches, transactional Outbox, and durable jobs. File
+storage and processing begin with APM-005.
