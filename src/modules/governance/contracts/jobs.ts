@@ -16,6 +16,8 @@ export type JobExecution = {
   idempotencyKey: string;
   attemptId: string;
   attemptNumber: number;
+  maxAttempts: number;
+  isReplay: boolean;
   workerId: string;
 };
 

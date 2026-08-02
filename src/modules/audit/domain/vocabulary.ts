@@ -5,7 +5,13 @@ export const AUDIT_ACTIONS = {
   AUDIT_LOG_READ: "AUDIT_LOG_READ",
   CONFIGURATION_SETTING_CHANGED: "CONFIGURATION_SETTING_CHANGED",
   COMPANY_CAPABILITY_CHANGED: "COMPANY_CAPABILITY_CHANGED",
-  JOB_REPLAYED: "JOB_REPLAYED"
+  JOB_REPLAYED: "JOB_REPLAYED",
+  FILE_UPLOAD_STARTED: "FILE_UPLOAD_STARTED",
+  FILE_UPLOAD_COMPLETED: "FILE_UPLOAD_COMPLETED",
+  FILE_SCAN_COMPLETED: "FILE_SCAN_COMPLETED",
+  FILE_QUARANTINED: "FILE_QUARANTINED",
+  FILE_PROCESSING_FAILED: "FILE_PROCESSING_FAILED",
+  FILE_DOWNLOAD_URL_ISSUED: "FILE_DOWNLOAD_URL_ISSUED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -15,7 +21,9 @@ export const AUDIT_OBJECT_TYPES = {
   SYSTEM_SETTING: "SYSTEM_SETTING",
   COMPANY_CAPABILITY: "COMPANY_CAPABILITY",
   OUTBOX_EVENT: "OUTBOX_EVENT",
-  PERSISTENT_JOB: "PERSISTENT_JOB"
+  PERSISTENT_JOB: "PERSISTENT_JOB",
+  FILE_OBJECT: "FILE_OBJECT",
+  FILE_UPLOAD_SESSION: "FILE_UPLOAD_SESSION"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -57,6 +65,25 @@ export const SYSTEM_SETTING_AUDIT_FIELDS = ["key", "value", "valueType", "versio
 export const COMPANY_CAPABILITY_AUDIT_FIELDS = ["code", "enabled", "version"] as const;
 
 export const JOB_REPLAY_AUDIT_FIELDS = ["jobId", "jobType", "attemptNumber", "reason"] as const;
+
+export const FILE_AUDIT_FIELDS = [
+  "fileId",
+  "sessionId",
+  "projectId",
+  "status",
+  "sensitivity",
+  "mimeType",
+  "size",
+  "sha256",
+  "scanEngine",
+  "scannerVersion",
+  "scanSignature",
+  "failureCode",
+  "permission",
+  "method",
+  "path",
+  "expiresInSeconds"
+] as const;
 
 export const AUDIT_QUERY_FIELDS = [
   "objectType",
