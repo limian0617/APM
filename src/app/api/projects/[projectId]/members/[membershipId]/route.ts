@@ -2,6 +2,7 @@ import { ProjectStatus } from "@prisma/client";
 
 import { PERMISSIONS } from "@/lib/auth/permissions";
 import { authorizeProjectRequest } from "@/lib/auth/project-guard";
+import { auditContextFromRequest } from "@/modules/audit/application/context";
 import {
   endProjectMembership,
   parseIfMatchVersion,
@@ -33,11 +34,17 @@ export async function DELETE(request: Request, context: RouteContext) {
 
   try {
     const projectVersion = parseIfMatchVersion(request.headers.get("if-match"));
+    const auditContext = auditContextFromRequest(request, {
+      actorId: guard.actor.id,
+      projectId,
+      departmentId: guard.project.departmentId
+    });
     const result = await endProjectMembership({
       projectId,
       membershipId,
       actorId: guard.actor.id,
-      projectVersion
+      projectVersion,
+      auditContext
     });
     return Response.json(result);
   } catch (error) {

@@ -2,6 +2,13 @@ import { Prisma, ProjectRole, UserStatus } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { PROJECT_ROLE_VALUES, type ProjectRoleCode } from "@/lib/auth/permissions";
+import type { AuditContext } from "@/modules/audit/contracts/audit";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_OBJECT_TYPES,
+  PROJECT_MEMBER_AUDIT_FIELDS
+} from "@/modules/audit/domain/vocabulary";
+import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 
 export type AddProjectMemberInput = {
   userId: string;
@@ -87,6 +94,7 @@ export async function addProjectMember(input: {
   projectId: string;
   actorId: string;
   member: AddProjectMemberInput;
+  auditContext: AuditContext;
 }) {
   try {
     return await db.$transaction(async (transaction) => {
@@ -133,23 +141,29 @@ export async function addProjectMember(input: {
         }
       });
 
-      await transaction.auditLog.create({
-        data: {
+      const audit = await writeAudit(transaction, {
+        action: AUDIT_ACTIONS.PROJECT_MEMBER_ADDED,
+        objectType: AUDIT_OBJECT_TYPES.PROJECT_MEMBER,
+        objectId: membership.id,
+        context: {
+          ...input.auditContext,
           actorId: input.actorId,
-          action: "PROJECT_MEMBER_ADDED",
-          objectType: "PROJECT_MEMBER",
-          objectId: membership.id,
-          afterJson: {
+          projectId: input.projectId,
+          departmentId: membership.departmentId
+        },
+        after: {
+          value: {
             projectId: input.projectId,
             userId: membership.userId,
             projectRole: membership.projectRole,
-            departmentId: membership.departmentId
+            departmentId: membership.departmentId,
+            version: membership.version
           },
-          source: "API"
+          allowedFields: PROJECT_MEMBER_AUDIT_FIELDS
         }
       });
 
-      return { membership, projectVersion: input.member.projectVersion + 1 };
+      return { membership, projectVersion: input.member.projectVersion + 1, auditId: audit.id };
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -164,6 +178,7 @@ export async function endProjectMembership(input: {
   membershipId: string;
   actorId: string;
   projectVersion: number;
+  auditContext: AuditContext;
 }) {
   return db.$transaction(async (transaction) => {
     const membership = await transaction.projectMember.findFirst({
@@ -208,28 +223,44 @@ export async function endProjectMembership(input: {
       }
     });
 
-    await transaction.auditLog.create({
-      data: {
+    const audit = await writeAudit(transaction, {
+      action: AUDIT_ACTIONS.PROJECT_MEMBER_ENDED,
+      objectType: AUDIT_OBJECT_TYPES.PROJECT_MEMBER,
+      objectId: membership.id,
+      context: {
+        ...input.auditContext,
         actorId: input.actorId,
-        action: "PROJECT_MEMBER_ENDED",
-        objectType: "PROJECT_MEMBER",
-        objectId: membership.id,
-        beforeJson: {
+        projectId: membership.projectId,
+        departmentId: membership.departmentId
+      },
+      before: {
+        value: {
           projectId: membership.projectId,
           userId: membership.userId,
           projectRole: membership.projectRole,
-          leftAt: null
+          departmentId: membership.departmentId,
+          leftAt: null,
+          version: membership.version
         },
-        afterJson: {
+        allowedFields: PROJECT_MEMBER_AUDIT_FIELDS
+      },
+      after: {
+        value: {
           projectId: membership.projectId,
           userId: membership.userId,
           projectRole: membership.projectRole,
-          leftAt: leftAt.toISOString()
+          departmentId: membership.departmentId,
+          leftAt: leftAt.toISOString(),
+          version: endedMembership.version
         },
-        source: "API"
+        allowedFields: PROJECT_MEMBER_AUDIT_FIELDS
       }
     });
 
-    return { membership: endedMembership, projectVersion: input.projectVersion + 1 };
+    return {
+      membership: endedMembership,
+      projectVersion: input.projectVersion + 1,
+      auditId: audit.id
+    };
   });
 }

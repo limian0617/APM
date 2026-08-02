@@ -45,6 +45,34 @@ enum ProjectRole {
   VIEWER
 }
 
+enum AuditAction {
+  AUTHORIZATION_DENIED
+  PROJECT_MEMBER_ADDED
+  PROJECT_MEMBER_ENDED
+  AUDIT_LOG_READ
+}
+
+enum AuditObjectType {
+  PROJECT
+  PROJECT_MEMBER
+  AUDIT_LOG
+}
+
+enum AuditSource {
+  API
+  WORKER
+  SCHEDULER
+  SYSTEM
+  INTEGRATION
+  EXTERNAL_API
+}
+
+enum AuditResult {
+  SUCCESS
+  DENIED
+  FAILURE
+}
+
 model User {
   id                  String          @id @default(cuid())
   employeeNo          String          @unique @map("employee_no")
@@ -132,6 +160,7 @@ model Project {
   updatedAt    DateTime        @updatedAt @map("updated_at")
   createdBy    User            @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   members      ProjectMember[]
+  auditLogs    AuditLog[]
 
   @@index([departmentId])
   @@map("projects")
@@ -158,22 +187,33 @@ model ProjectMember {
   @@map("project_members")
 }
 
-// APM-002 records authorization denials and membership changes. APM-003 expands
-// this into the shared append-only audit service for every business domain.
 model AuditLog {
-  id         String   @id @default(cuid())
-  actorId    String?  @map("actor_id")
-  action     String
-  objectType String   @map("object_type")
-  objectId   String?  @map("object_id")
-  beforeJson Json?    @map("before_json")
-  afterJson  Json?    @map("after_json")
-  source     String
-  sourceIp   String?  @map("source_ip")
-  occurredAt DateTime @default(now()) @map("occurred_at")
-  actor      User?    @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  id             String          @id @default(cuid())
+  actorId        String?         @map("actor_id")
+  action         AuditAction
+  objectType     AuditObjectType @map("object_type")
+  objectId       String?         @map("object_id")
+  projectId      String?         @map("project_id")
+  departmentId   String?         @map("department_id")
+  requestId      String?         @map("request_id")
+  traceId        String?         @map("trace_id")
+  operationId    String?         @map("operation_id")
+  beforeJson     Json?           @map("before_json")
+  afterJson      Json?           @map("after_json")
+  metadataJson   Json?           @map("metadata_json")
+  source         AuditSource
+  sourceIp       String?         @map("source_ip")
+  userAgent      String?         @map("user_agent")
+  reason         String?
+  result         AuditResult     @default(SUCCESS)
+  occurredAt     DateTime        @default(now()) @map("occurred_at")
+  actor          User?           @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  project        Project?        @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   @@index([actorId, occurredAt])
   @@index([objectType, objectId, occurredAt])
+  @@index([projectId, occurredAt])
+  @@index([departmentId, occurredAt])
+  @@index([action, occurredAt])
   @@map("audit_logs")
 }

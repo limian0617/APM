@@ -93,15 +93,23 @@ describe("authorizeProjectRequest", () => {
         error: { code: "FORBIDDEN" }
       });
     }
-    expect(deps.recordDenial).toHaveBeenCalledWith({
-      actorId: "engineer-1",
-      permission: PERMISSIONS.PROJECT_MEMBER_MANAGE,
-      reason: "PERMISSION_NOT_GRANTED",
-      projectId: "project-1",
-      method: "POST",
-      path: "/api/projects/project-1/members",
-      sourceIp: "10.0.0.8"
-    });
+    expect(deps.recordDenial).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: "engineer-1",
+        permission: PERMISSIONS.PROJECT_MEMBER_MANAGE,
+        reason: "PERMISSION_NOT_GRANTED",
+        projectId: "project-1",
+        method: "POST",
+        path: "/api/projects/project-1/members",
+        auditContext: expect.objectContaining({
+          actorId: "engineer-1",
+          projectId: "project-1",
+          departmentId: "mechanical",
+          sourceIp: "10.0.0.8",
+          reason: "PERMISSION_NOT_GRANTED"
+        })
+      })
+    );
   });
 
   it("uses a supplied resource department for department-scoped objects", async () => {
