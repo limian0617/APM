@@ -6,6 +6,7 @@ export type OutboxEventInput = {
   aggregateId?: string | null;
   idempotencyKey: string;
   payload: unknown;
+  traceId?: string | null;
 };
 
 export type JobExecution = {
@@ -14,6 +15,7 @@ export type JobExecution = {
   payload: JsonValue;
   payloadHash: string;
   idempotencyKey: string;
+  traceId?: string | null;
   attemptId: string;
   attemptNumber: number;
   maxAttempts: number;

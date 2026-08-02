@@ -2,8 +2,9 @@ import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { authorizeNotificationRequest } from "@/modules/notifications/application/notification-guard";
 import { listNotifications } from "@/modules/notifications/application/notification-service";
 import { notificationErrorResponse } from "@/modules/notifications/contracts/notification-http";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
-export async function GET(request: Request) {
+async function listInbox(request: Request) {
   const guard = await authorizeNotificationRequest(request);
   if (!guard.authorized) return guard.response;
 
@@ -33,3 +34,8 @@ export async function GET(request: Request) {
     throw error;
   }
 }
+
+export const GET = withRequestObservability(
+  { module: "notifications", operation: "list-inbox" },
+  listInbox
+);

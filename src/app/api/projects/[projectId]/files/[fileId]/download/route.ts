@@ -11,6 +11,7 @@ import { fileErrorResponse } from "@/modules/documents/contracts/file-http";
 import { FILE_SENSITIVITIES } from "@/modules/documents/domain/file-policy";
 import { createS3ObjectStorageFromEnvironment } from "@/modules/documents/infrastructure/s3-object-storage";
 import type { ObjectStoragePort } from "@/modules/documents/contracts/file-storage";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 type RouteContext = { params: Promise<{ projectId: string; fileId: string }> };
 
@@ -85,4 +86,7 @@ export function createDownloadHandler(storageFactory: () => ObjectStoragePort) {
   };
 }
 
-export const GET = createDownloadHandler(createS3ObjectStorageFromEnvironment);
+export const GET = withRequestObservability(
+  { module: "files", operation: "download" },
+  createDownloadHandler(createS3ObjectStorageFromEnvironment)
+);

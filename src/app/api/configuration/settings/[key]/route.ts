@@ -4,6 +4,7 @@ import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { AUDIT_OBJECT_TYPES } from "@/modules/audit/domain/vocabulary";
 import { updateSystemSetting } from "@/modules/configuration/application/configuration-service";
 import { ConfigurationValidationError } from "@/modules/configuration/domain/definitions";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 type RouteContext = { params: Promise<{ key: string }> };
 
@@ -14,7 +15,7 @@ function errorResponse(error: ConfigurationValidationError): Response {
   );
 }
 
-export async function PUT(request: Request, context: RouteContext) {
+async function updateSetting(request: Request, context: RouteContext) {
   const { key } = await context.params;
   const guard = await authorizeSystemRequest(
     request,
@@ -59,3 +60,8 @@ export async function PUT(request: Request, context: RouteContext) {
     throw error;
   }
 }
+
+export const PUT = withRequestObservability(
+  { module: "configuration", operation: "update-setting" },
+  updateSetting
+);

@@ -4,6 +4,7 @@ import { PERMISSIONS } from "@/lib/auth/permissions";
 import { authorizeProjectRequest } from "@/lib/auth/project-guard";
 import { db } from "@/lib/db";
 import { auditContextFromRequest } from "@/modules/audit/application/context";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 import {
   addProjectMember,
   parseAddProjectMemberInput,
@@ -19,7 +20,7 @@ function memberErrorResponse(error: ProjectMemberError): Response {
   );
 }
 
-export async function GET(request: Request, context: RouteContext) {
+async function listMembers(request: Request, context: RouteContext) {
   const { projectId } = await context.params;
   const guard = await authorizeProjectRequest(request, projectId, PERMISSIONS.PROJECT_MEMBER_READ);
   if (!guard.authorized) {
@@ -59,7 +60,7 @@ export async function GET(request: Request, context: RouteContext) {
   });
 }
 
-export async function POST(request: Request, context: RouteContext) {
+async function addMember(request: Request, context: RouteContext) {
   const { projectId } = await context.params;
   const guard = await authorizeProjectRequest(
     request,
@@ -108,3 +109,12 @@ export async function POST(request: Request, context: RouteContext) {
     throw error;
   }
 }
+
+export const GET = withRequestObservability(
+  { module: "projects", operation: "list-members" },
+  listMembers
+);
+export const POST = withRequestObservability(
+  { module: "projects", operation: "add-member" },
+  addMember
+);

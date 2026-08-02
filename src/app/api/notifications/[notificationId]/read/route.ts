@@ -2,10 +2,11 @@ import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { authorizeNotificationRequest } from "@/modules/notifications/application/notification-guard";
 import { markNotificationRead } from "@/modules/notifications/application/notification-service";
 import { notificationErrorResponse } from "@/modules/notifications/contracts/notification-http";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 type RouteContext = { params: Promise<{ notificationId: string }> };
 
-export async function POST(request: Request, context: RouteContext) {
+async function markRead(request: Request, context: RouteContext) {
   const guard = await authorizeNotificationRequest(request);
   if (!guard.authorized) return guard.response;
   const { notificationId } = await context.params;
@@ -27,3 +28,8 @@ export async function POST(request: Request, context: RouteContext) {
     throw error;
   }
 }
+
+export const POST = withRequestObservability(
+  { module: "notifications", operation: "mark-read" },
+  markRead
+);

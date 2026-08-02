@@ -7,10 +7,11 @@ import {
   ConfigurationValidationError,
   isCapabilityCode
 } from "@/modules/configuration/domain/definitions";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 type RouteContext = { params: Promise<{ code: string }> };
 
-export async function PUT(request: Request, context: RouteContext) {
+async function updateCapability(request: Request, context: RouteContext) {
   const { code } = await context.params;
   const guard = await authorizeSystemRequest(
     request,
@@ -61,3 +62,8 @@ export async function PUT(request: Request, context: RouteContext) {
     throw error;
   }
 }
+
+export const PUT = withRequestObservability(
+  { module: "configuration", operation: "update-capability" },
+  updateCapability
+);

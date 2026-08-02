@@ -4,10 +4,11 @@ import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { startFileUpload } from "@/modules/documents/application/file-upload-service";
 import { fileErrorResponse } from "@/modules/documents/contracts/file-http";
 import { createS3ObjectStorageFromEnvironment } from "@/modules/documents/infrastructure/s3-object-storage";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 type RouteContext = { params: Promise<{ projectId: string }> };
 
-export async function POST(request: Request, context: RouteContext) {
+async function startUpload(request: Request, context: RouteContext) {
   const { projectId } = await context.params;
   const guard = await authorizeProjectRequest(request, projectId, PERMISSIONS.FILE_UPLOAD);
   if (!guard.authorized) return guard.response;
@@ -44,3 +45,8 @@ export async function POST(request: Request, context: RouteContext) {
     throw error;
   }
 }
+
+export const POST = withRequestObservability(
+  { module: "files", operation: "start-upload" },
+  startUpload
+);
