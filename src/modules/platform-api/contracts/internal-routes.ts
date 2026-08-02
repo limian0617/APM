@@ -187,6 +187,36 @@ export const createProjectBodySchema = z.strictObject({
   templateChecksum: z.string().regex(/^[0-9a-f]{64}$/u),
   reason: reasonSchema
 });
+const deliveryUnitDefinitionSchema = z.strictObject({
+  code: stableCodeSchema,
+  name: templateNameSchema,
+  unitType: z.enum(["LINE", "AREA", "MACHINE"]),
+  parentCode: stableCodeSchema.nullable().optional(),
+  position: z.number().int().min(0)
+});
+const projectModuleDefinitionSchema = z.strictObject({
+  code: stableCodeSchema,
+  name: templateNameSchema,
+  machineCode: stableCodeSchema,
+  position: z.number().int().min(0)
+});
+export const initializeProjectStructureBodySchema = z.strictObject({
+  projectVersion: positiveVersionSchema,
+  projectType: z.enum(["CUSTOMER_DELIVERY", "INTERNAL_RND"]),
+  equipmentShape: z.enum(["SINGLE_MACHINE", "LINE"]).nullable(),
+  deliveryUnits: z.array(deliveryUnitDefinitionSchema).max(1000),
+  modules: z.array(projectModuleDefinitionSchema).max(5000),
+  reason: reasonSchema
+});
+export const deliveryUnitPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  deliveryUnitId: identifierSchema
+});
+export const deliveryUnitStatusBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  enabled: z.boolean(),
+  reason: reasonSchema
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema

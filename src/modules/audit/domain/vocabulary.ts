@@ -24,7 +24,9 @@ export const AUDIT_ACTIONS = {
   TEMPLATE_DRAFT_SAVED: "TEMPLATE_DRAFT_SAVED",
   TEMPLATE_PUBLISHED: "TEMPLATE_PUBLISHED",
   TEMPLATE_STATUS_CHANGED: "TEMPLATE_STATUS_CHANGED",
-  PROJECT_CREATED: "PROJECT_CREATED"
+  PROJECT_CREATED: "PROJECT_CREATED",
+  PROJECT_STRUCTURE_INITIALIZED: "PROJECT_STRUCTURE_INITIALIZED",
+  DELIVERY_UNIT_STATUS_CHANGED: "DELIVERY_UNIT_STATUS_CHANGED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -42,7 +44,9 @@ export const AUDIT_OBJECT_TYPES = {
   NOTIFICATION_DELIVERY: "NOTIFICATION_DELIVERY",
   TEMPLATE_COMPONENT: "TEMPLATE_COMPONENT",
   TEMPLATE: "TEMPLATE",
-  TEMPLATE_VERSION: "TEMPLATE_VERSION"
+  TEMPLATE_VERSION: "TEMPLATE_VERSION",
+  DELIVERY_UNIT: "DELIVERY_UNIT",
+  PROJECT_MODULE: "PROJECT_MODULE"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -156,6 +160,24 @@ export const PROJECT_CREATION_AUDIT_FIELDS = [
   "snapshotId",
   "snapshotChecksum",
   "referenceCount",
+  "version"
+] as const;
+
+export const PROJECT_STRUCTURE_AUDIT_FIELDS = [
+  "projectType",
+  "equipmentShape",
+  "structureStatus",
+  "structureChecksum",
+  "deliveryUnitCount",
+  "moduleCount",
+  "version"
+] as const;
+
+export const DELIVERY_UNIT_AUDIT_FIELDS = [
+  "projectId",
+  "deliveryUnitId",
+  "code",
+  "status",
   "version"
 ] as const;
 
