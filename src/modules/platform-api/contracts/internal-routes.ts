@@ -217,6 +217,34 @@ export const deliveryUnitStatusBodySchema = z.strictObject({
   enabled: z.boolean(),
   reason: reasonSchema
 });
+const projectCapabilityCodeSchema = z.enum([
+  "SUPPLIER_COLLABORATION",
+  "CUSTOMER_PROGRESS_SHARING",
+  "AI_ISSUE_INTAKE",
+  "UPH_ANALYSIS",
+  "INCENTIVE_MANAGEMENT"
+]);
+export const confirmProjectCapabilitiesBodySchema = z.strictObject({
+  projectVersion: positiveVersionSchema,
+  selections: z
+    .array(
+      z.strictObject({
+        code: projectCapabilityCodeSchema,
+        enabled: z.boolean()
+      })
+    )
+    .max(5),
+  reason: reasonSchema
+});
+export const projectCapabilityPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  capabilityCode: projectCapabilityCodeSchema
+});
+export const projectCapabilityBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  enabled: z.boolean(),
+  reason: reasonSchema
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema

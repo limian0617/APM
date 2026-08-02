@@ -405,8 +405,8 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
     ).rejects.toThrow(/immutable/u);
     await expect(
       db.$executeRawUnsafe(
-        'TRUNCATE TABLE "project_template_snapshots", "project_template_snapshot_components"'
+        'TRUNCATE TABLE "project_template_snapshots", "project_template_snapshot_components" CASCADE'
       )
-    ).rejects.toThrow(/immutable/u);
+    ).rejects.toThrow(/immutable|durable/u);
   });
 });

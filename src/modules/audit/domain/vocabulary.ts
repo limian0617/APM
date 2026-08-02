@@ -26,7 +26,9 @@ export const AUDIT_ACTIONS = {
   TEMPLATE_STATUS_CHANGED: "TEMPLATE_STATUS_CHANGED",
   PROJECT_CREATED: "PROJECT_CREATED",
   PROJECT_STRUCTURE_INITIALIZED: "PROJECT_STRUCTURE_INITIALIZED",
-  DELIVERY_UNIT_STATUS_CHANGED: "DELIVERY_UNIT_STATUS_CHANGED"
+  DELIVERY_UNIT_STATUS_CHANGED: "DELIVERY_UNIT_STATUS_CHANGED",
+  PROJECT_CAPABILITIES_CONFIRMED: "PROJECT_CAPABILITIES_CONFIRMED",
+  PROJECT_CAPABILITY_CHANGED: "PROJECT_CAPABILITY_CHANGED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -46,7 +48,8 @@ export const AUDIT_OBJECT_TYPES = {
   TEMPLATE: "TEMPLATE",
   TEMPLATE_VERSION: "TEMPLATE_VERSION",
   DELIVERY_UNIT: "DELIVERY_UNIT",
-  PROJECT_MODULE: "PROJECT_MODULE"
+  PROJECT_MODULE: "PROJECT_MODULE",
+  PROJECT_CAPABILITY: "PROJECT_CAPABILITY"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -178,6 +181,26 @@ export const DELIVERY_UNIT_AUDIT_FIELDS = [
   "deliveryUnitId",
   "code",
   "status",
+  "version"
+] as const;
+
+export const PROJECT_CAPABILITIES_AUDIT_FIELDS = [
+  "projectId",
+  "configurationStatus",
+  "capabilitiesConfiguredAt",
+  "capabilities",
+  "version"
+] as const;
+
+export const PROJECT_CAPABILITY_AUDIT_FIELDS = [
+  "projectId",
+  "capabilityCode",
+  "templateAllowed",
+  "templateRequired",
+  "selectedEnabled",
+  "companyEnabled",
+  "companyVersion",
+  "effectiveEnabled",
   "version"
 ] as const;
 
