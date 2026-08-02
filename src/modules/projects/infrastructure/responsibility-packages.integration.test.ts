@@ -276,7 +276,11 @@ describeDatabase("APM-014 PostgreSQL responsibility packages", () => {
       params: Promise.resolve({ projectId: ready.project.id })
     });
     const firstBody = (await first.json()) as {
-      responsibilityPackage: { id: string; status: string; owner: { user: { id: string } } };
+      responsibilityPackage: {
+        packageId: string;
+        status: string;
+        owner: { user: { id: string } };
+      };
       resourceVersion: number;
     };
     const replay = await createPackageRoute(postRequest(url, body, `create-${suffix}`), {
@@ -300,11 +304,11 @@ describeDatabase("APM-014 PostgreSQL responsibility packages", () => {
       params: Promise.resolve({ projectId: ready.project.id })
     });
     const detail = await readPackageRoute(
-      readRequest(`${url}/${firstBody.responsibilityPackage.id}`, ids.owner),
+      readRequest(`${url}/${firstBody.responsibilityPackage.packageId}`, ids.owner),
       {
         params: Promise.resolve({
           projectId: ready.project.id,
-          packageId: firstBody.responsibilityPackage.id
+          packageId: firstBody.responsibilityPackage.packageId
         })
       }
     );
@@ -324,13 +328,13 @@ describeDatabase("APM-014 PostgreSQL responsibility packages", () => {
     ).toHaveProperty("status", 401);
     await expect(
       db.responsibilityPackageEvent.count({
-        where: { packageId: firstBody.responsibilityPackage.id, eventType: "CREATED" }
+        where: { packageId: firstBody.responsibilityPackage.packageId, eventType: "CREATED" }
       })
     ).resolves.toBe(1);
     await expect(
       db.auditLog.count({
         where: {
-          objectId: firstBody.responsibilityPackage.id,
+          objectId: firstBody.responsibilityPackage.packageId,
           action: "RESPONSIBILITY_PACKAGE_CREATED"
         }
       })
