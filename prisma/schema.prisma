@@ -80,6 +80,123 @@ model CompanyCapabilityRevision {
   @@map("company_capability_revisions")
 }
 
+model TemplateComponent {
+  id             String                     @id @default(cuid())
+  code           String                     @unique
+  componentType  TemplateComponentType      @map("component_type")
+  name           String
+  description    String?
+  draftContent   Json                       @map("draft_content")
+  status         TemplateMasterStatus       @default(DRAFT)
+  currentVersion Int                        @default(0) @map("current_version")
+  version        Int                        @default(1)
+  createdById    String                     @map("created_by_id")
+  updatedById    String                     @map("updated_by_id")
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  updatedAt      DateTime                   @updatedAt @map("updated_at")
+  createdBy      User                       @relation("TemplateComponentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy      User                       @relation("TemplateComponentUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  versions       TemplateComponentVersion[]
+
+  @@index([componentType, status, code])
+  @@map("template_components")
+}
+
+model TemplateComponentVersion {
+  id             String                @id @default(cuid())
+  componentId    String                @map("component_id")
+  version        Int
+  status         TemplateVersionStatus @default(PUBLISHED)
+  componentType  TemplateComponentType @map("component_type")
+  name           String
+  description    String?
+  contentJson    Json                  @map("content_json")
+  checksum       String
+  publishedById  String                @map("published_by_id")
+  publishedAt    DateTime              @default(now()) @map("published_at")
+  component      TemplateComponent     @relation(fields: [componentId], references: [id], onDelete: Restrict)
+  publishedBy    User                  @relation("TemplateComponentVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  draftReferences TemplateDraftComponent[]
+  versionReferences TemplateVersionComponent[]
+
+  @@unique([componentId, version])
+  @@index([componentType, publishedAt])
+  @@index([publishedById, publishedAt])
+  @@map("template_component_versions")
+}
+
+model ProjectTemplate {
+  id             String                   @id @default(cuid())
+  code           String                   @unique
+  name           String
+  description    String?
+  status         TemplateMasterStatus     @default(DRAFT)
+  currentVersion Int                      @default(0) @map("current_version")
+  version        Int                      @default(1)
+  createdById    String                   @map("created_by_id")
+  updatedById    String                   @map("updated_by_id")
+  createdAt      DateTime                 @default(now()) @map("created_at")
+  updatedAt      DateTime                 @updatedAt @map("updated_at")
+  createdBy      User                     @relation("ProjectTemplateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy      User                     @relation("ProjectTemplateUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  draftComponents TemplateDraftComponent[]
+  versions       ProjectTemplateVersion[]
+
+  @@index([status, code])
+  @@map("templates")
+}
+
+model TemplateDraftComponent {
+  id                 String                   @id @default(cuid())
+  templateId         String                   @map("template_id")
+  componentVersionId String                   @map("component_version_id")
+  componentType      TemplateComponentType    @map("component_type")
+  slot               String
+  position           Int
+  template           ProjectTemplate          @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  componentVersion   TemplateComponentVersion @relation(fields: [componentVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([templateId, slot])
+  @@unique([templateId, position])
+  @@index([componentVersionId])
+  @@map("template_draft_components")
+}
+
+model ProjectTemplateVersion {
+  id            String                     @id @default(cuid())
+  templateId    String                     @map("template_id")
+  version       Int
+  status        TemplateVersionStatus      @default(PUBLISHED)
+  name          String
+  description   String?
+  checksum      String
+  publishedById String                     @map("published_by_id")
+  publishedAt   DateTime                   @default(now()) @map("published_at")
+  template      ProjectTemplate            @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  publishedBy   User                       @relation("ProjectTemplateVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  components    TemplateVersionComponent[]
+
+  @@unique([templateId, version])
+  @@index([publishedById, publishedAt])
+  @@map("template_versions")
+}
+
+model TemplateVersionComponent {
+  id                 String                   @id @default(cuid())
+  templateVersionId  String                   @map("template_version_id")
+  componentVersionId String                   @map("component_version_id")
+  componentType      TemplateComponentType    @map("component_type")
+  slot               String
+  position           Int
+  templateVersion    ProjectTemplateVersion   @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  componentVersion   TemplateComponentVersion @relation(fields: [componentVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([templateVersionId, slot])
+  @@unique([templateVersionId, position])
+  @@index([componentVersionId])
+  @@map("template_version_components")
+}
+
 model OutboxEvent {
   id             String         @id @default(cuid())
   eventType      String         @map("event_type")
@@ -381,6 +498,24 @@ enum JobAttemptStatus {
   FAILED
 }
 
+enum TemplateComponentType {
+  STAGE
+  GATE
+  ROLE
+  WBS
+  CAPABILITY_RULE
+}
+
+enum TemplateMasterStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+}
+
+enum TemplateVersionStatus {
+  PUBLISHED
+}
+
 enum FileObjectStatus {
   UPLOADING
   PENDING_SCAN
@@ -490,6 +625,12 @@ enum AuditAction {
   NOTIFICATION_INBOX_READ
   NOTIFICATION_MARKED_READ
   NOTIFICATION_DELIVERED
+  TEMPLATE_COMPONENT_DRAFT_SAVED
+  TEMPLATE_COMPONENT_PUBLISHED
+  TEMPLATE_COMPONENT_STATUS_CHANGED
+  TEMPLATE_DRAFT_SAVED
+  TEMPLATE_PUBLISHED
+  TEMPLATE_STATUS_CHANGED
 }
 
 enum AuditObjectType {
@@ -505,6 +646,9 @@ enum AuditObjectType {
   NOTIFICATION_TEMPLATE
   NOTIFICATION
   NOTIFICATION_DELIVERY
+  TEMPLATE_COMPONENT
+  TEMPLATE
+  TEMPLATE_VERSION
 }
 
 enum AuditSource {
@@ -548,6 +692,12 @@ model User {
   notificationsReceived Notification[]             @relation("NotificationRecipient")
   notificationReadReceipts NotificationReadReceipt[] @relation("NotificationReadRecipient")
   apiIdempotencyRecords ApiIdempotencyRecord[]
+  templateComponentsCreated TemplateComponent[]        @relation("TemplateComponentCreatedBy")
+  templateComponentsUpdated TemplateComponent[]        @relation("TemplateComponentUpdatedBy")
+  templateComponentVersionsPublished TemplateComponentVersion[] @relation("TemplateComponentVersionPublishedBy")
+  projectTemplatesCreated ProjectTemplate[]             @relation("ProjectTemplateCreatedBy")
+  projectTemplatesUpdated ProjectTemplate[]             @relation("ProjectTemplateUpdatedBy")
+  projectTemplateVersionsPublished ProjectTemplateVersion[] @relation("ProjectTemplateVersionPublishedBy")
 
   @@index([departmentId])
   @@map("users")
