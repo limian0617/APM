@@ -335,7 +335,11 @@ describeDatabase("APM-006 PostgreSQL notifications", () => {
     const idor = await markReadRoute(
       new Request(`http://localhost/api/notifications/${other.notification.id}/read`, {
         method: "POST",
-        headers: { "x-apm-user-id": ids.engineer, "x-request-id": `read-idor-${suffix}` }
+        headers: {
+          "x-apm-user-id": ids.engineer,
+          "x-request-id": `read-idor-${suffix}`,
+          "idempotency-key": `read-idor-${suffix}`
+        }
       }),
       { params: Promise.resolve({ notificationId: other.notification.id }) }
     );
