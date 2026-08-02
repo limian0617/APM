@@ -102,7 +102,7 @@ async function addMember(request: Request, context: RouteContext) {
       projectId: path.projectId,
       departmentId: guard.project.departmentId
     });
-    return idempotentCommandResponse({
+    return await idempotentCommandResponse({
       actorId: guard.actor.id,
       operation: "projects.member.add",
       idempotencyKey,

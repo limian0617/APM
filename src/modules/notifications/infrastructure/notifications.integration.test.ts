@@ -297,14 +297,22 @@ describeDatabase("APM-006 PostgreSQL notifications", () => {
     const firstRead = await markReadRoute(
       new Request(`http://localhost/api/notifications/${own.notification.id}/read`, {
         method: "POST",
-        headers: { "x-apm-user-id": ids.engineer, "x-request-id": `read-one-${suffix}` }
+        headers: {
+          "x-apm-user-id": ids.engineer,
+          "x-request-id": `read-one-${suffix}`,
+          "idempotency-key": `read-one-${suffix}`
+        }
       }),
       { params: Promise.resolve({ notificationId: own.notification.id }) }
     );
     const repeatedRead = await markReadRoute(
       new Request(`http://localhost/api/notifications/${own.notification.id}/read`, {
         method: "POST",
-        headers: { "x-apm-user-id": ids.engineer, "x-request-id": `read-two-${suffix}` }
+        headers: {
+          "x-apm-user-id": ids.engineer,
+          "x-request-id": `read-two-${suffix}`,
+          "idempotency-key": `read-two-${suffix}`
+        }
       }),
       { params: Promise.resolve({ notificationId: own.notification.id }) }
     );

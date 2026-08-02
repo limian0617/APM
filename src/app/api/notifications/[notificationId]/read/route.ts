@@ -19,7 +19,7 @@ async function markRead(request: Request, context: RouteContext) {
   try {
     const routePath = parsePath(notificationPathSchema, { notificationId });
     const { idempotencyKey } = parseIdempotencyHeaders(request);
-    return idempotentCommandResponse({
+    return await idempotentCommandResponse({
       actorId: guard.actor.id,
       operation: "notifications.inbox.mark-read",
       idempotencyKey,

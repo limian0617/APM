@@ -49,7 +49,7 @@ async function updateCapability(request: Request, context: RouteContext) {
       actorId: guard.actor.id,
       reason: input.reason
     });
-    return idempotentCommandResponse({
+    return await idempotentCommandResponse({
       actorId: guard.actor.id,
       operation: "configuration.capability.update",
       idempotencyKey,

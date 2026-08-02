@@ -33,7 +33,7 @@ async function setTemplateStatus(request: Request, context: RouteContext) {
     const path = parsePath(notificationTemplatePathSchema, { code });
     const input = await parseJsonBody(request, notificationTemplateStatusBodySchema);
     const { idempotencyKey } = parseIdempotencyHeaders(request);
-    return idempotentCommandResponse({
+    return await idempotentCommandResponse({
       actorId: guard.actor.id,
       operation: "notifications.template.status",
       idempotencyKey,

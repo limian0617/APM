@@ -28,7 +28,7 @@ async function startUpload(request: Request, context: RouteContext) {
     const path = parsePath(projectPathSchema, { projectId });
     const input = await parseJsonBody(request, startFileUploadBodySchema);
     const { idempotencyKey } = parseIdempotencyHeaders(request);
-    return idempotentCommandResponse({
+    return await idempotentCommandResponse({
       actorId: guard.actor.id,
       operation: "files.upload.start",
       idempotencyKey,

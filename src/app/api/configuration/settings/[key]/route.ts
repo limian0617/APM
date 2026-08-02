@@ -46,7 +46,7 @@ async function updateSetting(request: Request, context: RouteContext) {
       actorId: guard.actor.id,
       reason: input.reason
     });
-    return idempotentCommandResponse({
+    return await idempotentCommandResponse({
       actorId: guard.actor.id,
       operation: "configuration.setting.update",
       idempotencyKey,
