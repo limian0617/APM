@@ -1,0 +1,179 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum PermissionScope {
+  ALL
+  DEPARTMENT
+  PROJECT
+  SELF
+  ASSIGNED
+}
+
+enum ProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  GATE_REVIEW
+  SUSPENDED
+  CLOSED
+  CANCELED
+}
+
+enum ProjectRole {
+  PROJECT_MANAGER
+  DEPARTMENT_LEAD
+  ENGINEER
+  PROCUREMENT
+  QUALITY
+  VIEWER
+}
+
+model User {
+  id                  String          @id @default(cuid())
+  employeeNo          String          @unique @map("employee_no")
+  name                String
+  email               String?         @unique
+  departmentId        String?         @map("department_id")
+  status              UserStatus      @default(ACTIVE)
+  version             Int             @default(1)
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+  roleAssignments     UserRole[]      @relation("RoleAssignmentUser")
+  rolesAssigned       UserRole[]      @relation("RoleAssignmentActor")
+  memberships         ProjectMember[] @relation("ProjectMemberUser")
+  membershipsAssigned ProjectMember[] @relation("ProjectMemberAssignedBy")
+  membershipsEnded    ProjectMember[] @relation("ProjectMemberLeftBy")
+  projectsCreated     Project[]       @relation("ProjectCreatedBy")
+  auditLogs           AuditLog[]
+
+  @@index([departmentId])
+  @@map("users")
+}
+
+model Role {
+  id          String           @id
+  code        String           @unique
+  name        String
+  description String?
+  isSystem    Boolean          @default(true) @map("is_system")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id
+  code        String           @unique
+  description String
+  createdAt   DateTime         @default(now()) @map("created_at")
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String          @map("role_id")
+  permissionId String          @map("permission_id")
+  scope        PermissionScope
+  role         Role            @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  permission   Permission      @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  id           String    @id @default(cuid())
+  userId       String    @map("user_id")
+  roleId       String    @map("role_id")
+  assignedById String?   @map("assigned_by_id")
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  revokedAt    DateTime? @map("revoked_at")
+  user         User      @relation("RoleAssignmentUser", fields: [userId], references: [id], onDelete: Restrict)
+  role         Role      @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  assignedBy   User?     @relation("RoleAssignmentActor", fields: [assignedById], references: [id], onDelete: Restrict)
+
+  @@index([userId, revokedAt])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// APM-011 will extend this project shell with the template snapshot and lifecycle fields.
+model Project {
+  id           String          @id @default(cuid())
+  code         String          @unique
+  name         String
+  departmentId String?         @map("department_id")
+  status       ProjectStatus   @default(DRAFT)
+  version      Int             @default(1)
+  createdById  String          @map("created_by_id")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+  createdBy    User            @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  members      ProjectMember[]
+
+  @@index([departmentId])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id           String      @id @default(cuid())
+  projectId    String      @map("project_id")
+  userId       String      @map("user_id")
+  projectRole  ProjectRole @map("project_role")
+  departmentId String?     @map("department_id")
+  assignedById String      @map("assigned_by_id")
+  joinedAt     DateTime    @default(now()) @map("joined_at")
+  leftAt       DateTime?   @map("left_at")
+  leftById     String?     @map("left_by_id")
+  version      Int         @default(1)
+  project      Project     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  user         User        @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Restrict)
+  assignedBy   User        @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+  leftBy       User?       @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
+
+  @@index([projectId, leftAt])
+  @@index([userId, leftAt])
+  @@map("project_members")
+}
+
+// APM-002 records authorization denials and membership changes. APM-003 expands
+// this into the shared append-only audit service for every business domain.
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?  @map("actor_id")
+  action     String
+  objectType String   @map("object_type")
+  objectId   String?  @map("object_id")
+  beforeJson Json?    @map("before_json")
+  afterJson  Json?    @map("after_json")
+  source     String
+  sourceIp   String?  @map("source_ip")
+  occurredAt DateTime @default(now()) @map("occurred_at")
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([actorId, occurredAt])
+  @@index([objectType, objectId, occurredAt])
+  @@map("audit_logs")
+}

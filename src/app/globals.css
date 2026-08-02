@@ -1,0 +1,53 @@
+:root {
+  color-scheme: light;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+  background: #f4f6f9;
+  color: #182230;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+.foundation-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.foundation-panel {
+  width: min(100%, 640px);
+  border: 1px solid #d9e0e8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 32px;
+  box-shadow: 0 8px 28px rgb(24 34 48 / 8%);
+}
+
+.foundation-kicker {
+  margin: 0 0 12px;
+  color: #1d5c8d;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+p {
+  line-height: 1.7;
+}
+
+a {
+  color: #0f5f8f;
+  font-weight: 700;
+}
