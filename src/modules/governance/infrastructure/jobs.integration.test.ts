@@ -210,7 +210,14 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
         }
       }
     });
-    expect(effects).toHaveLength(2);
+    const expectedEffects = [
+      `${setting.key}:v${settingResult.setting.version}`,
+      `${capability.code}:v${capabilityResult.capability.version}`
+    ];
+    expect(effects).toEqual(expect.arrayContaining(expectedEffects));
+    for (const expectedEffect of expectedEffects) {
+      expect(effects.filter((effect) => effect === expectedEffect)).toHaveLength(1);
+    }
   });
 
   it("uses SKIP LOCKED so concurrent workers never claim the same job", async () => {
