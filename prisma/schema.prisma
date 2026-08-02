@@ -604,6 +604,33 @@ enum ProjectInitializationStatus {
   READY
 }
 
+enum ProjectType {
+  LEGACY
+  CUSTOMER_DELIVERY
+  INTERNAL_RND
+}
+
+enum EquipmentShape {
+  SINGLE_MACHINE
+  LINE
+}
+
+enum ProjectStructureStatus {
+  UNCONFIGURED
+  READY
+}
+
+enum DeliveryUnitType {
+  LINE
+  AREA
+  MACHINE
+}
+
+enum ProjectStructureNodeStatus {
+  ACTIVE
+  DISABLED
+}
+
 enum ProjectRole {
   PROJECT_MANAGER
   DEPARTMENT_LEAD
@@ -640,6 +667,8 @@ enum AuditAction {
   TEMPLATE_PUBLISHED
   TEMPLATE_STATUS_CHANGED
   PROJECT_CREATED
+  PROJECT_STRUCTURE_INITIALIZED
+  DELIVERY_UNIT_STATUS_CHANGED
 }
 
 enum AuditObjectType {
@@ -658,6 +687,8 @@ enum AuditObjectType {
   TEMPLATE_COMPONENT
   TEMPLATE
   TEMPLATE_VERSION
+  DELIVERY_UNIT
+  PROJECT_MODULE
 }
 
 enum AuditSource {
@@ -707,6 +738,10 @@ model User {
   projectTemplatesCreated ProjectTemplate[]             @relation("ProjectTemplateCreatedBy")
   projectTemplatesUpdated ProjectTemplate[]             @relation("ProjectTemplateUpdatedBy")
   projectTemplateVersionsPublished ProjectTemplateVersion[] @relation("ProjectTemplateVersionPublishedBy")
+  deliveryUnitsCreated DeliveryUnit[] @relation("DeliveryUnitCreatedBy")
+  deliveryUnitsUpdated DeliveryUnit[] @relation("DeliveryUnitUpdatedBy")
+  projectModulesCreated ProjectModule[] @relation("ProjectModuleCreatedBy")
+  projectModulesUpdated ProjectModule[] @relation("ProjectModuleUpdatedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -771,6 +806,9 @@ model Project {
   departmentId            String?                     @map("department_id")
   status                  ProjectStatus               @default(DRAFT)
   initializationStatus    ProjectInitializationStatus @default(LEGACY) @map("initialization_status")
+  projectType             ProjectType                 @default(LEGACY) @map("project_type")
+  equipmentShape          EquipmentShape?             @map("equipment_shape")
+  structureStatus         ProjectStructureStatus      @default(UNCONFIGURED) @map("structure_status")
   sourceTemplateVersionId String?                     @map("source_template_version_id")
   sourceTemplateChecksum  String?                     @map("source_template_checksum")
   initializedAt           DateTime?                   @map("initialized_at")
@@ -785,10 +823,13 @@ model Project {
   auditLogs               AuditLog[]
   files                   FileObject[]
   notifications           Notification[]
+  deliveryUnits           DeliveryUnit[]
+  projectModules          ProjectModule[]
 
   @@index([departmentId])
   @@index([sourceTemplateVersionId])
   @@index([initializationStatus, createdAt])
+  @@index([projectType, equipmentShape, structureStatus])
   @@map("projects")
 }
 
@@ -831,6 +872,60 @@ model ProjectTemplateSnapshotComponent {
   @@unique([snapshotId, position])
   @@index([sourceComponentVersionId])
   @@map("project_template_snapshot_components")
+}
+
+model DeliveryUnit {
+  id          String                     @id @default(cuid())
+  projectId   String                     @map("project_id")
+  parentId    String?                    @map("parent_id")
+  unitType    DeliveryUnitType           @map("unit_type")
+  code        String
+  name        String
+  status      ProjectStructureNodeStatus @default(ACTIVE)
+  position    Int
+  version     Int                        @default(1)
+  createdById String                     @map("created_by_id")
+  updatedById String                     @map("updated_by_id")
+  createdAt   DateTime                   @default(now()) @map("created_at")
+  updatedAt   DateTime                   @updatedAt @map("updated_at")
+  project     Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  parent      DeliveryUnit?              @relation("DeliveryUnitHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children    DeliveryUnit[]             @relation("DeliveryUnitHierarchy")
+  modules     ProjectModule[]
+  createdBy   User                       @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User                       @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@unique([projectId, parentId, position])
+  @@index([projectId, unitType, status])
+  @@index([parentId, position])
+  @@map("delivery_units")
+}
+
+model ProjectModule {
+  id             String                     @id @default(cuid())
+  projectId      String                     @map("project_id")
+  deliveryUnitId String                     @map("delivery_unit_id")
+  code           String
+  name           String
+  status         ProjectStructureNodeStatus @default(ACTIVE)
+  position       Int
+  version        Int                        @default(1)
+  createdById    String                     @map("created_by_id")
+  updatedById    String                     @map("updated_by_id")
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  updatedAt      DateTime                   @updatedAt @map("updated_at")
+  project        Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deliveryUnit   DeliveryUnit               @relation(fields: [deliveryUnitId], references: [id], onDelete: Restrict)
+  createdBy      User                       @relation("ProjectModuleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy      User                       @relation("ProjectModuleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, code])
+  @@unique([deliveryUnitId, position])
+  @@index([projectId, status])
+  @@index([deliveryUnitId, status])
+  @@map("project_modules")
 }
 
 model ProjectMember {
