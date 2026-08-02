@@ -200,7 +200,7 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
     const effects: string[] = [];
     await runJobBatch({
       workerId: `configuration-worker-${suffix}`,
-      policy: { ...policy, claimBatchSize: 1_000 },
+      policy: { ...policy, claimBatchSize: 500 },
       handlers: {
         "configuration.setting.changed": async (job) => {
           effects.push(job.idempotencyKey);
