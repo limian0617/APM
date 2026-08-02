@@ -150,6 +150,38 @@ port; configure the optional HTTPS intake variables in `.env.example`, or retain
 logs. Production collectors, dashboards, alert thresholds, and credentials stay outside the
 repository.
 
+## APM-009 API contracts and idempotency
+
+APM-009 adds a reusable HTTP boundary under `src/modules/platform-api`. JSON bodies, query
+parameters, path values, `Idempotency-Key`, and `If-Match` are parsed into strict DTOs. Malformed
+JSON is a `400`; invalid types, nulls, unknown fields, and value bounds are `422`; authentication,
+authorization, hidden objects, optimistic-lock conflicts, and invalid state remain `401`, `403`,
+`404`, and `409` as applicable.
+
+Every JSON error uses this shape and receives the same correlation values in response headers:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "请求参数未通过校验。",
+    "issues": [{ "field": "body.version", "code": "INVALID_TYPE", "message": "类型无效。" }],
+    "requestId": "request-id",
+    "traceId": "0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
+Retryable state commands require a 1 to 191 character `Idempotency-Key`. Results are scoped by
+`actor + operation + key`; a stable DTO fingerprint replays the original status and body, while
+the same key with another payload returns `409 IDEMPOTENCY_KEY_REUSED`. The success record,
+business writes, audit, and Outbox use one Prisma transaction. `idempotency-replayed` identifies a
+stored replay. File-upload completion retains its APM-005 domain command record with the same
+scope and atomic-success rules.
+
+Existing internal routes remain under `/api`. `/api/external/v1` is an isolated, default-deny
+reservation for later supplier and customer contracts and currently exposes no business API.
+
 ## Current scope
 
 APM-001 establishes the runtime and database tooling. APM-002 establishes authorization and the
@@ -160,3 +192,5 @@ APM-006 establishes versioned notification templates, recipient inboxes, read re
 email delivery.
 APM-007 establishes structured logs, trace propagation, operational metrics, safe error reporting,
 and separate liveness/readiness checks.
+APM-009 establishes strict DTO parsing, correlated error contracts, transactional command
+idempotency, and the reserved external v1 API boundary.

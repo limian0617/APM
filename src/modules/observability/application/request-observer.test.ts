@@ -113,6 +113,67 @@ describe("withRequestObservability", () => {
     await expect(response.json()).resolves.toEqual({ value: 42 });
   });
 
+  it("normalizes client errors with field and correlation details", async () => {
+    const logger = new MemoryLogger();
+    const metrics = new PrometheusMetrics();
+    const reporter = new MemoryErrorReporter();
+    const ids = ["request-error", "trace-error"];
+    const handler = withRequestObservability(
+      { module: "test", operation: "validation-error" },
+      async () =>
+        Response.json(
+          {
+            error: {
+              code: "VALIDATION_FAILED",
+              message: "请求参数未通过校验。",
+              issues: [{ field: "body.version", code: "INVALID_TYPE", message: "类型无效。" }]
+            }
+          },
+          { status: 422 }
+        ),
+      { logger, metrics, reporter, now: () => 1000, createId: () => ids.shift()! }
+    );
+
+    const response = await handler(new Request("http://localhost/api/test"));
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: "VALIDATION_FAILED",
+        message: "请求参数未通过校验。",
+        issues: [{ field: "body.version", code: "INVALID_TYPE", message: "类型无效。" }],
+        requestId: "request-error",
+        traceId: expect.stringMatching(/^[0-9a-f]{32}$/u)
+      }
+    });
+  });
+
+  it("returns a safe correlated 500 instead of exposing an unhandled error", async () => {
+    const logger = new MemoryLogger();
+    const metrics = new PrometheusMetrics();
+    const reporter = new MemoryErrorReporter();
+    const ids = ["request-failure", "trace-failure"];
+    const handler = withRequestObservability(
+      { module: "test", operation: "server-error" },
+      async () => {
+        throw new Error("database password must stay private");
+      },
+      { logger, metrics, reporter, now: () => 1000, createId: () => ids.shift()! }
+    );
+
+    const response = await handler(new Request("http://localhost/api/test"));
+    expect(response.status).toBe(500);
+    const payload = await response.json();
+    expect(payload).toMatchObject({
+      error: {
+        code: "INTERNAL_ERROR",
+        issues: [],
+        requestId: "request-failure",
+        traceId: expect.stringMatching(/^[0-9a-f]{32}$/u)
+      }
+    });
+    expect(JSON.stringify(payload)).not.toContain("database password");
+    expect(reporter.reports).toHaveLength(1);
+  });
+
   it("does not change the HTTP result when every telemetry adapter fails", async () => {
     const fail = () => {
       throw new Error("telemetry unavailable");

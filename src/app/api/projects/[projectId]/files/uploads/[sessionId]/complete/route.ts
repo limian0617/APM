@@ -9,6 +9,16 @@ import { fileErrorResponse } from "@/modules/documents/contracts/file-http";
 import { FileValidationError } from "@/modules/documents/domain/file-policy";
 import { createS3ObjectStorageFromEnvironment } from "@/modules/documents/infrastructure/s3-object-storage";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
+import {
+  parseIdempotencyHeaders,
+  parseJsonBody,
+  parsePath
+} from "@/modules/platform-api/contracts/dto";
+import { apiContractErrorResponse } from "@/modules/platform-api/contracts/errors";
+import {
+  completeFileUploadBodySchema,
+  uploadSessionPathSchema
+} from "@/modules/platform-api/contracts/internal-routes";
 
 type RouteContext = { params: Promise<{ projectId: string; sessionId: string }> };
 
@@ -18,30 +28,25 @@ async function completeUpload(request: Request, context: RouteContext) {
   if (!guard.authorized) return guard.response;
 
   try {
-    const target = await findUploadAuthorizationTarget(sessionId);
-    if (!target || target.fileObject.projectId !== projectId) {
+    const path = parsePath(uploadSessionPathSchema, { projectId, sessionId });
+    const input = await parseJsonBody(request, completeFileUploadBodySchema);
+    const { idempotencyKey } = parseIdempotencyHeaders(request);
+    const target = await findUploadAuthorizationTarget(path.sessionId);
+    if (!target || target.fileObject.projectId !== path.projectId) {
       throw new FileValidationError("UPLOAD_SESSION_NOT_FOUND", "上传会话不存在。", 404);
     }
-    const body = await request.json();
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return Response.json(
-        { error: { code: "INVALID_BODY", message: "请求体必须是 JSON 对象。" } },
-        { status: 422 }
-      );
-    }
-    const input = body as Record<string, unknown>;
     return Response.json(
       await completeFileUpload(
         {
-          sessionId,
+          sessionId: path.sessionId,
           actorId: guard.actor.id,
-          idempotencyKey: request.headers.get("idempotency-key"),
+          idempotencyKey,
           mimeType: input.mimeType,
           size: input.size,
           parts: input.parts,
           auditContext: auditContextFromRequest(request, {
             actorId: guard.actor.id,
-            projectId,
+            projectId: path.projectId,
             departmentId: guard.project.departmentId
           })
         },
@@ -49,6 +54,8 @@ async function completeUpload(request: Request, context: RouteContext) {
       )
     );
   } catch (error) {
+    const contractResponse = apiContractErrorResponse(error);
+    if (contractResponse) return contractResponse;
     const response = fileErrorResponse(error);
     if (response) return response;
     throw error;

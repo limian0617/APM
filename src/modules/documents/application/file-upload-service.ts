@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 
-import { db } from "@/lib/db";
+import { db, inTransaction } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   AUDIT_ACTIONS,
@@ -93,7 +93,11 @@ export async function findUploadAuthorizationTarget(sessionId: string) {
   });
 }
 
-export async function startFileUpload(command: StartUploadCommand, storage: ObjectStoragePort) {
+export async function startFileUpload(
+  command: StartUploadCommand,
+  storage: ObjectStoragePort,
+  transaction?: Prisma.TransactionClient
+) {
   const originalName = validateOriginalName(command.originalName);
   const mimeType = normalizeMimeType(command.mimeType);
   const size = validateFileSize(command.size);
@@ -107,9 +111,9 @@ export async function startFileUpload(command: StartUploadCommand, storage: Obje
   });
 
   try {
-    return await db.$transaction(async (transaction) => {
-      const now = await databaseNow(transaction);
-      const file = await transaction.fileObject.create({
+    return await inTransaction(transaction, async (client) => {
+      const now = await databaseNow(client);
+      const file = await client.fileObject.create({
         data: {
           projectId: command.projectId,
           uploadedById: command.actorId,
@@ -136,7 +140,7 @@ export async function startFileUpload(command: StartUploadCommand, storage: Obje
         include: { uploadSession: true }
       });
       if (!file.uploadSession) throw new Error("上传会话创建失败。");
-      const audit = await writeAudit(transaction, {
+      const audit = await writeAudit(client, {
         action: AUDIT_ACTIONS.FILE_UPLOAD_STARTED,
         objectType: AUDIT_OBJECT_TYPES.FILE_UPLOAD_SESSION,
         objectId: file.uploadSession.id,

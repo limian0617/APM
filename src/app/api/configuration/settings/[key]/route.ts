@@ -5,14 +5,25 @@ import { AUDIT_OBJECT_TYPES } from "@/modules/audit/domain/vocabulary";
 import { updateSystemSetting } from "@/modules/configuration/application/configuration-service";
 import { ConfigurationValidationError } from "@/modules/configuration/domain/definitions";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
+import { idempotentCommandResponse } from "@/modules/platform-api/application/idempotent-command";
+import {
+  parseIdempotencyHeaders,
+  parseJsonBody,
+  parsePath
+} from "@/modules/platform-api/contracts/dto";
+import {
+  apiContractErrorResponse,
+  apiErrorResponse
+} from "@/modules/platform-api/contracts/errors";
+import {
+  settingBodySchema,
+  settingPathSchema
+} from "@/modules/platform-api/contracts/internal-routes";
 
 type RouteContext = { params: Promise<{ key: string }> };
 
 function errorResponse(error: ConfigurationValidationError): Response {
-  return Response.json(
-    { error: { code: error.code, message: error.message } },
-    { status: error.status }
-  );
+  return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
 }
 
 async function updateSetting(request: Request, context: RouteContext) {
@@ -28,34 +39,38 @@ async function updateSetting(request: Request, context: RouteContext) {
   }
 
   try {
-    const body = await request.json();
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      throw new ConfigurationValidationError("INVALID_VALUE", "请求体必须是 JSON 对象。", 422);
-    }
-    const input = body as Record<string, unknown>;
+    const path = parsePath(settingPathSchema, { key });
+    const input = await parseJsonBody(request, settingBodySchema);
+    const { idempotencyKey } = parseIdempotencyHeaders(request);
     const auditContext = auditContextFromRequest(request, {
       actorId: guard.actor.id,
-      reason: typeof input.reason === "string" ? input.reason : null
+      reason: input.reason
     });
-    return Response.json(
-      await updateSystemSetting({
-        key,
-        value: input.value,
-        version: input.version,
-        reason: input.reason,
-        actorId: guard.actor.id,
-        auditContext
+    return await idempotentCommandResponse({
+      actorId: guard.actor.id,
+      operation: "configuration.setting.update",
+      idempotencyKey,
+      request: { path, body: input },
+      execute: async (transaction) => ({
+        status: 200,
+        body: await updateSystemSetting(
+          {
+            key: path.key,
+            value: input.value,
+            version: input.version,
+            reason: input.reason,
+            actorId: guard.actor.id,
+            auditContext
+          },
+          transaction
+        )
       })
-    );
+    });
   } catch (error) {
+    const contractResponse = apiContractErrorResponse(error);
+    if (contractResponse) return contractResponse;
     if (error instanceof ConfigurationValidationError) {
       return errorResponse(error);
-    }
-    if (error instanceof SyntaxError) {
-      return Response.json(
-        { error: { code: "INVALID_JSON", message: "请求体不是有效 JSON。" } },
-        { status: 400 }
-      );
     }
     throw error;
   }

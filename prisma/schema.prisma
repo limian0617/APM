@@ -7,6 +7,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model ApiIdempotencyRecord {
+  id             String    @id @default(cuid())
+  actorId        String    @map("actor_id")
+  operation      String
+  idempotencyKey String    @map("idempotency_key")
+  requestHash    String    @map("request_hash")
+  responseStatus Int?      @map("response_status")
+  responseJson   Json?     @map("response_json")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  completedAt    DateTime? @map("completed_at")
+  actor          User      @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([actorId, operation, idempotencyKey])
+  @@index([completedAt, createdAt])
+  @@map("api_idempotency_records")
+}
+
 model SystemSetting {
   key       String                  @id
   value     Json
@@ -530,6 +547,7 @@ model User {
   notificationTemplateVersionsPublished NotificationTemplateVersion[] @relation("NotificationTemplatePublishedBy")
   notificationsReceived Notification[]             @relation("NotificationRecipient")
   notificationReadReceipts NotificationReadReceipt[] @relation("NotificationReadRecipient")
+  apiIdempotencyRecords ApiIdempotencyRecord[]
 
   @@index([departmentId])
   @@map("users")

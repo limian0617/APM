@@ -5,6 +5,17 @@ import { AUDIT_OBJECT_TYPES } from "@/modules/audit/domain/vocabulary";
 import { publishNotificationTemplate } from "@/modules/notifications/application/notification-template-service";
 import { notificationErrorResponse } from "@/modules/notifications/contracts/notification-http";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
+import { idempotentCommandResponse } from "@/modules/platform-api/application/idempotent-command";
+import {
+  parseIdempotencyHeaders,
+  parseJsonBody,
+  parsePath
+} from "@/modules/platform-api/contracts/dto";
+import { apiContractErrorResponse } from "@/modules/platform-api/contracts/errors";
+import {
+  notificationTemplatePathSchema,
+  publishNotificationTemplateBodySchema
+} from "@/modules/platform-api/contracts/internal-routes";
 
 type RouteContext = { params: Promise<{ code: string }> };
 
@@ -19,28 +30,34 @@ async function publishVersion(request: Request, context: RouteContext) {
   if (!guard.authorized) return guard.response;
 
   try {
-    const body = await request.json();
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return Response.json(
-        { error: { code: "INVALID_BODY", message: "请求体必须是 JSON 对象。" } },
-        { status: 422 }
-      );
-    }
-    const input = body as Record<string, unknown>;
-    return Response.json(
-      await publishNotificationTemplate({
-        code,
-        actorId: guard.actor.id,
-        expectedVersion: input.version,
-        subjectTemplate: input.subjectTemplate,
-        bodyTextTemplate: input.bodyTextTemplate,
-        bodyHtmlTemplate: input.bodyHtmlTemplate,
-        variableSchema: input.variableSchema,
-        auditContext: auditContextFromRequest(request, { actorId: guard.actor.id })
-      }),
-      { status: 201 }
-    );
+    const path = parsePath(notificationTemplatePathSchema, { code });
+    const input = await parseJsonBody(request, publishNotificationTemplateBodySchema);
+    const { idempotencyKey } = parseIdempotencyHeaders(request);
+    return await idempotentCommandResponse({
+      actorId: guard.actor.id,
+      operation: "notifications.template.publish",
+      idempotencyKey,
+      request: { path, body: input },
+      execute: async (transaction) => ({
+        status: 201,
+        body: await publishNotificationTemplate(
+          {
+            code: path.code,
+            actorId: guard.actor.id,
+            expectedVersion: input.version,
+            subjectTemplate: input.subjectTemplate,
+            bodyTextTemplate: input.bodyTextTemplate,
+            bodyHtmlTemplate: input.bodyHtmlTemplate,
+            variableSchema: input.variableSchema,
+            auditContext: auditContextFromRequest(request, { actorId: guard.actor.id })
+          },
+          transaction
+        )
+      })
+    });
   } catch (error) {
+    const contractResponse = apiContractErrorResponse(error);
+    if (contractResponse) return contractResponse;
     const response = notificationErrorResponse(error);
     if (response) return response;
     throw error;

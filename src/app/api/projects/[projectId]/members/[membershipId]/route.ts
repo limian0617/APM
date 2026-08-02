@@ -9,6 +9,16 @@ import {
   ProjectMemberError
 } from "@/lib/projects/members";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
+import { idempotentCommandResponse } from "@/modules/platform-api/application/idempotent-command";
+import { parseHeaders, parsePath } from "@/modules/platform-api/contracts/dto";
+import {
+  apiContractErrorResponse,
+  apiErrorResponse
+} from "@/modules/platform-api/contracts/errors";
+import {
+  membershipCommandHeadersSchema,
+  projectMembershipPathSchema
+} from "@/modules/platform-api/contracts/internal-routes";
 
 type RouteContext = { params: Promise<{ projectId: string; membershipId: string }> };
 
@@ -23,37 +33,52 @@ async function endMembership(request: Request, context: RouteContext) {
     return guard.response;
   }
 
-  if (
-    guard.project.status === ProjectStatus.CLOSED ||
-    guard.project.status === ProjectStatus.CANCELED
-  ) {
-    return Response.json(
-      { error: { code: "PROJECT_READ_ONLY", message: "已结项或已取消的项目禁止修改成员。" } },
-      { status: 409 }
-    );
-  }
-
   try {
-    const projectVersion = parseIfMatchVersion(request.headers.get("if-match"));
+    const path = parsePath(projectMembershipPathSchema, { projectId, membershipId });
+    const headers = parseHeaders(request, membershipCommandHeadersSchema, {
+      idempotencyKey: "idempotency-key",
+      ifMatch: "if-match"
+    });
+    const projectVersion = parseIfMatchVersion(headers.ifMatch);
+    if (
+      guard.project.status === ProjectStatus.CLOSED ||
+      guard.project.status === ProjectStatus.CANCELED
+    ) {
+      return apiErrorResponse({
+        status: 409,
+        code: "PROJECT_READ_ONLY",
+        message: "已结项或已取消的项目禁止修改成员。"
+      });
+    }
     const auditContext = auditContextFromRequest(request, {
       actorId: guard.actor.id,
-      projectId,
+      projectId: path.projectId,
       departmentId: guard.project.departmentId
     });
-    const result = await endProjectMembership({
-      projectId,
-      membershipId,
+    return await idempotentCommandResponse({
       actorId: guard.actor.id,
-      projectVersion,
-      auditContext
+      operation: "projects.member.end",
+      idempotencyKey: headers.idempotencyKey,
+      request: { path, projectVersion },
+      execute: async (transaction) => ({
+        status: 200,
+        body: await endProjectMembership(
+          {
+            projectId: path.projectId,
+            membershipId: path.membershipId,
+            actorId: guard.actor.id,
+            projectVersion,
+            auditContext
+          },
+          transaction
+        )
+      })
     });
-    return Response.json(result);
   } catch (error) {
+    const contractResponse = apiContractErrorResponse(error);
+    if (contractResponse) return contractResponse;
     if (error instanceof ProjectMemberError) {
-      return Response.json(
-        { error: { code: error.code, message: error.message } },
-        { status: error.status }
-      );
+      return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
     }
     throw error;
   }
