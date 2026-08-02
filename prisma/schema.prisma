@@ -222,6 +222,114 @@ model FileCommand {
   @@map("file_commands")
 }
 
+model NotificationTemplate {
+  code           String                        @id
+  enabled        Boolean                       @default(true)
+  currentVersion Int                           @default(0) @map("current_version")
+  version        Int                           @default(1)
+  createdAt      DateTime                      @default(now()) @map("created_at")
+  updatedAt      DateTime                      @updatedAt @map("updated_at")
+  versions       NotificationTemplateVersion[]
+
+  @@map("notification_templates")
+}
+
+model NotificationTemplateVersion {
+  id              String               @id @default(cuid())
+  templateCode    String               @map("template_code")
+  version         Int
+  subjectTemplate String               @map("subject_template")
+  bodyTextTemplate String              @map("body_text_template")
+  bodyHtmlTemplate String?             @map("body_html_template")
+  variableSchema  Json                 @map("variable_schema")
+  publishedById   String?              @map("published_by_id")
+  publishedAt     DateTime             @default(now()) @map("published_at")
+  template        NotificationTemplate @relation(fields: [templateCode], references: [code], onDelete: Restrict)
+  publishedBy     User?                @relation("NotificationTemplatePublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  notifications   Notification[]
+
+  @@unique([templateCode, version])
+  @@index([publishedById, publishedAt])
+  @@map("notification_template_versions")
+}
+
+model Notification {
+  id                String                      @id @default(cuid())
+  sourceEventKey    String                      @map("source_event_key")
+  eventType         String                      @map("event_type")
+  recipientId       String                      @map("recipient_id")
+  projectId         String?                     @map("project_id")
+  templateVersionId String                      @map("template_version_id")
+  payloadHash       String                      @map("payload_hash")
+  subject           String
+  bodyText          String                      @map("body_text")
+  bodyHtml          String?                     @map("body_html")
+  targetPath        String?                     @map("target_path")
+  sensitivity       NotificationSensitivity     @default(INTERNAL)
+  createdAt         DateTime                    @default(now()) @map("created_at")
+  recipient         User                        @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  project           Project?                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  templateVersion   NotificationTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  readReceipt       NotificationReadReceipt?
+  deliveries        NotificationDelivery[]
+
+  @@unique([sourceEventKey, recipientId])
+  @@unique([id, recipientId])
+  @@index([recipientId, createdAt])
+  @@index([recipientId, sensitivity, createdAt])
+  @@index([projectId, createdAt])
+  @@map("notifications")
+}
+
+model NotificationReadReceipt {
+  id             String       @id @default(cuid())
+  notificationId String       @unique @map("notification_id")
+  recipientId    String       @map("recipient_id")
+  readAt         DateTime     @default(now()) @map("read_at")
+  notification   Notification @relation(fields: [notificationId, recipientId], references: [id, recipientId], onDelete: Restrict)
+  recipient      User         @relation("NotificationReadRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+
+  @@index([recipientId, readAt])
+  @@unique([notificationId, recipientId])
+  @@map("notification_read_receipts")
+}
+
+model NotificationDelivery {
+  id                String                     @id @default(cuid())
+  notificationId    String                     @map("notification_id")
+  channel           NotificationChannel
+  status            NotificationDeliveryStatus @default(PENDING)
+  idempotencyKey    String                     @unique @map("idempotency_key")
+  sentAt            DateTime?                  @map("sent_at")
+  providerMessageId String?                    @map("provider_message_id")
+  lastErrorCode     String?                    @map("last_error_code")
+  lastErrorMessage  String?                    @map("last_error_message")
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+  notification      Notification               @relation(fields: [notificationId], references: [id], onDelete: Restrict)
+  attempts          NotificationDeliveryAttempt[]
+
+  @@unique([notificationId, channel])
+  @@index([status, createdAt])
+  @@map("notification_deliveries")
+}
+
+model NotificationDeliveryAttempt {
+  id                String                            @id @default(cuid())
+  deliveryId        String                            @map("delivery_id")
+  attemptNumber     Int                               @map("attempt_number")
+  status            NotificationDeliveryAttemptStatus @default(RUNNING)
+  startedAt         DateTime                          @default(now()) @map("started_at")
+  completedAt       DateTime?                         @map("completed_at")
+  providerMessageId String?                           @map("provider_message_id")
+  errorCode         String?                           @map("error_code")
+  errorMessage      String?                           @map("error_message")
+  delivery          NotificationDelivery              @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+
+  @@unique([deliveryId, attemptNumber])
+  @@map("notification_delivery_attempts")
+}
+
 enum SettingValueType {
   BOOLEAN
   INTEGER
@@ -288,6 +396,28 @@ enum FileCommandStatus {
   FAILED
 }
 
+enum NotificationSensitivity {
+  INTERNAL
+  RESTRICTED
+}
+
+enum NotificationChannel {
+  EMAIL
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  RETRYING
+  SENT
+  DEAD_LETTER
+}
+
+enum NotificationDeliveryAttemptStatus {
+  RUNNING
+  SENT
+  FAILED
+}
+
 enum UserStatus {
   ACTIVE
   DISABLED
@@ -333,6 +463,12 @@ enum AuditAction {
   FILE_QUARANTINED
   FILE_PROCESSING_FAILED
   FILE_DOWNLOAD_URL_ISSUED
+  NOTIFICATION_TEMPLATE_PUBLISHED
+  NOTIFICATION_TEMPLATE_STATUS_CHANGED
+  NOTIFICATION_CREATED
+  NOTIFICATION_INBOX_READ
+  NOTIFICATION_MARKED_READ
+  NOTIFICATION_DELIVERED
 }
 
 enum AuditObjectType {
@@ -345,6 +481,9 @@ enum AuditObjectType {
   PERSISTENT_JOB
   FILE_OBJECT
   FILE_UPLOAD_SESSION
+  NOTIFICATION_TEMPLATE
+  NOTIFICATION
+  NOTIFICATION_DELIVERY
 }
 
 enum AuditSource {
@@ -384,6 +523,9 @@ model User {
   requestedJobReplays JobAttempt[]                @relation("JobAttemptRequestedBy")
   filesUploaded       FileObject[]                 @relation("FileObjectUploadedBy")
   fileCommands        FileCommand[]                @relation("FileCommandActor")
+  notificationTemplateVersionsPublished NotificationTemplateVersion[] @relation("NotificationTemplatePublishedBy")
+  notificationsReceived Notification[]             @relation("NotificationRecipient")
+  notificationReadReceipts NotificationReadReceipt[] @relation("NotificationReadRecipient")
 
   @@index([departmentId])
   @@map("users")
@@ -456,6 +598,7 @@ model Project {
   members      ProjectMember[]
   auditLogs    AuditLog[]
   files        FileObject[]
+  notifications Notification[]
 
   @@index([departmentId])
   @@map("projects")
