@@ -8,6 +8,9 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      # Prisma only parses this URL during schema validation and build; CI does not connect to it.
+      DATABASE_URL: postgresql://apm:apm@localhost:5432/apm?schema=public
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
