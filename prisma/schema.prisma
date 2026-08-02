@@ -8,10 +8,159 @@ datasource db {
 }
 
 model SystemSetting {
-  key       String   @id
+  key       String                  @id
   value     Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  valueType SettingValueType        @map("value_type")
+  version   Int                     @default(1)
+  createdAt DateTime                @default(now()) @map("created_at")
+  updatedAt DateTime                @updatedAt @map("updated_at")
+  revisions SystemSettingRevision[]
+
+  @@map("system_settings")
+}
+
+model SystemSettingRevision {
+  id           String           @id @default(cuid())
+  settingKey   String           @map("setting_key")
+  version      Int
+  value        Json
+  valueType    SettingValueType @map("value_type")
+  changedById  String?          @map("changed_by_id")
+  changeReason String?          @map("change_reason")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  setting      SystemSetting    @relation(fields: [settingKey], references: [key], onDelete: Restrict)
+  changedBy    User?            @relation("SystemSettingRevisionChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@unique([settingKey, version])
+  @@index([changedById, createdAt])
+  @@map("system_setting_revisions")
+}
+
+model CompanyCapability {
+  code      CapabilityCode              @id
+  enabled   Boolean                     @default(false)
+  version   Int                         @default(1)
+  createdAt DateTime                    @default(now()) @map("created_at")
+  updatedAt DateTime                    @updatedAt @map("updated_at")
+  revisions CompanyCapabilityRevision[]
+
+  @@map("company_capabilities")
+}
+
+model CompanyCapabilityRevision {
+  id             String            @id @default(cuid())
+  capabilityCode CapabilityCode    @map("capability_code")
+  version        Int
+  enabled        Boolean
+  changedById    String?           @map("changed_by_id")
+  changeReason   String?           @map("change_reason")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  capability     CompanyCapability @relation(fields: [capabilityCode], references: [code], onDelete: Restrict)
+  changedBy      User?             @relation("CompanyCapabilityRevisionChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@unique([capabilityCode, version])
+  @@index([changedById, createdAt])
+  @@map("company_capability_revisions")
+}
+
+model OutboxEvent {
+  id             String         @id @default(cuid())
+  eventType      String         @map("event_type")
+  aggregateType  String         @map("aggregate_type")
+  aggregateId    String?        @map("aggregate_id")
+  payload        Json
+  payloadHash    String         @map("payload_hash")
+  idempotencyKey String         @map("idempotency_key")
+  occurredAt     DateTime       @default(now()) @map("occurred_at")
+  dispatchedAt   DateTime?      @map("dispatched_at")
+  job            PersistentJob?
+
+  @@unique([eventType, idempotencyKey])
+  @@index([dispatchedAt, occurredAt])
+  @@map("outbox_events")
+}
+
+model PersistentJob {
+  id                  String       @id @default(cuid())
+  sourceOutboxEventId String?      @unique @map("source_outbox_event_id")
+  jobType             String       @map("job_type")
+  payload             Json
+  payloadHash         String       @map("payload_hash")
+  idempotencyKey      String       @map("idempotency_key")
+  status              JobStatus    @default(PENDING)
+  maxAttempts         Int          @map("max_attempts")
+  attemptCount        Int          @default(0) @map("attempt_count")
+  cycleAttemptCount   Int          @default(0) @map("cycle_attempt_count")
+  nextRunAt           DateTime     @default(now()) @map("next_run_at")
+  lockedAt            DateTime?    @map("locked_at")
+  lockedBy            String?      @map("locked_by")
+  leaseExpiresAt      DateTime?    @map("lease_expires_at")
+  lastErrorCode       String?      @map("last_error_code")
+  lastErrorMessage    String?      @map("last_error_message")
+  completedAt         DateTime?    @map("completed_at")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+  sourceOutboxEvent   OutboxEvent? @relation(fields: [sourceOutboxEventId], references: [id], onDelete: Restrict)
+  attempts            JobAttempt[]
+
+  @@unique([jobType, idempotencyKey])
+  @@index([status, nextRunAt])
+  @@index([status, leaseExpiresAt])
+  @@map("persistent_jobs")
+}
+
+model JobAttempt {
+  id            String           @id @default(cuid())
+  jobId         String           @map("job_id")
+  attemptNumber Int              @map("attempt_number")
+  status        JobAttemptStatus @default(QUEUED)
+  availableAt   DateTime         @default(now()) @map("available_at")
+  startedAt     DateTime?        @map("started_at")
+  completedAt   DateTime?        @map("completed_at")
+  workerId      String?          @map("worker_id")
+  errorCode     String?          @map("error_code")
+  errorMessage  String?          @map("error_message")
+  isReplay      Boolean          @default(false) @map("is_replay")
+  requestedById String?          @map("requested_by_id")
+  replayReason  String?          @map("replay_reason")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  job           PersistentJob    @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  requestedBy   User?            @relation("JobAttemptRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  @@unique([jobId, attemptNumber])
+  @@index([status, availableAt])
+  @@index([requestedById, createdAt])
+  @@map("job_attempts")
+}
+
+enum SettingValueType {
+  BOOLEAN
+  INTEGER
+  STRING
+  JSON
+}
+
+enum CapabilityCode {
+  SUPPLIER_COLLABORATION
+  CUSTOMER_PROGRESS_SHARING
+  AI_ISSUE_INTAKE
+  UPH_ANALYSIS
+  INCENTIVE_MANAGEMENT
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  RETRY_SCHEDULED
+  SUCCEEDED
+  DEAD_LETTER
+}
+
+enum JobAttemptStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
 }
 
 enum UserStatus {
@@ -50,12 +199,19 @@ enum AuditAction {
   PROJECT_MEMBER_ADDED
   PROJECT_MEMBER_ENDED
   AUDIT_LOG_READ
+  CONFIGURATION_SETTING_CHANGED
+  COMPANY_CAPABILITY_CHANGED
+  JOB_REPLAYED
 }
 
 enum AuditObjectType {
   PROJECT
   PROJECT_MEMBER
   AUDIT_LOG
+  SYSTEM_SETTING
+  COMPANY_CAPABILITY
+  OUTBOX_EVENT
+  PERSISTENT_JOB
 }
 
 enum AuditSource {
@@ -74,22 +230,25 @@ enum AuditResult {
 }
 
 model User {
-  id                  String          @id @default(cuid())
-  employeeNo          String          @unique @map("employee_no")
+  id                  String                      @id @default(cuid())
+  employeeNo          String                      @unique @map("employee_no")
   name                String
-  email               String?         @unique
-  departmentId        String?         @map("department_id")
-  status              UserStatus      @default(ACTIVE)
-  version             Int             @default(1)
-  createdAt           DateTime        @default(now()) @map("created_at")
-  updatedAt           DateTime        @updatedAt @map("updated_at")
-  roleAssignments     UserRole[]      @relation("RoleAssignmentUser")
-  rolesAssigned       UserRole[]      @relation("RoleAssignmentActor")
-  memberships         ProjectMember[] @relation("ProjectMemberUser")
-  membershipsAssigned ProjectMember[] @relation("ProjectMemberAssignedBy")
-  membershipsEnded    ProjectMember[] @relation("ProjectMemberLeftBy")
-  projectsCreated     Project[]       @relation("ProjectCreatedBy")
+  email               String?                     @unique
+  departmentId        String?                     @map("department_id")
+  status              UserStatus                  @default(ACTIVE)
+  version             Int                         @default(1)
+  createdAt           DateTime                    @default(now()) @map("created_at")
+  updatedAt           DateTime                    @updatedAt @map("updated_at")
+  roleAssignments     UserRole[]                  @relation("RoleAssignmentUser")
+  rolesAssigned       UserRole[]                  @relation("RoleAssignmentActor")
+  memberships         ProjectMember[]             @relation("ProjectMemberUser")
+  membershipsAssigned ProjectMember[]             @relation("ProjectMemberAssignedBy")
+  membershipsEnded    ProjectMember[]             @relation("ProjectMemberLeftBy")
+  projectsCreated     Project[]                   @relation("ProjectCreatedBy")
   auditLogs           AuditLog[]
+  settingRevisions    SystemSettingRevision[]     @relation("SystemSettingRevisionChangedBy")
+  capabilityRevisions CompanyCapabilityRevision[] @relation("CompanyCapabilityRevisionChangedBy")
+  requestedJobReplays JobAttempt[]                @relation("JobAttemptRequestedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -188,27 +347,27 @@ model ProjectMember {
 }
 
 model AuditLog {
-  id             String          @id @default(cuid())
-  actorId        String?         @map("actor_id")
-  action         AuditAction
-  objectType     AuditObjectType @map("object_type")
-  objectId       String?         @map("object_id")
-  projectId      String?         @map("project_id")
-  departmentId   String?         @map("department_id")
-  requestId      String?         @map("request_id")
-  traceId        String?         @map("trace_id")
-  operationId    String?         @map("operation_id")
-  beforeJson     Json?           @map("before_json")
-  afterJson      Json?           @map("after_json")
-  metadataJson   Json?           @map("metadata_json")
-  source         AuditSource
-  sourceIp       String?         @map("source_ip")
-  userAgent      String?         @map("user_agent")
-  reason         String?
-  result         AuditResult     @default(SUCCESS)
-  occurredAt     DateTime        @default(now()) @map("occurred_at")
-  actor          User?           @relation(fields: [actorId], references: [id], onDelete: Restrict)
-  project        Project?        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  id           String          @id @default(cuid())
+  actorId      String?         @map("actor_id")
+  action       AuditAction
+  objectType   AuditObjectType @map("object_type")
+  objectId     String?         @map("object_id")
+  projectId    String?         @map("project_id")
+  departmentId String?         @map("department_id")
+  requestId    String?         @map("request_id")
+  traceId      String?         @map("trace_id")
+  operationId  String?         @map("operation_id")
+  beforeJson   Json?           @map("before_json")
+  afterJson    Json?           @map("after_json")
+  metadataJson Json?           @map("metadata_json")
+  source       AuditSource
+  sourceIp     String?         @map("source_ip")
+  userAgent    String?         @map("user_agent")
+  reason       String?
+  result       AuditResult     @default(SUCCESS)
+  occurredAt   DateTime        @default(now()) @map("occurred_at")
+  actor        User?           @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  project      Project?        @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   @@index([actorId, occurredAt])
   @@index([objectType, objectId, occurredAt])
