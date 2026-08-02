@@ -8,10 +8,11 @@ import {
   parseIfMatchVersion,
   ProjectMemberError
 } from "@/lib/projects/members";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 type RouteContext = { params: Promise<{ projectId: string; membershipId: string }> };
 
-export async function DELETE(request: Request, context: RouteContext) {
+async function endMembership(request: Request, context: RouteContext) {
   const { projectId, membershipId } = await context.params;
   const guard = await authorizeProjectRequest(
     request,
@@ -57,3 +58,8 @@ export async function DELETE(request: Request, context: RouteContext) {
     throw error;
   }
 }
+
+export const DELETE = withRequestObservability(
+  { module: "projects", operation: "end-membership" },
+  endMembership
+);

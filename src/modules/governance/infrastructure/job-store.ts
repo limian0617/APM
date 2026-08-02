@@ -16,6 +16,7 @@ type LockedOutboxRow = {
   payload: Prisma.JsonValue;
   payload_hash: string;
   idempotency_key: string;
+  trace_id: string | null;
 };
 
 type LockedJobRow = {
@@ -24,6 +25,7 @@ type LockedJobRow = {
   payload: Prisma.JsonValue;
   payload_hash: string;
   idempotency_key: string;
+  trace_id: string | null;
   max_attempts: number;
   attempt_count: number;
   cycle_attempt_count: number;
@@ -69,7 +71,7 @@ export async function materializeOutboxEvents(
   return database.$transaction(async (transaction) => {
     const now = await databaseNow(transaction);
     const events = await transaction.$queryRaw<LockedOutboxRow[]>(Prisma.sql`
-      SELECT "id", "event_type", "payload", "payload_hash", "idempotency_key"
+      SELECT "id", "event_type", "payload", "payload_hash", "idempotency_key", "trace_id"
       FROM "outbox_events"
       WHERE "dispatched_at" IS NULL
       ORDER BY "occurred_at", "id"
@@ -107,6 +109,7 @@ export async function materializeOutboxEvents(
               payload: event.payload as Prisma.InputJsonValue,
               payloadHash: event.payload_hash,
               idempotencyKey: event.idempotency_key,
+              traceId: event.trace_id,
               maxAttempts,
               nextRunAt: now,
               attempts: {
@@ -135,7 +138,7 @@ async function recoverExpiredLeases(
   limit: number
 ) {
   const expired = await transaction.$queryRaw<LockedJobRow[]>(Prisma.sql`
-    SELECT "id", "job_type", "payload", "payload_hash", "idempotency_key",
+    SELECT "id", "job_type", "payload", "payload_hash", "idempotency_key", "trace_id",
            "max_attempts", "attempt_count", "cycle_attempt_count"
     FROM "persistent_jobs"
     WHERE "status" = 'RUNNING'::"JobStatus"
@@ -211,7 +214,7 @@ export async function claimJobs(
     await recoverExpiredLeases(transaction, now, input.policy, limit);
 
     const jobs = await transaction.$queryRaw<LockedJobRow[]>(Prisma.sql`
-      SELECT "id", "job_type", "payload", "payload_hash", "idempotency_key",
+      SELECT "id", "job_type", "payload", "payload_hash", "idempotency_key", "trace_id",
              "max_attempts", "attempt_count", "cycle_attempt_count"
       FROM "persistent_jobs"
       WHERE "status" IN ('PENDING'::"JobStatus", 'RETRY_SCHEDULED'::"JobStatus")
@@ -267,6 +270,7 @@ export async function claimJobs(
         payload: job.payload as JsonValue,
         payloadHash: job.payload_hash,
         idempotencyKey: job.idempotency_key,
+        traceId: job.trace_id,
         attemptId: attempt.id,
         attemptNumber: attempt.attemptNumber,
         maxAttempts: job.max_attempts,

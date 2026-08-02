@@ -127,6 +127,29 @@ attempt is recorded before SMTP is called, and terminal attempt facts cannot be 
 Configure the `SMTP_*` variables shown in `.env.example`. Production SMTP credentials and service
 provisioning remain outside the repository.
 
+## APM-007 observability and health
+
+APM-007 provides one structured observability boundary for Route Handlers and durable Worker jobs.
+Every request receives validated `x-request-id` and `x-trace-id` response headers; the same IDs are
+available to audit writes. Transactional Outbox events persist the trace and carry it into the
+materialized job so retries and Dead Letter attempts remain correlated.
+
+Operational endpoints:
+
+- `GET /api/health` is a dependency-free liveness check.
+- `GET /api/ready` checks PostgreSQL connectivity and the expected migration without returning raw
+  dependency errors.
+- `GET /api/metrics` exports Prometheus HTTP, authorization, Worker, queue, file,
+  notification, error-reporting, and readiness signals. Production access requires
+  `OBSERVABILITY_METRICS_TOKEN` as a bearer token.
+
+Logs are emitted as Pino JSON with stable module/operation names, result, duration, actor/project
+context, and request/job correlation. Telemetry recursively redacts credentials, OTP, HR values,
+share codes, signatures, and raw file content. Sanitized errors use a vendor-neutral reporting
+port; configure the optional HTTPS intake variables in `.env.example`, or retain reports in JSON
+logs. Production collectors, dashboards, alert thresholds, and credentials stay outside the
+repository.
+
 ## Current scope
 
 APM-001 establishes the runtime and database tooling. APM-002 establishes authorization and the
@@ -135,3 +158,5 @@ runtime configuration, company capability switches, transactional Outbox, and du
 APM-005 establishes private file upload, scan, and download infrastructure.
 APM-006 establishes versioned notification templates, recipient inboxes, read receipts, and durable
 email delivery.
+APM-007 establishes structured logs, trace propagation, operational metrics, safe error reporting,
+and separate liveness/readiness checks.

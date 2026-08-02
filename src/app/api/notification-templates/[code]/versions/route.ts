@@ -4,10 +4,11 @@ import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { AUDIT_OBJECT_TYPES } from "@/modules/audit/domain/vocabulary";
 import { publishNotificationTemplate } from "@/modules/notifications/application/notification-template-service";
 import { notificationErrorResponse } from "@/modules/notifications/contracts/notification-http";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 type RouteContext = { params: Promise<{ code: string }> };
 
-export async function POST(request: Request, context: RouteContext) {
+async function publishVersion(request: Request, context: RouteContext) {
   const { code } = await context.params;
   const guard = await authorizeSystemRequest(
     request,
@@ -45,3 +46,8 @@ export async function POST(request: Request, context: RouteContext) {
     throw error;
   }
 }
+
+export const POST = withRequestObservability(
+  { module: "notification-templates", operation: "publish-version" },
+  publishVersion
+);

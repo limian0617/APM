@@ -71,12 +71,14 @@ model OutboxEvent {
   payload        Json
   payloadHash    String         @map("payload_hash")
   idempotencyKey String         @map("idempotency_key")
+  traceId        String?        @map("trace_id")
   occurredAt     DateTime       @default(now()) @map("occurred_at")
   dispatchedAt   DateTime?      @map("dispatched_at")
   job            PersistentJob?
 
   @@unique([eventType, idempotencyKey])
   @@index([dispatchedAt, occurredAt])
+  @@index([traceId, occurredAt])
   @@map("outbox_events")
 }
 
@@ -87,6 +89,7 @@ model PersistentJob {
   payload             Json
   payloadHash         String       @map("payload_hash")
   idempotencyKey      String       @map("idempotency_key")
+  traceId             String?      @map("trace_id")
   status              JobStatus    @default(PENDING)
   maxAttempts         Int          @map("max_attempts")
   attemptCount        Int          @default(0) @map("attempt_count")
@@ -106,6 +109,7 @@ model PersistentJob {
   @@unique([jobType, idempotencyKey])
   @@index([status, nextRunAt])
   @@index([status, leaseExpiresAt])
+  @@index([traceId, createdAt])
   @@map("persistent_jobs")
 }
 

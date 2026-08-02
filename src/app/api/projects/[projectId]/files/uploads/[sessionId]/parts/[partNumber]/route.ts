@@ -7,12 +7,13 @@ import {
 import { fileErrorResponse } from "@/modules/documents/contracts/file-http";
 import { FileValidationError } from "@/modules/documents/domain/file-policy";
 import { createS3ObjectStorageFromEnvironment } from "@/modules/documents/infrastructure/s3-object-storage";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 type RouteContext = {
   params: Promise<{ projectId: string; sessionId: string; partNumber: string }>;
 };
 
-export async function POST(request: Request, context: RouteContext) {
+async function signUploadPart(request: Request, context: RouteContext) {
   const { projectId, sessionId, partNumber } = await context.params;
   const guard = await authorizeProjectRequest(request, projectId, PERMISSIONS.FILE_UPLOAD);
   if (!guard.authorized) return guard.response;
@@ -35,3 +36,8 @@ export async function POST(request: Request, context: RouteContext) {
     throw error;
   }
 }
+
+export const POST = withRequestObservability(
+  { module: "files", operation: "sign-upload-part" },
+  signUploadPart
+);

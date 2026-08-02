@@ -3,10 +3,11 @@ import { authorizeSystemRequest } from "@/lib/auth/system-guard";
 import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { AUDIT_OBJECT_TYPES } from "@/modules/audit/domain/vocabulary";
 import { replayDeadLetterJob, ReplayJobError } from "@/modules/governance/application/replay-job";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 type RouteContext = { params: Promise<{ jobId: string }> };
 
-export async function POST(request: Request, context: RouteContext) {
+async function replayJob(request: Request, context: RouteContext) {
   const { jobId } = await context.params;
   const guard = await authorizeSystemRequest(
     request,
@@ -53,3 +54,5 @@ export async function POST(request: Request, context: RouteContext) {
     throw error;
   }
 }
+
+export const POST = withRequestObservability({ module: "jobs", operation: "replay" }, replayJob);
