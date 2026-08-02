@@ -105,9 +105,33 @@ hash, receives a clean scan, and copies the opaque object into the controlled bu
 the `APM_S3_*` and `APM_CLAMAV_*` variables shown in `.env.example`; production credentials and
 bucket/scanner provisioning stay outside the repository.
 
+## APM-006 notifications and email delivery
+
+APM-006 adds immutable notification-template versions, frozen per-recipient inbox records,
+first-read receipts, and durable email-delivery history. Template variables are checked against a
+strict schema before rendering; unknown or missing variables are rejected, and HTML values are
+escaped. Inbox reads are always restricted to the authenticated recipient, with an additional
+project-membership and permission check for restricted notifications.
+
+Notification endpoints:
+
+- `GET /api/notifications` returns the caller's authorized inbox.
+- `POST /api/notifications/{notificationId}/read` records the immutable first-read time.
+- `POST /api/notification-templates/{code}/versions` publishes a new immutable version.
+- `PUT /api/notification-templates/{code}/status` enables or disables a template using optimistic
+  locking and an audited reason.
+
+`createNotificationJobHandlers` binds `notification.email.requested` jobs to the Nodemailer
+adapter. The stable event, recipient, and channel key is reused for every retry; each external
+attempt is recorded before SMTP is called, and terminal attempt facts cannot be changed or deleted.
+Configure the `SMTP_*` variables shown in `.env.example`. Production SMTP credentials and service
+provisioning remain outside the repository.
+
 ## Current scope
 
 APM-001 establishes the runtime and database tooling. APM-002 establishes authorization and the
 project-member boundary. APM-003 establishes full-system audit infrastructure. APM-004 establishes
 runtime configuration, company capability switches, transactional Outbox, and durable jobs.
 APM-005 establishes private file upload, scan, and download infrastructure.
+APM-006 establishes versioned notification templates, recipient inboxes, read receipts, and durable
+email delivery.
