@@ -172,6 +172,21 @@ export const jobPathSchema = z.strictObject({ jobId: identifierSchema });
 export const replayJobBodySchema = z.strictObject({ reason: reasonSchema });
 
 export const projectPathSchema = z.strictObject({ projectId: identifierSchema });
+export const createProjectBodySchema = z.strictObject({
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Z][A-Z0-9_.-]{2,100}$/u),
+  name: z.string().trim().min(1).max(200),
+  departmentId: identifierSchema.nullable().optional(),
+  templateCode: z
+    .string()
+    .trim()
+    .regex(/^[A-Z][A-Z0-9_.-]{2,100}$/u),
+  templateVersion: positiveVersionSchema,
+  templateChecksum: z.string().regex(/^[0-9a-f]{64}$/u),
+  reason: reasonSchema
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema

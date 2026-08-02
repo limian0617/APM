@@ -214,19 +214,24 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
   });
 
   it("uses SKIP LOCKED so concurrent workers never claim the same job", async () => {
+    const eventType = `test.concurrent.${suffix}`;
     const event = await appendOutboxEvent(db, {
-      eventType: `test.concurrent.${suffix}`,
+      eventType,
       aggregateType: "TEST",
       aggregateId: suffix,
       idempotencyKey: `concurrent-${suffix}`,
       payload: { suffix }
     });
-    const [jobId] = await materializeOutboxEvents({ limit: 20, maxAttempts: 3 });
+    const [jobId] = await materializeOutboxEvents({
+      limit: 20,
+      maxAttempts: 3,
+      eventTypes: [eventType]
+    });
     expect(jobId).toBeTruthy();
 
     const [first, second] = await Promise.all([
-      claimJobs({ workerId: `worker-a-${suffix}`, policy }),
-      claimJobs({ workerId: `worker-b-${suffix}`, policy })
+      claimJobs({ workerId: `worker-a-${suffix}`, policy, jobTypes: [eventType] }),
+      claimJobs({ workerId: `worker-b-${suffix}`, policy, jobTypes: [eventType] })
     ]);
     const claims = [...first, ...second].filter(
       ({ idempotencyKey }) => idempotencyKey === event.idempotencyKey
@@ -269,25 +274,26 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
   });
 
   it("recovers an expired lease before another worker executes the retry", async () => {
+    const eventType = `test.lease.${suffix}`;
     const eventKey = `lease-${suffix}`;
     await appendOutboxEvent(db, {
-      eventType: `test.lease.${suffix}`,
+      eventType,
       aggregateType: "TEST",
       aggregateId: suffix,
       idempotencyKey: eventKey,
       payload: { lease: true }
     });
-    await materializeOutboxEvents({ limit: 20, maxAttempts: 2 });
-    const first = (await claimJobs({ workerId: `lease-worker-a-${suffix}`, policy })).find(
-      ({ idempotencyKey }) => idempotencyKey === eventKey
-    );
+    await materializeOutboxEvents({ limit: 20, maxAttempts: 2, eventTypes: [eventType] });
+    const first = (
+      await claimJobs({ workerId: `lease-worker-a-${suffix}`, policy, jobTypes: [eventType] })
+    ).find(({ idempotencyKey }) => idempotencyKey === eventKey);
     expect(first).toBeTruthy();
     await db.persistentJob.update({
       where: { id: first!.id },
       data: { leaseExpiresAt: new Date(Date.now() - 1000) }
     });
 
-    await claimJobs({ workerId: `lease-recovery-${suffix}`, policy });
+    await claimJobs({ workerId: `lease-recovery-${suffix}`, policy, jobTypes: [eventType] });
     await expect(
       db.jobAttempt.findUniqueOrThrow({ where: { id: first!.attemptId } })
     ).resolves.toMatchObject({ status: JobAttemptStatus.FAILED, errorCode: "LEASE_EXPIRED" });
@@ -300,9 +306,9 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
         data: { availableAt: due }
       })
     ]);
-    const recovered = (await claimJobs({ workerId: `lease-worker-b-${suffix}`, policy })).find(
-      ({ id }) => id === first!.id
-    );
+    const recovered = (
+      await claimJobs({ workerId: `lease-worker-b-${suffix}`, policy, jobTypes: [eventType] })
+    ).find(({ id }) => id === first!.id);
     expect(recovered).toMatchObject({ attemptNumber: 2, workerId: `lease-worker-b-${suffix}` });
     await completeClaimedJob(recovered!);
   });
@@ -317,11 +323,11 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
       idempotencyKey: eventKey,
       payload: { shouldFail: true }
     });
-    await materializeOutboxEvents({ limit: 20, maxAttempts: 2 });
+    await materializeOutboxEvents({ limit: 20, maxAttempts: 2, eventTypes: [eventType] });
 
-    const first = (await claimJobs({ workerId: `failure-worker-${suffix}`, policy })).find(
-      ({ idempotencyKey }) => idempotencyKey === eventKey
-    );
+    const first = (
+      await claimJobs({ workerId: `failure-worker-${suffix}`, policy, jobTypes: [eventType] })
+    ).find(({ idempotencyKey }) => idempotencyKey === eventKey);
     expect(first).toBeTruthy();
     const firstFailure = await failClaimedJob(
       first!,
@@ -339,9 +345,9 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
         data: { availableAt: due }
       })
     ]);
-    const second = (await claimJobs({ workerId: `failure-worker-${suffix}`, policy })).find(
-      ({ id }) => id === first!.id
-    );
+    const second = (
+      await claimJobs({ workerId: `failure-worker-${suffix}`, policy, jobTypes: [eventType] })
+    ).find(({ id }) => id === first!.id);
     expect(second?.attemptNumber).toBe(2);
     const secondFailure = await failClaimedJob(
       second!,

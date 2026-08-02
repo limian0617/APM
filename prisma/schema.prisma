@@ -118,6 +118,7 @@ model TemplateComponentVersion {
   publishedBy    User                  @relation("TemplateComponentVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
   draftReferences TemplateDraftComponent[]
   versionReferences TemplateVersionComponent[]
+  projectSnapshotComponents ProjectTemplateSnapshotComponent[]
 
   @@unique([componentId, version])
   @@index([componentType, publishedAt])
@@ -175,6 +176,8 @@ model ProjectTemplateVersion {
   template      ProjectTemplate            @relation(fields: [templateId], references: [id], onDelete: Restrict)
   publishedBy   User                       @relation("ProjectTemplateVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
   components    TemplateVersionComponent[]
+  sourceProjects Project[]                  @relation("ProjectSourceTemplateVersion")
+  projectSnapshots ProjectTemplateSnapshot[] @relation("ProjectSnapshotSourceTemplateVersion")
 
   @@unique([templateId, version])
   @@index([publishedById, publishedAt])
@@ -596,6 +599,11 @@ enum ProjectStatus {
   CANCELED
 }
 
+enum ProjectInitializationStatus {
+  LEGACY
+  READY
+}
+
 enum ProjectRole {
   PROJECT_MANAGER
   DEPARTMENT_LEAD
@@ -631,6 +639,7 @@ enum AuditAction {
   TEMPLATE_DRAFT_SAVED
   TEMPLATE_PUBLISHED
   TEMPLATE_STATUS_CHANGED
+  PROJECT_CREATED
 }
 
 enum AuditObjectType {
@@ -755,25 +764,73 @@ model UserRole {
   @@map("user_roles")
 }
 
-// APM-011 will extend this project shell with the template snapshot and lifecycle fields.
 model Project {
-  id           String          @id @default(cuid())
-  code         String          @unique
-  name         String
-  departmentId String?         @map("department_id")
-  status       ProjectStatus   @default(DRAFT)
-  version      Int             @default(1)
-  createdById  String          @map("created_by_id")
-  createdAt    DateTime        @default(now()) @map("created_at")
-  updatedAt    DateTime        @updatedAt @map("updated_at")
-  createdBy    User            @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  members      ProjectMember[]
-  auditLogs    AuditLog[]
-  files        FileObject[]
-  notifications Notification[]
+  id                      String                      @id @default(cuid())
+  code                    String                      @unique
+  name                    String
+  departmentId            String?                     @map("department_id")
+  status                  ProjectStatus               @default(DRAFT)
+  initializationStatus    ProjectInitializationStatus @default(LEGACY) @map("initialization_status")
+  sourceTemplateVersionId String?                     @map("source_template_version_id")
+  sourceTemplateChecksum  String?                     @map("source_template_checksum")
+  initializedAt           DateTime?                   @map("initialized_at")
+  version                 Int                         @default(1)
+  createdById             String                      @map("created_by_id")
+  createdAt               DateTime                    @default(now()) @map("created_at")
+  updatedAt               DateTime                    @updatedAt @map("updated_at")
+  createdBy               User                        @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  sourceTemplateVersion   ProjectTemplateVersion?     @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
+  templateSnapshot        ProjectTemplateSnapshot?
+  members                 ProjectMember[]
+  auditLogs               AuditLog[]
+  files                   FileObject[]
+  notifications           Notification[]
 
   @@index([departmentId])
+  @@index([sourceTemplateVersionId])
+  @@index([initializationStatus, createdAt])
   @@map("projects")
+}
+
+model ProjectTemplateSnapshot {
+  id                      String                             @id @default(cuid())
+  projectId               String                             @unique @map("project_id")
+  sourceTemplateVersionId String                             @map("source_template_version_id")
+  sourceTemplateChecksum  String                             @map("source_template_checksum")
+  snapshotChecksum        String                             @map("snapshot_checksum")
+  templateCode            String                             @map("template_code")
+  templateName            String                             @map("template_name")
+  templateVersion         Int                                @map("template_version")
+  templatePublishedAt     DateTime                           @map("template_published_at")
+  createdAt               DateTime                           @default(now()) @map("created_at")
+  project                 Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceTemplateVersion   ProjectTemplateVersion             @relation("ProjectSnapshotSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
+  components              ProjectTemplateSnapshotComponent[]
+
+  @@index([sourceTemplateVersionId, createdAt])
+  @@map("project_template_snapshots")
+}
+
+model ProjectTemplateSnapshotComponent {
+  id                       String                   @id @default(cuid())
+  snapshotId               String                   @map("snapshot_id")
+  sourceComponentVersionId String                   @map("source_component_version_id")
+  componentType            TemplateComponentType    @map("component_type")
+  slot                     String
+  position                 Int
+  sourceChecksum           String                   @map("source_checksum")
+  componentCode            String                   @map("component_code")
+  componentName            String                   @map("component_name")
+  componentVersion         Int                      @map("component_version")
+  description              String?
+  contentJson              Json                     @map("content_json")
+  snapshot                 ProjectTemplateSnapshot  @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  sourceComponentVersion   TemplateComponentVersion @relation(fields: [sourceComponentVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([snapshotId, slot])
+  @@unique([snapshotId, position])
+  @@index([sourceComponentVersionId])
+  @@map("project_template_snapshot_components")
 }
 
 model ProjectMember {

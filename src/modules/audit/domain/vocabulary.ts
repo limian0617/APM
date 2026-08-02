@@ -23,7 +23,8 @@ export const AUDIT_ACTIONS = {
   TEMPLATE_COMPONENT_STATUS_CHANGED: "TEMPLATE_COMPONENT_STATUS_CHANGED",
   TEMPLATE_DRAFT_SAVED: "TEMPLATE_DRAFT_SAVED",
   TEMPLATE_PUBLISHED: "TEMPLATE_PUBLISHED",
-  TEMPLATE_STATUS_CHANGED: "TEMPLATE_STATUS_CHANGED"
+  TEMPLATE_STATUS_CHANGED: "TEMPLATE_STATUS_CHANGED",
+  PROJECT_CREATED: "PROJECT_CREATED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -141,6 +142,21 @@ export const TEMPLATE_AUDIT_FIELDS = [
   "checksum",
   "referenceCount",
   "enabled"
+] as const;
+
+export const PROJECT_CREATION_AUDIT_FIELDS = [
+  "projectId",
+  "projectCode",
+  "projectName",
+  "departmentId",
+  "status",
+  "initializationStatus",
+  "sourceTemplateVersionId",
+  "sourceTemplateChecksum",
+  "snapshotId",
+  "snapshotChecksum",
+  "referenceCount",
+  "version"
 ] as const;
 
 export const AUDIT_QUERY_FIELDS = [

@@ -42,7 +42,7 @@ describeDatabase("APM-007 PostgreSQL observability", () => {
       })
     );
     expect(event.traceId).toBe(traceId);
-    await materializeOutboxEvents({ limit: 500, maxAttempts: 2 });
+    await materializeOutboxEvents({ limit: 500, maxAttempts: 2, eventTypes: [eventType] });
     const job = await db.persistentJob.findUniqueOrThrow({
       where: { sourceOutboxEventId: event.id }
     });

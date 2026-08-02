@@ -106,11 +106,13 @@ export async function runJobBatch(input: {
   let claimed: JobExecution[];
   try {
     policy = input.policy ?? (await loadWorkerPolicy());
+    const jobTypes = Object.keys(input.handlers);
     materializedJobIds = await materializeOutboxEvents({
       limit: policy.claimBatchSize,
-      maxAttempts: policy.defaultMaxAttempts
+      maxAttempts: policy.defaultMaxAttempts,
+      eventTypes: jobTypes
     });
-    claimed = await claimJobs({ workerId: input.workerId, policy });
+    claimed = await claimJobs({ workerId: input.workerId, policy, jobTypes });
   } catch (error) {
     const durationSeconds = Math.max(0, observability.now() - batchStartedAt) / 1000;
     observeSafely(() => {
