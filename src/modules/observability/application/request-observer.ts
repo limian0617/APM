@@ -4,6 +4,10 @@ import type {
   ObservabilityMetrics,
   StructuredLogger
 } from "../contracts/telemetry";
+import {
+  apiErrorResponse,
+  normalizeApiErrorResponse
+} from "@/modules/platform-api/contracts/errors";
 import { createCorrelationIds, normalizeRequestId } from "../domain/correlation";
 import { observeSafely } from "../domain/safety";
 import { reportErrorSafely } from "../infrastructure/error-reporter";
@@ -46,13 +50,18 @@ function projectIdFromPath(pathname: string): string | null {
   }
 }
 
-function observedResponse(response: Response, requestId: string, traceId: string): Response {
-  const headers = new Headers(response.headers);
+async function observedResponse(
+  response: Response,
+  requestId: string,
+  traceId: string
+): Promise<Response> {
+  const normalized = await normalizeApiErrorResponse(response, requestId, traceId);
+  const headers = new Headers(normalized.headers);
   headers.set("x-request-id", requestId);
   headers.set("x-trace-id", traceId);
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
+  return new Response(normalized.body, {
+    status: normalized.status,
+    statusText: normalized.statusText,
     headers
   });
 }
@@ -121,7 +130,7 @@ export function withRequestObservability<TContext>(
             metrics: dependencies.metrics
           });
         }
-        return observedResponse(response, requestId, traceId);
+        return await observedResponse(response, requestId, traceId);
       } catch (error) {
         const durationSeconds = Math.max(0, dependencies.now() - startedAt) / 1000;
         observeSafely(() => {
@@ -157,7 +166,15 @@ export function withRequestObservability<TContext>(
           logger: dependencies.logger,
           metrics: dependencies.metrics
         });
-        throw error;
+        return await observedResponse(
+          apiErrorResponse({
+            status: 500,
+            code: "INTERNAL_ERROR",
+            message: "服务暂时无法完成请求，请稍后重试。"
+          }),
+          requestId,
+          traceId
+        );
       }
     });
   };

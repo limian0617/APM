@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 
+import { Prisma } from "@prisma/client";
+
 import type { AuthorizationActor } from "@/lib/auth/authorize";
 import { PERMISSIONS, PERMISSION_SCOPES } from "@/lib/auth/permissions";
-import { db } from "@/lib/db";
+import { db, inTransaction } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   AUDIT_ACTIONS,
@@ -347,13 +349,16 @@ export async function listNotifications(input: {
   };
 }
 
-export async function markNotificationRead(input: {
-  notificationId: string;
-  actor: AuthorizationActor;
-  auditContext: AuditContext;
-  method: string;
-  path: string;
-}) {
+export async function markNotificationRead(
+  input: {
+    notificationId: string;
+    actor: AuthorizationActor;
+    auditContext: AuditContext;
+    method: string;
+    path: string;
+  },
+  transaction?: Prisma.TransactionClient
+) {
   const notification = await db.notification.findUnique({ where: { id: input.notificationId } });
   if (!notification || notification.recipientId !== input.actor.id) {
     await recordNotificationDenial({
@@ -381,16 +386,16 @@ export async function markNotificationRead(input: {
     throw new NotificationValidationError("FORBIDDEN", "当前角色无权读取此通知。", 403);
   }
 
-  return db.$transaction(async (transaction) => {
-    const created = await transaction.notificationReadReceipt.createMany({
+  return inTransaction(transaction, async (client) => {
+    const created = await client.notificationReadReceipt.createMany({
       data: { notificationId: notification.id, recipientId: input.actor.id },
       skipDuplicates: true
     });
-    const receipt = await transaction.notificationReadReceipt.findUniqueOrThrow({
+    const receipt = await client.notificationReadReceipt.findUniqueOrThrow({
       where: { notificationId: notification.id }
     });
     if (created.count === 0) return { readAt: receipt.readAt, repeated: true, auditId: null };
-    const audit = await writeAudit(transaction, {
+    const audit = await writeAudit(client, {
       action: AUDIT_ACTIONS.NOTIFICATION_MARKED_READ,
       objectType: AUDIT_OBJECT_TYPES.NOTIFICATION,
       objectId: notification.id,

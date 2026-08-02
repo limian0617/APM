@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 
-import { db } from "@/lib/db";
+import { inTransaction } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   AUDIT_ACTIONS,
@@ -29,22 +29,25 @@ function reason(value: unknown): string {
   return value.trim();
 }
 
-export async function publishNotificationTemplate(input: {
-  code: string;
-  actorId: string;
-  expectedVersion: unknown;
-  subjectTemplate: unknown;
-  bodyTextTemplate: unknown;
-  bodyHtmlTemplate?: unknown;
-  variableSchema: unknown;
-  auditContext: AuditContext;
-}) {
+export async function publishNotificationTemplate(
+  input: {
+    code: string;
+    actorId: string;
+    expectedVersion: unknown;
+    subjectTemplate: unknown;
+    bodyTextTemplate: unknown;
+    bodyHtmlTemplate?: unknown;
+    variableSchema: unknown;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
   const code = validateTemplateCode(input.code);
   const expectedVersion = version(input.expectedVersion, true);
   const definition = validateTemplateDefinition(input);
 
-  return db.$transaction(async (transaction) => {
-    let template = await transaction.notificationTemplate.findUnique({ where: { code } });
+  return inTransaction(transaction, async (client) => {
+    let template = await client.notificationTemplate.findUnique({ where: { code } });
     let createdTemplate = false;
     if (!template) {
       if (expectedVersion !== 0) {
@@ -54,7 +57,7 @@ export async function publishNotificationTemplate(input: {
           409
         );
       }
-      template = await transaction.notificationTemplate.create({
+      template = await client.notificationTemplate.create({
         data: { code, currentVersion: 0, version: 1 }
       });
       createdTemplate = true;
@@ -67,7 +70,7 @@ export async function publishNotificationTemplate(input: {
     }
 
     const nextTemplateVersion = template.currentVersion + 1;
-    const published = await transaction.notificationTemplateVersion.create({
+    const published = await client.notificationTemplateVersion.create({
       data: {
         templateCode: code,
         version: nextTemplateVersion,
@@ -78,7 +81,7 @@ export async function publishNotificationTemplate(input: {
         publishedById: input.actorId
       }
     });
-    const updated = await transaction.notificationTemplate.updateMany({
+    const updated = await client.notificationTemplate.updateMany({
       where: { code, version: template.version },
       data: {
         currentVersion: nextTemplateVersion,
@@ -92,8 +95,8 @@ export async function publishNotificationTemplate(input: {
         409
       );
     }
-    const current = await transaction.notificationTemplate.findUniqueOrThrow({ where: { code } });
-    const audit = await writeAudit(transaction, {
+    const current = await client.notificationTemplate.findUniqueOrThrow({ where: { code } });
+    const audit = await writeAudit(client, {
       action: AUDIT_ACTIONS.NOTIFICATION_TEMPLATE_PUBLISHED,
       objectType: AUDIT_OBJECT_TYPES.NOTIFICATION_TEMPLATE,
       objectId: code,
@@ -112,14 +115,17 @@ export async function publishNotificationTemplate(input: {
   });
 }
 
-export async function setNotificationTemplateEnabled(input: {
-  code: string;
-  actorId: string;
-  expectedVersion: unknown;
-  enabled: unknown;
-  reason: unknown;
-  auditContext: AuditContext;
-}) {
+export async function setNotificationTemplateEnabled(
+  input: {
+    code: string;
+    actorId: string;
+    expectedVersion: unknown;
+    enabled: unknown;
+    reason: unknown;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
   const code = validateTemplateCode(input.code);
   const expectedVersion = version(input.expectedVersion);
   if (typeof input.enabled !== "boolean") {
@@ -128,8 +134,8 @@ export async function setNotificationTemplateEnabled(input: {
   const enabled = input.enabled;
   const changeReason = reason(input.reason);
 
-  return db.$transaction(async (transaction) => {
-    const current = await transaction.notificationTemplate.findUnique({ where: { code } });
+  return inTransaction(transaction, async (client) => {
+    const current = await client.notificationTemplate.findUnique({ where: { code } });
     if (!current) {
       throw new NotificationValidationError("TEMPLATE_NOT_FOUND", "通知模板不存在。", 404);
     }
@@ -141,15 +147,15 @@ export async function setNotificationTemplateEnabled(input: {
       );
     }
     if (current.enabled === enabled) return { template: current, repeated: true, auditId: null };
-    const updated = await transaction.notificationTemplate.updateMany({
+    const updated = await client.notificationTemplate.updateMany({
       where: { code, version: expectedVersion },
       data: { enabled, version: { increment: 1 } }
     });
     if (updated.count !== 1) {
       throw new NotificationValidationError("VERSION_CONFLICT", "通知模板已变化。", 409);
     }
-    const template = await transaction.notificationTemplate.findUniqueOrThrow({ where: { code } });
-    const audit = await writeAudit(transaction, {
+    const template = await client.notificationTemplate.findUniqueOrThrow({ where: { code } });
+    const audit = await writeAudit(client, {
       action: AUDIT_ACTIONS.NOTIFICATION_TEMPLATE_STATUS_CHANGED,
       objectType: AUDIT_OBJECT_TYPES.NOTIFICATION_TEMPLATE,
       objectId: code,
