@@ -638,6 +638,21 @@ enum ProjectCapabilityConfigurationStatus {
   READY
 }
 
+enum ResponsibilityPackageStatus {
+  OPEN
+  ACCEPTANCE_PENDING
+  ACCEPTED
+  CLOSED
+}
+
+enum ResponsibilityPackageEventType {
+  CREATED
+  ACCEPTANCE_SUBMITTED
+  ACCEPTED
+  REOPENED
+  CLOSED
+}
+
 enum ProjectRole {
   PROJECT_MANAGER
   DEPARTMENT_LEAD
@@ -678,6 +693,12 @@ enum AuditAction {
   DELIVERY_UNIT_STATUS_CHANGED
   PROJECT_CAPABILITIES_CONFIRMED
   PROJECT_CAPABILITY_CHANGED
+  RESPONSIBILITY_PACKAGE_CREATED
+  RESPONSIBILITY_PACKAGE_UPDATED
+  RESPONSIBILITY_PACKAGE_ACCEPTANCE_SUBMITTED
+  RESPONSIBILITY_PACKAGE_ACCEPTED
+  RESPONSIBILITY_PACKAGE_REOPENED
+  RESPONSIBILITY_PACKAGE_CLOSED
 }
 
 enum AuditObjectType {
@@ -699,6 +720,7 @@ enum AuditObjectType {
   DELIVERY_UNIT
   PROJECT_MODULE
   PROJECT_CAPABILITY
+  RESPONSIBILITY_PACKAGE
 }
 
 enum AuditSource {
@@ -755,6 +777,9 @@ model User {
   projectCapabilitiesCreated            ProjectCapability[]           @relation("ProjectCapabilityCreatedBy")
   projectCapabilitiesUpdated            ProjectCapability[]           @relation("ProjectCapabilityUpdatedBy")
   projectCapabilityRevisionsChanged     ProjectCapabilityRevision[]   @relation("ProjectCapabilityRevisionChangedBy")
+  responsibilityPackagesCreated         ResponsibilityPackage[]       @relation("ResponsibilityPackageCreatedBy")
+  responsibilityPackagesUpdated         ResponsibilityPackage[]       @relation("ResponsibilityPackageUpdatedBy")
+  responsibilityPackageEventsActed      ResponsibilityPackageEvent[]  @relation("ResponsibilityPackageEventActor")
 
   @@index([departmentId])
   @@map("users")
@@ -841,6 +866,7 @@ model Project {
   deliveryUnits                 DeliveryUnit[]
   projectModules                ProjectModule[]
   projectCapabilities           ProjectCapability[]
+  responsibilityPackages        ResponsibilityPackage[]
 
   @@index([departmentId])
   @@index([sourceTemplateVersionId])
@@ -893,25 +919,26 @@ model ProjectTemplateSnapshotComponent {
 }
 
 model DeliveryUnit {
-  id          String                     @id @default(cuid())
-  projectId   String                     @map("project_id")
-  parentId    String?                    @map("parent_id")
-  unitType    DeliveryUnitType           @map("unit_type")
-  code        String
-  name        String
-  status      ProjectStructureNodeStatus @default(ACTIVE)
-  position    Int
-  version     Int                        @default(1)
-  createdById String                     @map("created_by_id")
-  updatedById String                     @map("updated_by_id")
-  createdAt   DateTime                   @default(now()) @map("created_at")
-  updatedAt   DateTime                   @updatedAt @map("updated_at")
-  project     Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  parent      DeliveryUnit?              @relation("DeliveryUnitHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
-  children    DeliveryUnit[]             @relation("DeliveryUnitHierarchy")
-  modules     ProjectModule[]
-  createdBy   User                       @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy   User                       @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  id                     String                     @id @default(cuid())
+  projectId              String                     @map("project_id")
+  parentId               String?                    @map("parent_id")
+  unitType               DeliveryUnitType           @map("unit_type")
+  code                   String
+  name                   String
+  status                 ProjectStructureNodeStatus @default(ACTIVE)
+  position               Int
+  version                Int                        @default(1)
+  createdById            String                     @map("created_by_id")
+  updatedById            String                     @map("updated_by_id")
+  createdAt              DateTime                   @default(now()) @map("created_at")
+  updatedAt              DateTime                   @updatedAt @map("updated_at")
+  project                Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  parent                 DeliveryUnit?              @relation("DeliveryUnitHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children               DeliveryUnit[]             @relation("DeliveryUnitHierarchy")
+  modules                ProjectModule[]
+  responsibilityPackages ResponsibilityPackage[]
+  createdBy              User                       @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy              User                       @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -922,24 +949,26 @@ model DeliveryUnit {
 }
 
 model ProjectModule {
-  id             String                     @id @default(cuid())
-  projectId      String                     @map("project_id")
-  deliveryUnitId String                     @map("delivery_unit_id")
-  code           String
-  name           String
-  status         ProjectStructureNodeStatus @default(ACTIVE)
-  position       Int
-  version        Int                        @default(1)
-  createdById    String                     @map("created_by_id")
-  updatedById    String                     @map("updated_by_id")
-  createdAt      DateTime                   @default(now()) @map("created_at")
-  updatedAt      DateTime                   @updatedAt @map("updated_at")
-  project        Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  deliveryUnit   DeliveryUnit               @relation(fields: [deliveryUnitId], references: [id], onDelete: Restrict)
-  createdBy      User                       @relation("ProjectModuleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy      User                       @relation("ProjectModuleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  id                     String                     @id @default(cuid())
+  projectId              String                     @map("project_id")
+  deliveryUnitId         String                     @map("delivery_unit_id")
+  code                   String
+  name                   String
+  status                 ProjectStructureNodeStatus @default(ACTIVE)
+  position               Int
+  version                Int                        @default(1)
+  createdById            String                     @map("created_by_id")
+  updatedById            String                     @map("updated_by_id")
+  createdAt              DateTime                   @default(now()) @map("created_at")
+  updatedAt              DateTime                   @updatedAt @map("updated_at")
+  project                Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deliveryUnit           DeliveryUnit               @relation(fields: [deliveryUnitId], references: [id], onDelete: Restrict)
+  createdBy              User                       @relation("ProjectModuleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy              User                       @relation("ProjectModuleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  responsibilityPackages ResponsibilityPackage[]
 
   @@unique([projectId, code])
+  @@unique([id, projectId])
   @@unique([deliveryUnitId, position])
   @@index([projectId, status])
   @@index([deliveryUnitId, status])
@@ -996,21 +1025,85 @@ model ProjectCapabilityRevision {
   @@map("project_capability_revisions")
 }
 
+model ResponsibilityPackage {
+  id                     String                       @id @default(cuid())
+  projectId              String                       @map("project_id")
+  deliveryUnitId         String?                      @map("delivery_unit_id")
+  moduleId               String?                      @map("module_id")
+  code                   String
+  name                   String
+  description            String?
+  ownerMembershipId      String                       @map("owner_membership_id")
+  inputsJson             Json                         @map("inputs_json")
+  outputsJson            Json                         @map("outputs_json")
+  acceptanceCriteriaJson Json                         @map("acceptance_criteria_json")
+  valueWeight            Int                          @map("value_weight")
+  status                 ResponsibilityPackageStatus  @default(OPEN)
+  acceptanceCycle        Int                          @default(0) @map("acceptance_cycle")
+  transitionSequence     Int                          @default(1) @map("transition_sequence")
+  acceptedAt             DateTime?                    @map("accepted_at")
+  closedAt               DateTime?                    @map("closed_at")
+  version                Int                          @default(1)
+  createdById            String                       @map("created_by_id")
+  updatedById            String                       @map("updated_by_id")
+  createdAt              DateTime                     @default(now()) @map("created_at")
+  updatedAt              DateTime                     @updatedAt @map("updated_at")
+  project                Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deliveryUnit           DeliveryUnit?                @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module                 ProjectModule?               @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership        ProjectMember                @relation(fields: [ownerMembershipId], references: [id], onDelete: Restrict)
+  createdBy              User                         @relation("ResponsibilityPackageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy              User                         @relation("ResponsibilityPackageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  events                 ResponsibilityPackageEvent[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@index([projectId, status, code])
+  @@index([ownerMembershipId, status])
+  @@index([deliveryUnitId, status])
+  @@index([moduleId, status])
+  @@map("responsibility_packages")
+}
+
+model ResponsibilityPackageEvent {
+  id                    String                         @id @default(cuid())
+  packageId             String                         @map("package_id")
+  projectId             String                         @map("project_id")
+  sequence              Int
+  acceptanceCycle       Int                            @map("acceptance_cycle")
+  eventType             ResponsibilityPackageEventType @map("event_type")
+  fromStatus            ResponsibilityPackageStatus?   @map("from_status")
+  toStatus              ResponsibilityPackageStatus    @map("to_status")
+  resourceVersion       Int                            @map("resource_version")
+  reason                String
+  snapshotJson          Json                           @map("snapshot_json")
+  actorId               String                         @map("actor_id")
+  createdAt             DateTime                       @default(now()) @map("created_at")
+  responsibilityPackage ResponsibilityPackage          @relation(fields: [packageId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor                 User                           @relation("ResponsibilityPackageEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([packageId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("responsibility_package_events")
+}
+
 model ProjectMember {
-  id           String      @id @default(cuid())
-  projectId    String      @map("project_id")
-  userId       String      @map("user_id")
-  projectRole  ProjectRole @map("project_role")
-  departmentId String?     @map("department_id")
-  assignedById String      @map("assigned_by_id")
-  joinedAt     DateTime    @default(now()) @map("joined_at")
-  leftAt       DateTime?   @map("left_at")
-  leftById     String?     @map("left_by_id")
-  version      Int         @default(1)
-  project      Project     @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  user         User        @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Restrict)
-  assignedBy   User        @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
-  leftBy       User?       @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
+  id                          String                  @id @default(cuid())
+  projectId                   String                  @map("project_id")
+  userId                      String                  @map("user_id")
+  projectRole                 ProjectRole             @map("project_role")
+  departmentId                String?                 @map("department_id")
+  assignedById                String                  @map("assigned_by_id")
+  joinedAt                    DateTime                @default(now()) @map("joined_at")
+  leftAt                      DateTime?               @map("left_at")
+  leftById                    String?                 @map("left_by_id")
+  version                     Int                     @default(1)
+  project                     Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  user                        User                    @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Restrict)
+  assignedBy                  User                    @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+  leftBy                      User?                   @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
+  ownedResponsibilityPackages ResponsibilityPackage[]
 
   @@index([projectId, leftAt])
   @@index([userId, leftAt])

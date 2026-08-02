@@ -245,6 +245,54 @@ export const projectCapabilityBodySchema = z.strictObject({
   enabled: z.boolean(),
   reason: reasonSchema
 });
+const responsibilityPackageItemSchema = z.strictObject({
+  code: stableCodeSchema,
+  description: z.string().trim().min(1).max(1000)
+});
+const responsibilityPackageDefinitionShape = {
+  name: templateNameSchema,
+  description: templateDescriptionSchema,
+  deliveryUnitId: identifierSchema.nullable().optional(),
+  moduleId: identifierSchema.nullable().optional(),
+  ownerMembershipId: identifierSchema,
+  inputs: z.array(responsibilityPackageItemSchema).min(1).max(100),
+  outputs: z.array(responsibilityPackageItemSchema).min(1).max(100),
+  acceptanceCriteria: z.array(responsibilityPackageItemSchema).min(1).max(100),
+  valueWeight: z.number().int().min(1).max(1_000_000)
+};
+export const responsibilityPackagePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  packageId: identifierSchema
+});
+export const responsibilityPackageCommandPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  packageId: identifierSchema,
+  command: z.enum(["submit", "accept", "reopen", "close"])
+});
+export const createResponsibilityPackageBodySchema = z.strictObject({
+  code: stableCodeSchema,
+  ...responsibilityPackageDefinitionShape,
+  reason: reasonSchema
+});
+export const updateResponsibilityPackageBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  ...responsibilityPackageDefinitionShape,
+  reason: reasonSchema
+});
+export const responsibilityPackageCommandBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const responsibilityPackageQuerySchema = z.strictObject({
+  status: z.enum(["OPEN", "ACCEPTANCE_PENDING", "ACCEPTED", "CLOSED"]).optional(),
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema
