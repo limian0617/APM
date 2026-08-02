@@ -48,8 +48,23 @@ Project member endpoints:
 Member removal is a recorded exit (`leftAt`/`leftById`), never a physical delete. A project must
 retain at least one active project manager.
 
+## APM-003 audit service
+
+APM-003 provides the shared append-only audit boundary under `src/modules/audit`. Audit writes use
+a stable action/object/source/result vocabulary, a request and trace context, recursive field
+whitelisting, sensitive-value redaction, and the caller's Prisma transaction for successful
+business changes. PostgreSQL rejects direct audit updates, deletes, and truncation, and a partial
+unique index prevents duplicate successful facts for the same actor, object, action, and operation.
+
+`GET /api/audit` requires `AUDIT_READ` and accepts `objectType`, `objectId`, `actorId`, `action`,
+`projectId`, `departmentId`, `from`, `to`, `cursor`, and `limit` filters. Visibility is always
+intersected server-side with the caller's `ALL`, `DEPARTMENT`, `PROJECT`, or `SELF` scope.
+
+Database integration tests are enabled with `RUN_DATABASE_INTEGRATION=1` after applying migrations
+to a disposable PostgreSQL database. GitHub Actions runs this path automatically.
+
 ## Current scope
 
-APM-001 establishes the runtime, quality checks, database tooling, local PostgreSQL, service
-health endpoint, and CI. APM-002 establishes the authorization foundation and project-member
-boundary. Template snapshots and the remaining project domain start with later work packages.
+APM-001 establishes the runtime and database tooling. APM-002 establishes authorization and the
+project-member boundary. APM-003 establishes full-system audit infrastructure. Runtime
+configuration, capability switches, Outbox, and durable jobs start with APM-004.

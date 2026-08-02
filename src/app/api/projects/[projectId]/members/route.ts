@@ -3,6 +3,7 @@ import { ProjectStatus } from "@prisma/client";
 import { PERMISSIONS } from "@/lib/auth/permissions";
 import { authorizeProjectRequest } from "@/lib/auth/project-guard";
 import { db } from "@/lib/db";
+import { auditContextFromRequest } from "@/modules/audit/application/context";
 import {
   addProjectMember,
   parseAddProjectMemberInput,
@@ -82,7 +83,17 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     const body = await request.json();
     const member = parseAddProjectMemberInput(body);
-    const result = await addProjectMember({ projectId, actorId: guard.actor.id, member });
+    const auditContext = auditContextFromRequest(request, {
+      actorId: guard.actor.id,
+      projectId,
+      departmentId: guard.project.departmentId
+    });
+    const result = await addProjectMember({
+      projectId,
+      actorId: guard.actor.id,
+      member,
+      auditContext
+    });
     return Response.json(result, { status: 201 });
   } catch (error) {
     if (error instanceof ProjectMemberError) {

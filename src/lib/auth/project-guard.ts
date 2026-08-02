@@ -12,6 +12,15 @@ import {
   type ProjectAuthorizationTarget
 } from "./repository";
 import { readRequestIdentity } from "./request-identity";
+import { auditContextFromRequest } from "@/modules/audit/application/context";
+import type { AuditContext } from "@/modules/audit/contracts/audit";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_OBJECT_TYPES,
+  AUDIT_RESULTS,
+  AUTHORIZATION_DENIAL_AUDIT_FIELDS
+} from "@/modules/audit/domain/vocabulary";
+import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 
 type DenialRecord = {
   actorId: string;
@@ -20,7 +29,7 @@ type DenialRecord = {
   projectId: string;
   method: string;
   path: string;
-  sourceIp: string | null;
+  auditContext: AuditContext;
 };
 
 export type ProjectGuardDependencies = {
@@ -33,20 +42,19 @@ const defaultDependencies: ProjectGuardDependencies = {
   loadActor: loadAuthorizationActor,
   loadProject: loadProjectAuthorizationTarget,
   async recordDenial(record) {
-    await db.auditLog.create({
-      data: {
-        actorId: record.actorId,
-        action: "AUTHORIZATION_DENIED",
-        objectType: "PROJECT",
-        objectId: record.projectId,
-        afterJson: {
+    await writeAudit(db, {
+      action: AUDIT_ACTIONS.AUTHORIZATION_DENIED,
+      objectType: AUDIT_OBJECT_TYPES.PROJECT,
+      objectId: record.projectId,
+      result: AUDIT_RESULTS.DENIED,
+      context: record.auditContext,
+      metadata: {
+        value: {
           permission: record.permission,
-          reason: record.reason,
           method: record.method,
           path: record.path
         },
-        source: "API",
-        sourceIp: record.sourceIp
+        allowedFields: AUTHORIZATION_DENIAL_AUDIT_FIELDS
       }
     });
   }
@@ -103,7 +111,12 @@ export async function authorizeProjectRequest(
   }
 
   const url = new URL(request.url);
-  const sourceIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null;
+  const auditContext = auditContextFromRequest(request, {
+    actorId: actor.id,
+    projectId: project.id,
+    departmentId: project.departmentId,
+    reason: decision.reason
+  });
   try {
     await dependencies.recordDenial({
       actorId: actor.id,
@@ -112,7 +125,7 @@ export async function authorizeProjectRequest(
       projectId: project.id,
       method: request.method,
       path: url.pathname,
-      sourceIp
+      auditContext
     });
   } catch (error) {
     console.error("Unable to persist authorization denial audit", error);
