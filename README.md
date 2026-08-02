@@ -84,9 +84,30 @@ System endpoints:
 `idempotencyKey` and must use it when they call an external side effect. Failures use capped
 exponential backoff; exhausted jobs retain all attempts and wait for an audited manual replay.
 
+## APM-005 private files
+
+APM-005 adds project-scoped file facts, private MinIO/S3-compatible multipart uploads, SHA-256 and
+ClamAV processing, and short-lived download URLs. Binary data never enters PostgreSQL. Object keys
+are opaque UUIDs; original names remain metadata and are not used in bucket paths.
+
+File endpoints:
+
+- `POST /api/projects/{projectId}/files/uploads` creates an isolated multipart upload.
+- `POST /api/projects/{projectId}/files/uploads/{sessionId}/parts/{partNumber}` signs one part.
+- `POST /api/projects/{projectId}/files/uploads/{sessionId}/complete` requires an
+  `Idempotency-Key`, validates all part facts, and queues `file.scan.requested`.
+- `GET /api/projects/{projectId}/files/{fileId}/download` rechecks project, sensitivity, and current
+  state before issuing a five-minute URL and writing the access audit.
+
+`createFileJobHandlers` in `src/workers/file-job-handlers.ts` binds the durable job framework to
+the S3-compatible adapter and ClamAV. Files remain unavailable until the Worker calculates the
+hash, receives a clean scan, and copies the opaque object into the controlled bucket. Configure
+the `APM_S3_*` and `APM_CLAMAV_*` variables shown in `.env.example`; production credentials and
+bucket/scanner provisioning stay outside the repository.
+
 ## Current scope
 
 APM-001 establishes the runtime and database tooling. APM-002 establishes authorization and the
 project-member boundary. APM-003 establishes full-system audit infrastructure. APM-004 establishes
-runtime configuration, company capability switches, transactional Outbox, and durable jobs. File
-storage and processing begin with APM-005.
+runtime configuration, company capability switches, transactional Outbox, and durable jobs.
+APM-005 establishes private file upload, scan, and download infrastructure.

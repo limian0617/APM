@@ -133,6 +133,95 @@ model JobAttempt {
   @@map("job_attempts")
 }
 
+model FileObject {
+  id               String             @id @default(cuid())
+  projectId        String             @map("project_id")
+  uploadedById     String             @map("uploaded_by_id")
+  originalName     String             @map("original_name")
+  declaredMimeType String             @map("declared_mime_type")
+  verifiedMimeType String?            @map("verified_mime_type")
+  declaredSize     BigInt             @map("declared_size")
+  verifiedSize     BigInt?            @map("verified_size")
+  sha256           String?
+  objectKey        String             @unique @map("object_key")
+  storageArea      FileStorageArea    @default(QUARANTINE) @map("storage_area")
+  status           FileObjectStatus   @default(UPLOADING)
+  sensitivity      FileSensitivity    @default(INTERNAL)
+  scanEngine       String?            @map("scan_engine")
+  scannerVersion   String?            @map("scanner_version")
+  scanSignature    String?            @map("scan_signature")
+  scannedAt        DateTime?          @map("scanned_at")
+  failureCode      String?            @map("failure_code")
+  failureMessage   String?            @map("failure_message")
+  version          Int                @default(1)
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  uploadedBy       User               @relation("FileObjectUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  uploadSession    FileUploadSession?
+  commands         FileCommand[]
+
+  @@index([projectId, status, createdAt])
+  @@index([uploadedById, createdAt])
+  @@map("file_objects")
+}
+
+model FileUploadSession {
+  id              String                  @id @default(cuid())
+  fileObjectId    String                  @unique @map("file_object_id")
+  storageUploadId String                  @unique @map("storage_upload_id")
+  status          FileUploadSessionStatus @default(INITIATED)
+  expectedParts   Int                     @map("expected_parts")
+  partSize        BigInt                  @map("part_size")
+  expiresAt       DateTime                @map("expires_at")
+  completedAt     DateTime?               @map("completed_at")
+  failureCode     String?                 @map("failure_code")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+  fileObject      FileObject              @relation(fields: [fileObjectId], references: [id], onDelete: Restrict)
+  parts           FileUploadPart[]
+  commands        FileCommand[]
+
+  @@index([status, expiresAt])
+  @@map("file_upload_sessions")
+}
+
+model FileUploadPart {
+  uploadSessionId String            @map("upload_session_id")
+  partNumber      Int               @map("part_number")
+  expectedSize    BigInt            @map("expected_size")
+  completedSize   BigInt?           @map("completed_size")
+  etag            String?
+  uploadSession   FileUploadSession @relation(fields: [uploadSessionId], references: [id], onDelete: Restrict)
+
+  @@id([uploadSessionId, partNumber])
+  @@map("file_upload_parts")
+}
+
+model FileCommand {
+  id               String            @id @default(cuid())
+  actorId          String            @map("actor_id")
+  fileObjectId     String            @map("file_object_id")
+  uploadSessionId  String?           @map("upload_session_id")
+  operation        FileCommandType
+  idempotencyKey   String            @map("idempotency_key")
+  payloadHash      String            @map("payload_hash")
+  status           FileCommandStatus @default(STARTED)
+  responseJson     Json?             @map("response_json")
+  errorCode        String?           @map("error_code")
+  errorMessage     String?           @map("error_message")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  actor            User              @relation("FileCommandActor", fields: [actorId], references: [id], onDelete: Restrict)
+  fileObject       FileObject        @relation(fields: [fileObjectId], references: [id], onDelete: Restrict)
+  uploadSession    FileUploadSession? @relation(fields: [uploadSessionId], references: [id], onDelete: Restrict)
+
+  @@unique([actorId, operation, idempotencyKey])
+  @@unique([uploadSessionId, operation])
+  @@index([fileObjectId, createdAt])
+  @@map("file_commands")
+}
+
 enum SettingValueType {
   BOOLEAN
   INTEGER
@@ -159,6 +248,42 @@ enum JobStatus {
 enum JobAttemptStatus {
   QUEUED
   RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum FileObjectStatus {
+  UPLOADING
+  PENDING_SCAN
+  AVAILABLE
+  QUARANTINED
+  FAILED
+}
+
+enum FileStorageArea {
+  QUARANTINE
+  CONTROLLED
+}
+
+enum FileSensitivity {
+  INTERNAL
+  RESTRICTED
+}
+
+enum FileUploadSessionStatus {
+  INITIATED
+  COMPLETING
+  COMPLETED
+  FAILED
+  ABORTED
+}
+
+enum FileCommandType {
+  UPLOAD_COMPLETE
+}
+
+enum FileCommandStatus {
+  STARTED
   SUCCEEDED
   FAILED
 }
@@ -202,6 +327,12 @@ enum AuditAction {
   CONFIGURATION_SETTING_CHANGED
   COMPANY_CAPABILITY_CHANGED
   JOB_REPLAYED
+  FILE_UPLOAD_STARTED
+  FILE_UPLOAD_COMPLETED
+  FILE_SCAN_COMPLETED
+  FILE_QUARANTINED
+  FILE_PROCESSING_FAILED
+  FILE_DOWNLOAD_URL_ISSUED
 }
 
 enum AuditObjectType {
@@ -212,6 +343,8 @@ enum AuditObjectType {
   COMPANY_CAPABILITY
   OUTBOX_EVENT
   PERSISTENT_JOB
+  FILE_OBJECT
+  FILE_UPLOAD_SESSION
 }
 
 enum AuditSource {
@@ -249,6 +382,8 @@ model User {
   settingRevisions    SystemSettingRevision[]     @relation("SystemSettingRevisionChangedBy")
   capabilityRevisions CompanyCapabilityRevision[] @relation("CompanyCapabilityRevisionChangedBy")
   requestedJobReplays JobAttempt[]                @relation("JobAttemptRequestedBy")
+  filesUploaded       FileObject[]                 @relation("FileObjectUploadedBy")
+  fileCommands        FileCommand[]                @relation("FileCommandActor")
 
   @@index([departmentId])
   @@map("users")
@@ -320,6 +455,7 @@ model Project {
   createdBy    User            @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   members      ProjectMember[]
   auditLogs    AuditLog[]
+  files        FileObject[]
 
   @@index([departmentId])
   @@map("projects")

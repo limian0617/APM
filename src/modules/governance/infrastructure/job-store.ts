@@ -269,6 +269,8 @@ export async function claimJobs(
         idempotencyKey: job.idempotency_key,
         attemptId: attempt.id,
         attemptNumber: attempt.attemptNumber,
+        maxAttempts: job.max_attempts,
+        isReplay: attempt.isReplay,
         workerId
       });
     }
