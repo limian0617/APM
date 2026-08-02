@@ -354,9 +354,9 @@ describeDatabase("APM-010 PostgreSQL template versions", () => {
     await expect(
       db.templateVersionComponent.delete({ where: { id: snapshot.components[0]!.id } })
     ).rejects.toThrow(/immutable/u);
-    await expect(db.$executeRawUnsafe('TRUNCATE TABLE "template_versions"')).rejects.toThrow(
-      /immutable/u
-    );
+    await expect(
+      db.$executeRawUnsafe('TRUNCATE TABLE "template_versions", "template_version_components"')
+    ).rejects.toThrow(/immutable/u);
     await expect(
       db.templateComponentVersion.update({
         where: { id: completeComponents[0]!.id },
