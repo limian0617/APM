@@ -37,7 +37,7 @@ jobs:
       - run: npm run db:generate
       - run: npm run db:validate
       - run: npm run db:migrate:deploy
-      - name: Validate APM-020 to APM-021 upgrade migration
+      - name: Validate APM-021 to APM-022 upgrade migration
         shell: bash
         run: |
           export PGPASSWORD=apm
@@ -59,6 +59,7 @@ jobs:
           cp -R prisma/migrations/20260803040000_apm_013_project_capabilities "$upgrade_root/prisma/migrations/"
           cp -R prisma/migrations/20260803050000_apm_014_responsibility_packages "$upgrade_root/prisma/migrations/"
           cp -R prisma/migrations/20260803060000_apm_020_planning_tasks "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803070000_apm_021_calendars_dependencies "$upgrade_root/prisma/migrations/"
           DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade?schema=public" \
             npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
           DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade?schema=public" \

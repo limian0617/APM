@@ -22,6 +22,7 @@ import {
   type PlanningTaskStatusCode,
   type WbsNodeDefinition
 } from "../domain/planning-task";
+import { requestScheduleRecalculation } from "./schedule-recalculation-service";
 
 const taskInclude = {
   ownerMembership: {
@@ -642,6 +643,12 @@ export async function createPlanningTask(
         idempotencyKey: `${created.id}:v${created.version}`,
         payload: taskAuditValue(created)
       });
+      await requestScheduleRecalculation(client, {
+        projectId: input.projectId,
+        actorId: input.actorId,
+        sourceAction: "planning.task.created",
+        reason
+      });
       return {
         task: serializePlanningTask(created),
         resourceVersion: created.version,
@@ -726,6 +733,12 @@ export async function updatePlanningTask(
         idempotencyKey: `${updated.id}:v${updated.version}`,
         payload: taskAuditValue(updated)
       });
+      await requestScheduleRecalculation(client, {
+        projectId: input.projectId,
+        actorId: input.actorId,
+        sourceAction: "planning.task.updated",
+        reason
+      });
       return {
         task: serializePlanningTask(updated),
         resourceVersion: updated.version,
@@ -808,6 +821,12 @@ export async function updatePlanningTaskProgress(
         idempotencyKey: `${updated.id}:v${updated.version}`,
         payload: taskAuditValue(updated)
       });
+      await requestScheduleRecalculation(client, {
+        projectId: input.projectId,
+        actorId: input.actorId,
+        sourceAction: "planning.task.progress-updated",
+        reason
+      });
       return {
         task: serializePlanningTask(updated),
         resourceVersion: updated.version,
@@ -888,6 +907,12 @@ export async function closePlanningTask(
         aggregateId: updated.id,
         idempotencyKey: `${updated.id}:v${updated.version}`,
         payload: taskAuditValue(updated)
+      });
+      await requestScheduleRecalculation(client, {
+        projectId: input.projectId,
+        actorId: input.actorId,
+        sourceAction: "planning.task.closed",
+        reason
       });
       return {
         task: serializePlanningTask(updated),

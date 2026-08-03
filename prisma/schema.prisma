@@ -681,6 +681,14 @@ enum TaskDependencyType {
   FF
 }
 
+enum ScheduleRecalculationStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SUPERSEDED
+}
+
 enum ProjectRole {
   PROJECT_MANAGER
   DEPARTMENT_LEAD
@@ -834,6 +842,7 @@ model User {
   projectCalendarRevisionsCreated       ProjectCalendarRevision[]     @relation("ProjectCalendarRevisionCreatedBy")
   taskDependenciesCreated               TaskDependency[]              @relation("TaskDependencyCreatedBy")
   taskDependenciesUpdated               TaskDependency[]              @relation("TaskDependencyUpdatedBy")
+  scheduleRecalculationsRequested       ScheduleRecalculation[]       @relation("ScheduleRecalculationRequestedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -926,6 +935,9 @@ model Project {
   planningCalendar              ProjectCalendar?
   projectCalendarRevisions      ProjectCalendarRevision[]
   taskDependencies              TaskDependency[]
+  scheduleState                 ProjectScheduleState?
+  scheduleRecalculations        ScheduleRecalculation[]
+  scheduleTaskForecasts         ScheduleTaskForecast[]
 
   @@index([departmentId])
   @@index([sourceTemplateVersionId])
@@ -1217,6 +1229,7 @@ model PlanningTask {
   updatedBy                User                   @relation("PlanningTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   predecessorDependencies  TaskDependency[]       @relation("TaskDependencyPredecessor")
   successorDependencies    TaskDependency[]       @relation("TaskDependencySuccessor")
+  scheduleForecasts        ScheduleTaskForecast[]
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -1250,21 +1263,22 @@ model ProjectCalendar {
 }
 
 model ProjectCalendarRevision {
-  id          String          @id @default(cuid())
-  calendarId  String          @map("calendar_id")
-  projectId   String          @map("project_id")
-  revision    Int
-  name        String
-  timeZone    String          @map("time_zone")
-  weeklyRules Json            @map("weekly_rules")
-  exceptions  Json
-  checksum    String
-  reason      String
-  createdById String          @map("created_by_id")
-  createdAt   DateTime        @default(now()) @map("created_at")
-  calendar    ProjectCalendar @relation(fields: [calendarId, projectId], references: [id, projectId], onDelete: Restrict)
-  project     Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  createdBy   User            @relation("ProjectCalendarRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  id                     String                  @id @default(cuid())
+  calendarId             String                  @map("calendar_id")
+  projectId              String                  @map("project_id")
+  revision               Int
+  name                   String
+  timeZone               String                  @map("time_zone")
+  weeklyRules            Json                    @map("weekly_rules")
+  exceptions             Json
+  checksum               String
+  reason                 String
+  createdById            String                  @map("created_by_id")
+  createdAt              DateTime                @default(now()) @map("created_at")
+  calendar               ProjectCalendar         @relation(fields: [calendarId, projectId], references: [id, projectId], onDelete: Restrict)
+  project                Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy              User                    @relation("ProjectCalendarRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  scheduleRecalculations ScheduleRecalculation[]
 
   @@unique([calendarId, revision])
   @@index([projectId, revision])
@@ -1297,6 +1311,77 @@ model TaskDependency {
   @@index([projectId, status, predecessorTaskId])
   @@index([projectId, status, successorTaskId])
   @@map("task_dependencies")
+}
+
+model ProjectScheduleState {
+  projectId                      String                 @id @map("project_id")
+  inputVersion                   Int                    @default(0) @map("input_version")
+  latestPublishedInputVersion    Int?                   @map("latest_published_input_version")
+  latestPublishedRecalculationId String?                @unique @map("latest_published_recalculation_id")
+  updatedAt                      DateTime               @updatedAt @map("updated_at")
+  project                        Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  latestPublishedRecalculation   ScheduleRecalculation? @relation("LatestPublishedScheduleRecalculation", fields: [latestPublishedRecalculationId], references: [id], onDelete: Restrict)
+
+  @@index([inputVersion])
+  @@map("project_schedule_states")
+}
+
+model ScheduleRecalculation {
+  id                 String                      @id @default(cuid())
+  projectId          String                      @map("project_id")
+  inputVersion       Int                         @map("input_version")
+  status             ScheduleRecalculationStatus @default(PENDING)
+  algorithmVersion   String                      @map("algorithm_version")
+  sourceAction       String                      @map("source_action")
+  reason             String
+  requestedById      String                      @map("requested_by_id")
+  calendarRevisionId String?                     @map("calendar_revision_id")
+  inputChecksum      String?                     @map("input_checksum")
+  inputSnapshot      Json?                       @map("input_snapshot")
+  resultChecksum     String?                     @map("result_checksum")
+  taskCount          Int?                        @map("task_count")
+  dependencyCount    Int?                        @map("dependency_count")
+  errorCode          String?                     @map("error_code")
+  errorMessage       String?                     @map("error_message")
+  requestedAt        DateTime                    @default(now()) @map("requested_at")
+  startedAt          DateTime?                   @map("started_at")
+  completedAt        DateTime?                   @map("completed_at")
+  updatedAt          DateTime                    @updatedAt @map("updated_at")
+  project            Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requestedBy        User                        @relation("ScheduleRecalculationRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  calendarRevision   ProjectCalendarRevision?    @relation(fields: [calendarRevisionId], references: [id], onDelete: Restrict)
+  publishedForState  ProjectScheduleState?       @relation("LatestPublishedScheduleRecalculation")
+  taskForecasts      ScheduleTaskForecast[]
+
+  @@unique([projectId, inputVersion])
+  @@unique([id, projectId])
+  @@index([projectId, status, requestedAt])
+  @@index([status, requestedAt])
+  @@map("schedule_recalculations")
+}
+
+model ScheduleTaskForecast {
+  id                String                @id @default(cuid())
+  recalculationId   String                @map("recalculation_id")
+  projectId         String                @map("project_id")
+  taskId            String                @map("task_id")
+  position          Int
+  durationMinutes   Int                   @map("duration_minutes")
+  predictedStartAt  DateTime              @map("predicted_start_at")
+  predictedFinishAt DateTime              @map("predicted_finish_at")
+  latestStartAt     DateTime              @map("latest_start_at")
+  latestFinishAt    DateTime              @map("latest_finish_at")
+  totalFloatMinutes Int                   @map("total_float_minutes")
+  isCritical        Boolean               @map("is_critical")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  recalculation     ScheduleRecalculation @relation(fields: [recalculationId, projectId], references: [id, projectId], onDelete: Restrict)
+  project           Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  task              PlanningTask          @relation(fields: [taskId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([recalculationId, taskId])
+  @@index([projectId, isCritical, position])
+  @@index([projectId, taskId, createdAt])
+  @@map("schedule_task_forecasts")
 }
 
 model ProjectMember {
