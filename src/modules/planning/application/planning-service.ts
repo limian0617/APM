@@ -10,6 +10,7 @@ import {
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+import { reconcileMilestonesForTask } from "@/modules/projects/application/milestone-service";
 
 import {
   assertWbsParent,
@@ -805,6 +806,13 @@ export async function updatePlanningTaskProgress(
       const updated = await client.planningTask.findUniqueOrThrow({
         where: { id: current.id },
         include: taskInclude
+      });
+      await reconcileMilestonesForTask(client, {
+        projectId: input.projectId,
+        taskId: updated.id,
+        actorId: input.actorId,
+        auditContext: commandAuditContext(input, project, reason),
+        reason: `任务 ${updated.code} 完成状态更新：${reason}`
       });
       const audit = await writeAudit(client, {
         action: AUDIT_ACTIONS.PLANNING_TASK_PROGRESS_UPDATED,

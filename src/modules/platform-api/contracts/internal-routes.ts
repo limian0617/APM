@@ -33,7 +33,14 @@ const templateIdentityCodeSchema = z
   .regex(/^[A-Z][A-Z0-9_.-]{2,100}$/u);
 const templateNameSchema = z.string().trim().min(1).max(200);
 const templateDescriptionSchema = z.string().trim().max(2000).nullable().optional();
-const templateComponentTypeSchema = z.enum(["STAGE", "GATE", "ROLE", "WBS", "CAPABILITY_RULE"]);
+const templateComponentTypeSchema = z.enum([
+  "STAGE",
+  "GATE",
+  "ROLE",
+  "WBS",
+  "CAPABILITY_RULE",
+  "MILESTONE"
+]);
 const stageContentSchema = z.strictObject({
   stages: z
     .array(
@@ -79,6 +86,19 @@ const wbsContentSchema = z.strictObject({
         name: templateNameSchema,
         stageCode: stableCodeSchema,
         weight: z.number().positive().max(1_000_000)
+      })
+    )
+    .min(1)
+    .max(1000)
+});
+const milestoneContentSchema = z.strictObject({
+  milestones: z
+    .array(
+      z.strictObject({
+        code: stableCodeSchema,
+        name: templateNameSchema,
+        description: z.string().trim().min(1).max(2000).optional(),
+        position: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
       })
     )
     .min(1)
@@ -134,6 +154,11 @@ export const saveTemplateComponentDraftBodySchema = z.discriminatedUnion("compon
     ...templateComponentDraftBase,
     componentType: z.literal("CAPABILITY_RULE"),
     content: capabilityRuleContentSchema
+  }),
+  z.strictObject({
+    ...templateComponentDraftBase,
+    componentType: z.literal("MILESTONE"),
+    content: milestoneContentSchema
   })
 ]);
 export const publishTemplateBodySchema = z.strictObject({
@@ -418,6 +443,49 @@ export const taskDependencyCloseBodySchema = z.strictObject({
 });
 export const taskDependencyQuerySchema = z.strictObject({
   status: z.enum(["ACTIVE", "CLOSED"]).optional()
+});
+export const projectMilestonePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  milestoneId: identifierSchema
+});
+export const milestoneCommandPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  milestoneId: identifierSchema,
+  command: z.enum(["achieve", "void", "link-task", "void-task-link"])
+});
+const projectMilestoneDefinitionShape = {
+  name: templateNameSchema,
+  description: templateDescriptionSchema,
+  position: planningPositionSchema,
+  targetAt: planningDateTimeSchema.nullable().optional()
+};
+export const createProjectMilestoneBodySchema = z.strictObject({
+  code: stableCodeSchema,
+  ...projectMilestoneDefinitionShape,
+  reason: reasonSchema
+});
+export const updateProjectMilestoneBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  ...projectMilestoneDefinitionShape,
+  reason: reasonSchema
+});
+export const milestoneAchieveBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const milestoneVoidBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const milestoneLinkTaskBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  taskId: identifierSchema,
+  reason: reasonSchema
+});
+export const milestoneVoidTaskLinkBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  linkId: identifierSchema,
+  reason: reasonSchema
 });
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,

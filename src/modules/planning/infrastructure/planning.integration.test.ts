@@ -11,14 +11,22 @@ import {
   saveTemplateComponentDraft
 } from "@/modules/configuration/application/template-service";
 import { createProjectFromTemplate } from "@/modules/projects/application/create-project";
+import {
+  createProjectMilestone,
+  linkMilestoneTask
+} from "@/modules/projects/application/milestone-service";
 import { createResponsibilityPackage } from "@/modules/projects/application/responsibility-package-service";
 import { initializeProjectStructure } from "@/modules/projects/application/project-structure";
 
 import {
+  closePlanningTask,
   createPlanningTask,
   createWbsNode,
-  updatePlanningTask
+  updatePlanningTask,
+  updatePlanningTaskProgress
 } from "../application/planning-service";
+import { saveProjectCalendar } from "../application/schedule-network-service";
+import { GET as readExecutionRoute } from "../../../app/api/projects/[projectId]/execution/route";
 import {
   GET as listWbsRoute,
   POST as createWbsRoute
@@ -474,6 +482,344 @@ describeDatabase("APM-020 PostgreSQL WBS and planning tasks", () => {
       )
     ]);
     expect(outcomes.map(({ status }) => status).sort()).toEqual([200, 409]);
+  });
+
+  it("achieves a pending milestone exactly once only after every active linked task completes", async () => {
+    const ready = await createReadyProject("MILESTONE-RECONCILE");
+    const wbs = await createWbsNode({
+      projectId: ready.project.id,
+      ...wbsBody("MILESTONE-RECONCILE"),
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `milestone-reconcile-wbs-${suffix}`, ready.project.id)
+    });
+    const firstTask = await createPlanningTask({
+      projectId: ready.project.id,
+      ...taskBody(ready, wbs.wbsNode.nodeId),
+      code: "MILESTONE.RECONCILE.FIRST",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `milestone-reconcile-first-${suffix}`, ready.project.id)
+    });
+    const secondTask = await createPlanningTask({
+      projectId: ready.project.id,
+      ...taskBody(ready, wbs.wbsNode.nodeId),
+      code: "MILESTONE.RECONCILE.SECOND",
+      position: 1,
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `milestone-reconcile-second-${suffix}`, ready.project.id)
+    });
+    const milestone = await createProjectMilestone({
+      projectId: ready.project.id,
+      code: "EXECUTION.COMPLETE",
+      name: "执行完成",
+      position: 10,
+      reason: "创建任务完成里程碑",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `milestone-reconcile-create-${suffix}`, ready.project.id)
+    });
+    const firstLink = await linkMilestoneTask({
+      projectId: ready.project.id,
+      milestoneId: milestone.milestone.id,
+      version: milestone.resourceVersion,
+      taskId: firstTask.task.taskId,
+      reason: "关联首项任务",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `milestone-reconcile-link-first-${suffix}`, ready.project.id)
+    });
+    await linkMilestoneTask({
+      projectId: ready.project.id,
+      milestoneId: milestone.milestone.id,
+      version: firstLink.resourceVersion,
+      taskId: secondTask.task.taskId,
+      reason: "关联第二项任务",
+      actorId: ids.admin,
+      auditContext: context(
+        ids.admin,
+        `milestone-reconcile-link-second-${suffix}`,
+        ready.project.id
+      )
+    });
+
+    await updatePlanningTaskProgress({
+      projectId: ready.project.id,
+      taskId: firstTask.task.taskId,
+      version: firstTask.resourceVersion,
+      actualStartAt: "2026-08-04T00:00:00.000Z",
+      actualFinishAt: "2026-08-09T00:00:00.000Z",
+      remainingDurationMinutes: 0,
+      forecastFinishAt: "2026-08-09T00:00:00.000Z",
+      reason: "首项关联任务完成",
+      actorId: ids.owner,
+      auditContext: context(
+        ids.owner,
+        `milestone-reconcile-progress-first-${suffix}`,
+        ready.project.id
+      )
+    });
+    await expect(
+      db.projectMilestone.findUniqueOrThrow({ where: { id: milestone.milestone.id } })
+    ).resolves.toMatchObject({ status: "PENDING", achievementSource: null });
+
+    await updatePlanningTaskProgress({
+      projectId: ready.project.id,
+      taskId: secondTask.task.taskId,
+      version: secondTask.resourceVersion,
+      actualStartAt: "2026-08-04T00:00:00.000Z",
+      actualFinishAt: "2026-08-09T00:00:00.000Z",
+      remainingDurationMinutes: 0,
+      forecastFinishAt: "2026-08-09T00:00:00.000Z",
+      reason: "第二项关联任务完成",
+      actorId: ids.owner,
+      auditContext: context(
+        ids.owner,
+        `milestone-reconcile-progress-second-${suffix}`,
+        ready.project.id
+      )
+    });
+    const achieved = await db.projectMilestone.findUniqueOrThrow({
+      where: { id: milestone.milestone.id },
+      include: { events: { orderBy: { sequence: "asc" } } }
+    });
+    expect(achieved).toMatchObject({
+      status: "ACHIEVED",
+      achievementSource: "LINKED_TASKS"
+    });
+    expect(achieved.events.at(-1)).toMatchObject({
+      sequence: 4,
+      eventType: "ACHIEVED_FROM_LINKED_TASKS"
+    });
+
+    await updatePlanningTaskProgress({
+      projectId: ready.project.id,
+      taskId: secondTask.task.taskId,
+      version: secondTask.resourceVersion + 1,
+      actualStartAt: "2026-08-04T00:00:00.000Z",
+      actualFinishAt: "2026-08-09T00:00:00.000Z",
+      remainingDurationMinutes: 0,
+      forecastFinishAt: "2026-08-09T00:00:00.000Z",
+      reason: "重复上报不重复达成",
+      actorId: ids.owner,
+      auditContext: context(ids.owner, `milestone-reconcile-repeat-${suffix}`, ready.project.id)
+    });
+    await expect(
+      db.projectMilestoneEvent.count({
+        where: { milestoneId: milestone.milestone.id, eventType: "ACHIEVED_FROM_LINKED_TASKS" }
+      })
+    ).resolves.toBe(1);
+
+    const rollbackTask = await createPlanningTask({
+      projectId: ready.project.id,
+      ...taskBody(ready, wbs.wbsNode.nodeId),
+      code: "MILESTONE.RECONCILE.ROLLBACK",
+      position: 2,
+      actorId: ids.admin,
+      auditContext: context(
+        ids.admin,
+        `milestone-reconcile-rollback-task-${suffix}`,
+        ready.project.id
+      )
+    });
+    const rollbackMilestone = await createProjectMilestone({
+      projectId: ready.project.id,
+      code: "EXECUTION.ROLLBACK",
+      name: "回滚验证里程碑",
+      position: 20,
+      reason: "创建回滚验证里程碑",
+      actorId: ids.admin,
+      auditContext: context(
+        ids.admin,
+        `milestone-reconcile-rollback-create-${suffix}`,
+        ready.project.id
+      )
+    });
+    await linkMilestoneTask({
+      projectId: ready.project.id,
+      milestoneId: rollbackMilestone.milestone.id,
+      version: rollbackMilestone.resourceVersion,
+      taskId: rollbackTask.task.taskId,
+      reason: "关联回滚验证任务",
+      actorId: ids.admin,
+      auditContext: context(
+        ids.admin,
+        `milestone-reconcile-rollback-link-${suffix}`,
+        ready.project.id
+      )
+    });
+    await expect(
+      db.$transaction(async (transaction) => {
+        await updatePlanningTaskProgress(
+          {
+            projectId: ready.project.id,
+            taskId: rollbackTask.task.taskId,
+            version: rollbackTask.resourceVersion,
+            actualStartAt: "2026-08-04T00:00:00.000Z",
+            actualFinishAt: "2026-08-09T00:00:00.000Z",
+            remainingDurationMinutes: 0,
+            forecastFinishAt: "2026-08-09T00:00:00.000Z",
+            reason: "触发事务回滚",
+            actorId: ids.owner,
+            auditContext: context(
+              ids.owner,
+              `milestone-reconcile-rollback-progress-${suffix}`,
+              ready.project.id
+            )
+          },
+          transaction
+        );
+        throw new Error("force milestone reconciliation rollback");
+      })
+    ).rejects.toThrow("force milestone reconciliation rollback");
+    await expect(
+      db.planningTask.findUniqueOrThrow({ where: { id: rollbackTask.task.taskId } })
+    ).resolves.toMatchObject({ status: "NOT_STARTED", version: rollbackTask.resourceVersion });
+    await expect(
+      db.projectMilestone.findUniqueOrThrow({ where: { id: rollbackMilestone.milestone.id } })
+    ).resolves.toMatchObject({ status: "PENDING", achievementSource: null });
+    await expect(
+      db.projectMilestoneEvent.count({
+        where: {
+          milestoneId: rollbackMilestone.milestone.id,
+          eventType: "ACHIEVED_FROM_LINKED_TASKS"
+        }
+      })
+    ).resolves.toBe(0);
+    await expect(
+      db.auditLog.count({
+        where: {
+          objectId: rollbackMilestone.milestone.id,
+          action: "PROJECT_MILESTONE_ACHIEVED_FROM_LINKED_TASKS"
+        }
+      })
+    ).resolves.toBe(0);
+    await expect(
+      db.outboxEvent.count({
+        where: {
+          eventType: "project.milestone.achieved-from-linked-tasks",
+          aggregateId: rollbackMilestone.milestone.id
+        }
+      })
+    ).resolves.toBe(0);
+  });
+
+  it("exposes only authorized project execution data with stable empty, stale, and failed states", async () => {
+    const ready = await createReadyProject("EXECUTION-READ");
+    const url = `http://localhost/api/projects/${ready.project.id}/execution`;
+
+    expect(
+      (
+        await readExecutionRoute(readRequest(url, ids.outsider), {
+          params: Promise.resolve({ projectId: ready.project.id })
+        })
+      ).status
+    ).toBe(403);
+
+    const emptyResponse = await readExecutionRoute(readRequest(url, ids.owner), {
+      params: Promise.resolve({ projectId: ready.project.id })
+    });
+    expect(emptyResponse.status).toBe(200);
+    await expect(emptyResponse.json()).resolves.toMatchObject({
+      progress: { status: "EMPTY" },
+      schedule: { status: "NOT_REQUESTED", stale: false },
+      tasks: []
+    });
+
+    await saveProjectCalendar({
+      projectId: ready.project.id,
+      version: 0,
+      name: "每工作日十小时",
+      timeZone: "Asia/Shanghai",
+      weeklyRules: [1, 2, 3, 4, 5].map((dayOfWeek) => ({
+        dayOfWeek,
+        intervals: [{ startMinute: 480, endMinute: 1080 }]
+      })),
+      exceptions: [],
+      reason: "配置执行页工日口径",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `execution-calendar-${suffix}`, ready.project.id)
+    });
+    const wbs = await createWbsNode({
+      projectId: ready.project.id,
+      ...wbsBody("EXECUTION-READ"),
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `execution-wbs-${suffix}`, ready.project.id)
+    });
+    const created = await createPlanningTask({
+      projectId: ready.project.id,
+      ...taskBody(ready, wbs.wbsNode.nodeId),
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `execution-task-${suffix}`, ready.project.id)
+    });
+
+    const staleResponse = await readExecutionRoute(readRequest(url, ids.owner), {
+      params: Promise.resolve({ projectId: ready.project.id })
+    });
+    expect(staleResponse.status).toBe(200);
+    const stalePayload = (await staleResponse.json()) as {
+      progress: {
+        status: string;
+        completedWorkdays: number;
+        totalWorkdays: number;
+        percent: number;
+      };
+      schedule: { status: string; stale: boolean; error: unknown };
+      tasks: Array<Record<string, unknown>>;
+    };
+    expect(stalePayload.progress).toEqual({
+      status: "READY",
+      completedWorkdays: 0,
+      totalWorkdays: 4,
+      percent: 0,
+      calculatedAt: expect.any(String)
+    });
+    expect(stalePayload.schedule).toMatchObject({ status: "PENDING", stale: true, error: null });
+    expect(stalePayload.tasks).toHaveLength(1);
+    expect(stalePayload.tasks[0]).not.toHaveProperty("plannedDurationMinutes");
+    expect(stalePayload.tasks[0]).toMatchObject({ taskId: created.task.taskId });
+
+    const state = await db.projectScheduleState.findUniqueOrThrow({
+      where: { projectId: ready.project.id }
+    });
+    await db.scheduleRecalculation.update({
+      where: {
+        projectId_inputVersion: { projectId: ready.project.id, inputVersion: state.inputVersion }
+      },
+      data: {
+        status: "FAILED",
+        errorCode: "EXECUTION_FORECAST_FAILED",
+        errorMessage: "项目预测计算失败。",
+        completedAt: new Date()
+      }
+    });
+
+    const failedResponse = await readExecutionRoute(readRequest(url, ids.owner), {
+      params: Promise.resolve({ projectId: ready.project.id })
+    });
+    expect(failedResponse.status).toBe(200);
+    const failedPayload = (await failedResponse.json()) as {
+      schedule: { status: string; stale: boolean; error: Record<string, unknown> | null };
+    };
+    expect(failedPayload.schedule).toMatchObject({
+      status: "FAILED",
+      stale: true,
+      error: { code: "EXECUTION_FORECAST_FAILED", message: "项目预测计算失败。" }
+    });
+    expect(failedPayload.schedule.error).not.toHaveProperty("stack");
+
+    await closePlanningTask({
+      projectId: ready.project.id,
+      taskId: created.task.taskId,
+      version: created.resourceVersion,
+      reason: "关闭后不再参与项目执行进度",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `execution-close-${suffix}`, ready.project.id)
+    });
+    const closedTaskResponse = await readExecutionRoute(readRequest(url, ids.owner), {
+      params: Promise.resolve({ projectId: ready.project.id })
+    });
+    await expect(closedTaskResponse.json()).resolves.toMatchObject({
+      progress: { status: "EMPTY" },
+      tasks: [],
+      responsibilityPackages: [{ effectiveTaskCount: 0 }]
+    });
   });
 
   it("completes and closes tasks without creating dependency, baseline, or progress models", async () => {

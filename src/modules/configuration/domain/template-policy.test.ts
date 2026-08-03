@@ -1,10 +1,15 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   componentChecksum,
+  TEMPLATE_COMPONENT_TYPES,
   templateChecksum,
   TemplateValidationError,
   validateTemplateComponentContent,
+  validateTemplateMilestoneCodesUnique,
   validateTemplateReferences
 } from "./template-policy";
 
@@ -46,6 +51,180 @@ describe("APM-010 template policy", () => {
         gates: [{ code: "G1", name: "基线", stageCode: "S0", requiredCheckerCodes: [] }]
       })
     ).toThrow(/至少一个检查器/u);
+  });
+
+  it("validates a canonical milestone component payload", () => {
+    expect(
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
+          {
+            code: "FAT.READY",
+            name: "FAT 准备",
+            description: "客户验收前置",
+            position: 20
+          }
+        ]
+      })
+    ).toEqual({
+      milestones: [
+        { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
+        {
+          code: "FAT.READY",
+          description: "客户验收前置",
+          name: "FAT 准备",
+          position: 20
+        }
+      ]
+    });
+  });
+
+  it("rejects milestone rules with duplicate codes", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
+          { code: "DESIGN.FREEZE", name: "FAT 准备", position: 20 }
+        ]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects duplicate milestone codes across separate template components", () => {
+    expect(() =>
+      validateTemplateMilestoneCodesUnique([
+        {
+          componentType: "MILESTONE",
+          content: { milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10 }] }
+        },
+        {
+          componentType: "MILESTONE",
+          content: { milestones: [{ code: "DESIGN.FREEZE", name: "重复设计冻结", position: 20 }] }
+        }
+      ])
+    ).toThrow(/重复/u);
+  });
+
+  it("rejects milestone rules with duplicate positions", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
+          { code: "FAT.READY", name: "FAT 准备", position: 10 }
+        ]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects a milestone rule without a name", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", position: 10 }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects a milestone rule with a blank name", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", name: "   ", position: 10 }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects a milestone rule with a blank description", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", description: "   ", position: 10 }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects unknown root fields in a milestone component", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10 }],
+        unexpected: true
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects unknown fields in a milestone rule", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10, unexpected: true }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("normalizes milestone text before calculating its checksum", () => {
+    const content = validateTemplateComponentContent("MILESTONE", {
+      milestones: [
+        {
+          code: " DESIGN.FREEZE ",
+          name: "  设计冻结  ",
+          description: " 客户验收前置 ",
+          position: 10
+        }
+      ]
+    });
+    const normalizedContent = {
+      milestones: [
+        {
+          code: "DESIGN.FREEZE",
+          name: "设计冻结",
+          description: "客户验收前置",
+          position: 10
+        }
+      ]
+    };
+
+    expect(content).toEqual(normalizedContent);
+    expect(
+      componentChecksum({
+        componentType: "MILESTONE",
+        name: "里程碑",
+        description: null,
+        content
+      })
+    ).toBe(
+      componentChecksum({
+        componentType: "MILESTONE",
+        name: "里程碑",
+        description: null,
+        content: normalizedContent
+      })
+    );
+  });
+
+  it("keeps template component declarations aligned with the enum append migration", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260803090000_apm_025_milestone_component/migration.sql"
+      ),
+      "utf8"
+    );
+
+    expect(Object.values(TEMPLATE_COMPONENT_TYPES)).toEqual([
+      "STAGE",
+      "GATE",
+      "ROLE",
+      "WBS",
+      "CAPABILITY_RULE",
+      "MILESTONE"
+    ]);
+    expect(schema).toContain(`enum TemplateComponentType {
+  STAGE
+  GATE
+  ROLE
+  WBS
+  CAPABILITY_RULE
+  MILESTONE
+}`);
+    expect(migration.trim()).toBe("ALTER TYPE \"TemplateComponentType\" ADD VALUE 'MILESTONE';");
+    expect(migration).not.toMatch(/\b(?:BEFORE|AFTER)\b/u);
   });
 
   it("requires complete template component types and unique positions", () => {

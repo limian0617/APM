@@ -21,6 +21,7 @@ import {
   ProjectCreationError,
   validateProjectIdentity
 } from "../domain/project-template-snapshot";
+import { instantiateProjectMilestones } from "./milestone-service";
 
 function positiveVersion(value: unknown): number {
   if (!Number.isInteger(value) || (value as number) < 1) {
@@ -130,18 +131,26 @@ export async function createProjectFromTemplate(
         }))
       });
       const initializedAt = await databaseNow(client);
-      const project = await client.project.create({
-        data: {
-          code: identity.code,
-          name: identity.name,
-          departmentId: identity.departmentId,
-          initializationStatus: "READY",
-          sourceTemplateVersionId: source.id,
-          sourceTemplateChecksum: source.checksum,
-          initializedAt,
-          createdById: input.actorId
+      let project;
+      try {
+        project = await client.project.create({
+          data: {
+            code: identity.code,
+            name: identity.name,
+            departmentId: identity.departmentId,
+            initializationStatus: "READY",
+            sourceTemplateVersionId: source.id,
+            sourceTemplateChecksum: source.checksum,
+            initializedAt,
+            createdById: input.actorId
+          }
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          throw new ProjectCreationError("PROJECT_CODE_CONFLICT", "项目号已存在。", 409);
         }
-      });
+        throw error;
+      }
       const membership = await client.projectMember.create({
         data: {
           projectId: project.id,
@@ -177,6 +186,19 @@ export async function createProjectFromTemplate(
           }
         },
         include: { components: { orderBy: [{ position: "asc" }, { slot: "asc" }] } }
+      });
+      const projectMilestones = await instantiateProjectMilestones(client, {
+        projectId: project.id,
+        project,
+        actorId: input.actorId,
+        auditContext: {
+          ...input.auditContext,
+          actorId: input.actorId,
+          projectId: project.id,
+          departmentId: identity.departmentId,
+          reason: creationReason
+        },
+        components: storedSnapshot.components
       });
       const auditContext = {
         ...input.auditContext,
@@ -219,6 +241,7 @@ export async function createProjectFromTemplate(
             snapshotId: storedSnapshot.id,
             snapshotChecksum: storedSnapshot.snapshotChecksum,
             referenceCount: storedSnapshot.components.length,
+            milestoneCount: projectMilestones.length,
             version: project.version
           },
           allowedFields: PROJECT_CREATION_AUDIT_FIELDS
@@ -254,7 +277,11 @@ export async function createProjectFromTemplate(
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      throw new ProjectCreationError("PROJECT_CODE_CONFLICT", "项目号已存在。", 409);
+      throw new ProjectCreationError(
+        "PROJECT_CREATION_CONFLICT",
+        "项目创建发生并发冲突，请刷新后重试。",
+        409
+      );
     }
     throw error;
   }

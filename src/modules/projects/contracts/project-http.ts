@@ -1,6 +1,7 @@
 import { apiErrorResponse } from "@/modules/platform-api/contracts/errors";
 
 import { ProjectCreationError } from "../domain/project-template-snapshot";
+import { ProjectMilestoneError } from "../application/milestone-service";
 import { ProjectStructureError } from "../domain/project-structure";
 import { ResponsibilityPackageError } from "../domain/responsibility-package";
 
@@ -16,5 +17,10 @@ export function projectStructureErrorResponse(error: unknown): Response | null {
 
 export function responsibilityPackageErrorResponse(error: unknown): Response | null {
   if (!(error instanceof ResponsibilityPackageError)) return null;
+  return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
+}
+
+export function projectMilestoneErrorResponse(error: unknown): Response | null {
+  if (!(error instanceof ProjectMilestoneError)) return null;
   return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
 }

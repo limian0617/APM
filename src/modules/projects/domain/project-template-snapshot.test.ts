@@ -4,7 +4,8 @@ import {
   componentChecksum,
   templateChecksum,
   type TemplateComponentContent,
-  type TemplateComponentTypeCode
+  type TemplateComponentTypeCode,
+  validateTemplateComponentContent
 } from "@/modules/configuration/domain/template-policy";
 
 import {
@@ -39,6 +40,19 @@ function sourceComponents(): SourceSnapshotComponent[] {
       content: {
         packages: [{ code: "START", name: "启动", stageCode: "S0", weight: 10 }]
       }
+    },
+    {
+      type: "MILESTONE",
+      content: validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          {
+            code: " DESIGN.FREEZE ",
+            name: "  设计冻结  ",
+            description: " 客户验收前置 ",
+            position: 10
+          }
+        ]
+      })
     }
   ];
   return definitions.map(({ type, content }, position) => {
@@ -103,8 +117,24 @@ describe("APM-011 project template snapshot", () => {
       "STAGE.0",
       "GATE.0",
       "ROLE.0",
-      "WBS.0"
+      "WBS.0",
+      "MILESTONE.0"
     ]);
+    expect(
+      first.components.find(({ componentType }) => componentType === "MILESTONE")
+    ).toMatchObject({
+      slot: "MILESTONE.0",
+      content: {
+        milestones: [
+          {
+            code: "DESIGN.FREEZE",
+            name: "设计冻结",
+            description: "客户验收前置",
+            position: 10
+          }
+        ]
+      }
+    });
   });
 
   it("rejects stale caller and tampered component checksums", () => {
