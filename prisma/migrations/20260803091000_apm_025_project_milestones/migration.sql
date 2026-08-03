@@ -85,6 +85,7 @@ CREATE TABLE "project_milestone_task_links" (
       "status" = 'VOID'
       AND "voided_by_id" IS NOT NULL
       AND "voided_at" IS NOT NULL
+      AND "void_reason" IS NOT NULL
       AND length(btrim("void_reason")) BETWEEN 1 AND 1024
     )
   )
@@ -179,6 +180,29 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE FUNCTION enforce_project_milestone_source_component() RETURNS trigger AS $$
+DECLARE
+  source_project_id TEXT;
+  source_component_type "TemplateComponentType";
+BEGIN
+  IF NEW."source_snapshot_component_id" IS NULL THEN
+    RETURN NEW;
+  END IF;
+  SELECT snapshot."project_id", component."component_type"
+    INTO source_project_id, source_component_type
+    FROM "project_template_snapshot_components" component
+    JOIN "project_template_snapshots" snapshot ON snapshot."id" = component."snapshot_id"
+    WHERE component."id" = NEW."source_snapshot_component_id";
+  IF source_project_id IS NULL
+    OR source_project_id IS DISTINCT FROM NEW."project_id"
+    OR source_component_type IS DISTINCT FROM 'MILESTONE' THEN
+    RAISE EXCEPTION 'project milestone source must be a milestone component from the same project'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE FUNCTION reject_project_milestone_event_mutation() RETURNS trigger AS $$
 BEGIN
   RAISE EXCEPTION 'project_milestone_events is append-only: % is forbidden', TG_OP
@@ -190,6 +214,10 @@ CREATE TRIGGER project_milestone_task_links_project_check
   BEFORE INSERT OR UPDATE OF "project_id", "milestone_id", "task_id"
   ON "project_milestone_task_links"
   FOR EACH ROW EXECUTE FUNCTION enforce_project_milestone_task_link_project();
+CREATE TRIGGER project_milestones_source_component_check
+  BEFORE INSERT OR UPDATE OF "project_id", "source_snapshot_component_id"
+  ON "project_milestones"
+  FOR EACH ROW EXECUTE FUNCTION enforce_project_milestone_source_component();
 CREATE TRIGGER project_milestone_events_reject_mutation
   BEFORE UPDATE OR DELETE ON "project_milestone_events"
   FOR EACH STATEMENT EXECUTE FUNCTION reject_project_milestone_event_mutation();
