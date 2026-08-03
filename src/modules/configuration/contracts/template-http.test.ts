@@ -70,7 +70,7 @@ describe("APM-010 template HTTP contracts", () => {
           ...base,
           content: {
             stages: [
-              { code: "S0", name: "启动", sequence: 0 },
+              { code: " S0 ", name: "启动", sequence: 0 },
               { code: "S0", name: "方案冻结", sequence: 1 }
             ]
           }
@@ -89,6 +89,54 @@ describe("APM-010 template HTTP contracts", () => {
               { code: "S1", name: "方案冻结", sequence: 0 }
             ]
           }
+        },
+        "body"
+      )
+    ).toThrowError(ApiContractError);
+  });
+
+  it("matches the domain stage cardinality boundary", () => {
+    const stages = Array.from({ length: 100 }, (_, sequence) => ({
+      code: `S${sequence}`,
+      name: `阶段 ${sequence}`,
+      sequence
+    }));
+    const base = {
+      version: 0,
+      componentType: "STAGE" as const,
+      name: "阶段",
+      reason: "边界检查"
+    };
+
+    expect(
+      parseDto(saveTemplateComponentDraftBodySchema, { ...base, content: { stages } }, "body")
+    ).toMatchObject({ content: { stages } });
+    expect(() =>
+      parseDto(
+        saveTemplateComponentDraftBodySchema,
+        {
+          ...base,
+          content: {
+            stages: [...stages, { code: "S100", name: "阶段 100", sequence: 100 }]
+          }
+        },
+        "body"
+      )
+    ).toThrowError(ApiContractError);
+  });
+
+  it("rejects unknown fields in a stage DTO", () => {
+    expect(() =>
+      parseDto(
+        saveTemplateComponentDraftBodySchema,
+        {
+          version: 0,
+          componentType: "STAGE",
+          name: "阶段",
+          content: {
+            stages: [{ code: "S0", name: "启动", sequence: 0, unexpected: true }]
+          },
+          reason: "错误负载"
         },
         "body"
       )

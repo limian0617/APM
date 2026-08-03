@@ -120,6 +120,34 @@ describe("APM-010 template policy", () => {
     ).toThrowError(TemplateValidationError);
   });
 
+  it("rejects invalid stage codes and sequence values", () => {
+    for (const stage of [
+      { code: "s0", name: "启动", sequence: 0 },
+      { code: "S0", name: "启动", sequence: -1 },
+      { code: "S0", name: "启动", sequence: 0.5 },
+      { code: "S0", name: "启动", sequence: Number.MAX_SAFE_INTEGER + 1 }
+    ]) {
+      expect(() =>
+        validateTemplateComponentContent("STAGE", { stages: [stage] })
+      ).toThrowError(TemplateValidationError);
+    }
+  });
+
+  it("accepts at most 100 stage definitions", () => {
+    const stages = Array.from({ length: 100 }, (_, sequence) => ({
+      code: `S${sequence}`,
+      name: `阶段 ${sequence}`,
+      sequence
+    }));
+
+    expect(validateTemplateComponentContent("STAGE", { stages })).toMatchObject({ stages });
+    expect(() =>
+      validateTemplateComponentContent("STAGE", {
+        stages: [...stages, { code: "S100", name: "阶段 100", sequence: 100 }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
   it("rejects duplicate and incomplete component rules", () => {
     expect(() =>
       validateTemplateComponentContent("STAGE", {

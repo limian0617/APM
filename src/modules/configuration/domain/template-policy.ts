@@ -103,6 +103,9 @@ export function validateTemplateComponentContent(
     case TEMPLATE_COMPONENT_TYPES.STAGE: {
       rejectUnknownKeys(content, ["stages"], "阶段组件");
       const items = array(content.stages, "stages");
+      if (items.length > 100) {
+        throw new TemplateValidationError("INVALID_COMPONENT_RULES", "阶段最多包含 100 项。");
+      }
       const stages = items.map((item) => {
         rejectUnknownKeys(item, ["code", "name", "description", "sequence"], "阶段");
         const code = trimmedStableCode(item.code, "stages.code");
