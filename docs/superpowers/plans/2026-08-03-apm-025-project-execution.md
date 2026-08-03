@@ -15,7 +15,7 @@
 | Path | Responsibility |
 | --- | --- |
 | `prisma/schema.prisma` | Milestone enum/models, template component enum, foreign keys, indexes, audit vocabulary enum values. |
-| `prisma/migrations/20260803090000_apm_025_project_execution/migration.sql` | PostgreSQL types/tables/constraints and append-only triggers for milestone facts. |
+| `prisma/migrations/20260803091000_apm_025_project_milestones/migration.sql` | PostgreSQL types/tables/constraints and append-only triggers for milestone facts. |
 | `src/modules/configuration/domain/template-policy.ts` | Validate canonical `MILESTONE` component content and retain non-required status. |
 | `src/modules/projects/domain/project-milestone.ts` | Pure milestone definition, state-transition, and task-link reconciliation rules. |
 | `src/modules/projects/application/milestone-service.ts` | Transactional CRUD, task linking, event/audit/Outbox persistence, and template snapshot instantiation. |
@@ -125,7 +125,7 @@
 
 **Files:**
 - Modify: `prisma/schema.prisma`
-- Create: `prisma/migrations/20260803090000_apm_025_project_execution/migration.sql`
+- Create: `prisma/migrations/20260803091000_apm_025_project_milestones/migration.sql`
 - Create: `src/modules/projects/infrastructure/milestones.integration.test.ts`
 
 - [ ] **Step 1: Write the PostgreSQL integration assertions before creating the migration.**
@@ -190,7 +190,7 @@
 - [ ] **Step 6: Commit the durable storage slice.**
 
   ```powershell
-  git add prisma/schema.prisma prisma/migrations/20260803090000_apm_025_project_execution src/modules/projects/infrastructure/milestones.integration.test.ts
+  git add prisma/schema.prisma prisma/migrations/20260803091000_apm_025_project_milestones src/modules/projects/infrastructure/milestones.integration.test.ts
   git commit -m "Add project milestone persistence"
   ```
 
@@ -517,7 +517,7 @@
   Run the repository CI-equivalent PostgreSQL 16 workflow (or its exact documented commands) once
   from an empty schema and once after deploying migrations through APM-022. Run database-gated
   Vitest with `RUN_DATABASE_INTEGRATION=1` for each state. Preserve command output showing both
-  migration histories finish at `20260803090000_apm_025_project_execution`.
+  migration histories finish at `20260803091000_apm_025_project_milestones`.
 
 - [ ] **Step 5: Commit any final formatting-only corrections and publish the draft PR.**
 
