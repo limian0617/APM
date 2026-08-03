@@ -181,7 +181,15 @@ export async function createProjectFromTemplate(
       });
       const projectMilestones = await instantiateProjectMilestones(client, {
         projectId: project.id,
+        project,
         actorId: input.actorId,
+        auditContext: {
+          ...input.auditContext,
+          actorId: input.actorId,
+          projectId: project.id,
+          departmentId: identity.departmentId,
+          reason: creationReason
+        },
         components: storedSnapshot.components
       });
       const auditContext = {

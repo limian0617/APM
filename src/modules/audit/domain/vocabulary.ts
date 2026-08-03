@@ -317,6 +317,7 @@ export const PROJECT_MILESTONE_AUDIT_FIELDS = [
   "milestoneId",
   "code",
   "name",
+  "targetAt",
   "status",
   "achievementSource",
   "version"

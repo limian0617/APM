@@ -11,6 +11,13 @@ import {
   saveTemplateComponentDraft
 } from "@/modules/configuration/application/template-service";
 import { createProjectFromTemplate } from "@/modules/projects/application/create-project";
+import { initializeProjectStructure } from "@/modules/projects/application/project-structure";
+import {
+  linkMilestoneTask,
+  manuallyAchieveProjectMilestone,
+  updateProjectMilestone,
+  voidProjectMilestone
+} from "@/modules/projects/application/milestone-service";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
@@ -18,7 +25,11 @@ const ids = {
   admin: `milestone-admin-${suffix}`
 };
 
-function context(actorId: string, operationId: string): AuditContext {
+function context(
+  actorId: string,
+  operationId: string,
+  projectId: string | null = null
+): AuditContext {
   return {
     actorId,
     requestId: `request-${operationId}`,
@@ -27,7 +38,7 @@ function context(actorId: string, operationId: string): AuditContext {
     sourceIp: null,
     userAgent: "Vitest",
     reason: null,
-    projectId: null,
+    projectId,
     departmentId: "engineering",
     operationId
   };
@@ -131,6 +142,67 @@ async function createSnapshotProject(
     include: { components: true }
   });
   return { project, snapshot };
+}
+
+async function createReadySnapshotProject(
+  template: Awaited<ReturnType<typeof seedPublishedTemplate>>,
+  label: string
+) {
+  const { project: createdProject, snapshot } = await createSnapshotProject(template, label);
+  const structure = await initializeProjectStructure({
+    projectId: createdProject.id,
+    projectVersion: createdProject.version,
+    projectType: "CUSTOMER_DELIVERY",
+    equipmentShape: "SINGLE_MACHINE",
+    deliveryUnits: [
+      {
+        code: "MACHINE.01",
+        name: "里程碑测试单机",
+        unitType: "MACHINE",
+        parentCode: null,
+        position: 0
+      }
+    ],
+    modules: [
+      { code: "MODULE.01", name: "里程碑测试模块", machineCode: "MACHINE.01", position: 0 }
+    ],
+    reason: "初始化里程碑测试项目结构",
+    actorId: ids.admin,
+    auditContext: context(ids.admin, `snapshot-structure-${label}-${suffix}`, createdProject.id)
+  });
+  const membership = await db.projectMember.findFirstOrThrow({
+    where: { projectId: createdProject.id, userId: ids.admin, leftAt: null }
+  });
+  const wbsNode = await db.wbsNode.create({
+    data: {
+      projectId: createdProject.id,
+      code: "MILESTONE.ROOT",
+      name: "里程碑测试根节点",
+      position: 0,
+      createdById: ids.admin,
+      updatedById: ids.admin
+    }
+  });
+  const task = await db.planningTask.create({
+    data: {
+      projectId: createdProject.id,
+      wbsNodeId: wbsNode.id,
+      ownerMembershipId: membership.id,
+      code: "MILESTONE.TASK",
+      name: "里程碑关联测试任务",
+      position: 0,
+      plannedStartAt: new Date("2026-08-03T00:00:00.000Z"),
+      plannedFinishAt: new Date("2026-08-03T08:00:00.000Z"),
+      plannedDurationMinutes: 480,
+      weight: 1,
+      remainingDurationMinutes: 480,
+      forecastFinishAt: new Date("2026-08-03T08:00:00.000Z"),
+      createdById: ids.admin,
+      updatedById: ids.admin
+    }
+  });
+  const project = await db.project.findUniqueOrThrow({ where: { id: createdProject.id } });
+  return { project, snapshot, structure, task };
 }
 
 async function seedProject(label: string) {
@@ -344,5 +416,97 @@ describeDatabase("APM-025 PostgreSQL project milestone facts", () => {
     await expect(db.$executeRawUnsafe('TRUNCATE TABLE "project_milestone_events"')).rejects.toThrow(
       /append-only/u
     );
+  });
+
+  it("copies template milestones, preserves durable history, and rolls failed link commands back", async () => {
+    const template = await seedPublishedTemplate("LIFECYCLE");
+    const ready = await createReadySnapshotProject(template, "LIFECYCLE");
+    const milestone = await db.projectMilestone.findFirstOrThrow({
+      where: { projectId: ready.project.id, code: "DESIGN.FREEZE" }
+    });
+    expect(milestone.sourceSnapshotComponentId).not.toBeNull();
+    await expect(
+      db.projectMilestoneEvent.findMany({
+        where: { milestoneId: milestone.id },
+        orderBy: { sequence: "asc" }
+      })
+    ).resolves.toMatchObject([{ sequence: 1, eventType: "CREATED", toStatus: "PENDING" }]);
+
+    const achieved = await manuallyAchieveProjectMilestone({
+      projectId: ready.project.id,
+      milestoneId: milestone.id,
+      version: milestone.version,
+      reason: "PM 手动确认设计冻结",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `manual-achievement-${suffix}`, ready.project.id)
+    });
+    expect(achieved).toMatchObject({
+      milestone: { status: "ACHIEVED", achievementSource: "MANUAL" },
+      event: { sequence: 2, eventType: "ACHIEVED_MANUALLY" }
+    });
+    await expect(
+      updateProjectMilestone({
+        projectId: ready.project.id,
+        milestoneId: milestone.id,
+        version: milestone.version,
+        name: "使用过期版本修改的设计冻结",
+        position: milestone.position,
+        reason: "使用过期版本修改",
+        actorId: ids.admin,
+        auditContext: context(ids.admin, `stale-update-${suffix}`, ready.project.id)
+      })
+    ).rejects.toMatchObject({ code: "VERSION_CONFLICT", status: 409 });
+
+    const beforeFailure = await Promise.all([
+      db.projectMilestoneEvent.count({ where: { milestoneId: milestone.id } }),
+      db.auditLog.count({ where: { objectId: milestone.id } }),
+      db.outboxEvent.count({ where: { aggregateId: milestone.id } })
+    ]);
+    await expect(
+      linkMilestoneTask({
+        projectId: ready.project.id,
+        milestoneId: milestone.id,
+        version: achieved.resourceVersion,
+        taskId: ready.task.id,
+        reason: "故意使用不存在的操作者验证事务回滚",
+        actorId: `missing-milestone-actor-${suffix}`,
+        auditContext: context(
+          `missing-milestone-actor-${suffix}`,
+          `rollback-link-${suffix}`,
+          ready.project.id
+        )
+      })
+    ).rejects.toMatchObject({ code: "MILESTONE_RELATION_INVALID", status: 409 });
+    await expect(
+      Promise.all([
+        db.projectMilestoneEvent.count({ where: { milestoneId: milestone.id } }),
+        db.auditLog.count({ where: { objectId: milestone.id } }),
+        db.outboxEvent.count({ where: { aggregateId: milestone.id } })
+      ])
+    ).resolves.toEqual(beforeFailure);
+    await expect(
+      db.projectMilestone.findUniqueOrThrow({ where: { id: milestone.id } })
+    ).resolves.toMatchObject({
+      version: achieved.resourceVersion,
+      status: "ACHIEVED"
+    });
+
+    const voided = await voidProjectMilestone({
+      projectId: ready.project.id,
+      milestoneId: milestone.id,
+      version: achieved.resourceVersion,
+      reason: "PM 作废已替代的里程碑",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `void-milestone-${suffix}`, ready.project.id)
+    });
+    expect(voided).toMatchObject({
+      milestone: { status: "VOID" },
+      event: { sequence: 3, eventType: "VOIDED" }
+    });
+    await expect(
+      db.projectMilestone.findUniqueOrThrow({ where: { id: milestone.id } })
+    ).resolves.toMatchObject({
+      status: "VOID"
+    });
   });
 });
