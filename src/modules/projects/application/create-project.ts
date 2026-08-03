@@ -131,18 +131,26 @@ export async function createProjectFromTemplate(
         }))
       });
       const initializedAt = await databaseNow(client);
-      const project = await client.project.create({
-        data: {
-          code: identity.code,
-          name: identity.name,
-          departmentId: identity.departmentId,
-          initializationStatus: "READY",
-          sourceTemplateVersionId: source.id,
-          sourceTemplateChecksum: source.checksum,
-          initializedAt,
-          createdById: input.actorId
+      let project;
+      try {
+        project = await client.project.create({
+          data: {
+            code: identity.code,
+            name: identity.name,
+            departmentId: identity.departmentId,
+            initializationStatus: "READY",
+            sourceTemplateVersionId: source.id,
+            sourceTemplateChecksum: source.checksum,
+            initializedAt,
+            createdById: input.actorId
+          }
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          throw new ProjectCreationError("PROJECT_CODE_CONFLICT", "项目号已存在。", 409);
         }
-      });
+        throw error;
+      }
       const membership = await client.projectMember.create({
         data: {
           projectId: project.id,
@@ -269,10 +277,6 @@ export async function createProjectFromTemplate(
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      const target = Array.isArray(error.meta?.target) ? error.meta.target.join(",") : "";
-      if (target.includes("projects_code")) {
-        throw new ProjectCreationError("PROJECT_CODE_CONFLICT", "项目号已存在。", 409);
-      }
       throw new ProjectCreationError(
         "PROJECT_CREATION_CONFLICT",
         "项目创建发生并发冲突，请刷新后重试。",
