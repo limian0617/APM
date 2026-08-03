@@ -369,6 +369,56 @@ export const planningTaskQuerySchema = z.strictObject({
   status: z.enum(["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "CLOSED"]).optional(),
   wbsNodeId: identifierSchema.optional()
 });
+const workIntervalSchema = z.strictObject({
+  startMinute: z.number().int().min(0).max(1439),
+  endMinute: z.number().int().min(1).max(1440)
+});
+const weeklyWorkRuleSchema = z.strictObject({
+  dayOfWeek: z.number().int().min(1).max(7),
+  intervals: z.array(workIntervalSchema).min(1).max(8)
+});
+const calendarExceptionSchema = z.strictObject({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+  intervals: z.array(workIntervalSchema).max(8)
+});
+export const saveProjectCalendarBodySchema = z.strictObject({
+  version: nonNegativeVersionSchema,
+  name: templateNameSchema,
+  timeZone: z.string().trim().min(1).max(100),
+  weeklyRules: z.array(weeklyWorkRuleSchema).min(1).max(7),
+  exceptions: z.array(calendarExceptionSchema).max(3660),
+  reason: reasonSchema
+});
+export const projectCalendarCloseBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const taskDependencyPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  dependencyId: identifierSchema
+});
+const taskDependencyDefinitionShape = {
+  dependencyType: z.enum(["FS", "SS", "FF"]),
+  lagMinutes: z.number().int().min(-5_256_000).max(5_256_000)
+};
+export const createTaskDependencyBodySchema = z.strictObject({
+  predecessorTaskId: identifierSchema,
+  successorTaskId: identifierSchema,
+  ...taskDependencyDefinitionShape,
+  reason: reasonSchema
+});
+export const updateTaskDependencyBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  ...taskDependencyDefinitionShape,
+  reason: reasonSchema
+});
+export const taskDependencyCloseBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const taskDependencyQuerySchema = z.strictObject({
+  status: z.enum(["ACTIVE", "CLOSED"]).optional()
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema

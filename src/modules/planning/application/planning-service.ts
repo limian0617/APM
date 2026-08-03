@@ -73,6 +73,12 @@ async function databaseNow(client: Prisma.TransactionClient): Promise<Date> {
   return clock.now;
 }
 
+async function lockTaskDependencyGraph(client: Prisma.TransactionClient, projectId: string) {
+  await client.$queryRaw<Array<{ locked: boolean }>>`
+    SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0)) IS NULL AS "locked"
+  `;
+}
+
 function assertProjectWritable(project: {
   status: string;
   initializationStatus: string;
@@ -837,6 +843,21 @@ export async function closePlanningTask(
       if (!current) throw new PlanningError("TASK_NOT_FOUND", "任务不存在。", 404);
       const project = await client.project.findUniqueOrThrow({ where: { id: input.projectId } });
       assertProjectWritable(project);
+      await lockTaskDependencyGraph(client, input.projectId);
+      const activeDependencyCount = await client.taskDependency.count({
+        where: {
+          projectId: input.projectId,
+          status: "ACTIVE",
+          OR: [{ predecessorTaskId: current.id }, { successorTaskId: current.id }]
+        }
+      });
+      if (activeDependencyCount > 0) {
+        throw new PlanningError(
+          "TASK_HAS_ACTIVE_DEPENDENCIES",
+          "存在启用依赖的任务不能关闭，请先关闭相关依赖。",
+          409
+        );
+      }
       const changed = await client.planningTask.updateMany({
         where: { id: current.id, projectId: input.projectId, version, status: { not: "CLOSED" } },
         data: {

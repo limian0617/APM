@@ -41,7 +41,13 @@ export const AUDIT_ACTIONS = {
   PLANNING_TASK_CREATED: "PLANNING_TASK_CREATED",
   PLANNING_TASK_UPDATED: "PLANNING_TASK_UPDATED",
   PLANNING_TASK_PROGRESS_UPDATED: "PLANNING_TASK_PROGRESS_UPDATED",
-  PLANNING_TASK_CLOSED: "PLANNING_TASK_CLOSED"
+  PLANNING_TASK_CLOSED: "PLANNING_TASK_CLOSED",
+  PROJECT_CALENDAR_CREATED: "PROJECT_CALENDAR_CREATED",
+  PROJECT_CALENDAR_UPDATED: "PROJECT_CALENDAR_UPDATED",
+  PROJECT_CALENDAR_CLOSED: "PROJECT_CALENDAR_CLOSED",
+  TASK_DEPENDENCY_CREATED: "TASK_DEPENDENCY_CREATED",
+  TASK_DEPENDENCY_UPDATED: "TASK_DEPENDENCY_UPDATED",
+  TASK_DEPENDENCY_CLOSED: "TASK_DEPENDENCY_CLOSED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -65,7 +71,9 @@ export const AUDIT_OBJECT_TYPES = {
   PROJECT_CAPABILITY: "PROJECT_CAPABILITY",
   RESPONSIBILITY_PACKAGE: "RESPONSIBILITY_PACKAGE",
   WBS_NODE: "WBS_NODE",
-  PLANNING_TASK: "PLANNING_TASK"
+  PLANNING_TASK: "PLANNING_TASK",
+  PROJECT_CALENDAR: "PROJECT_CALENDAR",
+  TASK_DEPENDENCY: "TASK_DEPENDENCY"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -269,6 +277,30 @@ export const PLANNING_TASK_AUDIT_FIELDS = [
   "actualFinishAt",
   "remainingDurationMinutes",
   "forecastFinishAt",
+  "version"
+] as const;
+
+export const PROJECT_CALENDAR_AUDIT_FIELDS = [
+  "projectId",
+  "calendarId",
+  "revisionId",
+  "name",
+  "timeZone",
+  "weeklyRuleCount",
+  "exceptionCount",
+  "checksum",
+  "status",
+  "version"
+] as const;
+
+export const TASK_DEPENDENCY_AUDIT_FIELDS = [
+  "projectId",
+  "dependencyId",
+  "predecessorTaskId",
+  "successorTaskId",
+  "dependencyType",
+  "lagMinutes",
+  "status",
   "version"
 ] as const;
 
