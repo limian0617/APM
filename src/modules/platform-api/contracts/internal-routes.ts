@@ -41,18 +41,42 @@ const templateComponentTypeSchema = z.enum([
   "CAPABILITY_RULE",
   "MILESTONE"
 ]);
-const stageContentSchema = z.strictObject({
-  stages: z
-    .array(
-      z.strictObject({
-        code: stableCodeSchema,
-        name: templateNameSchema,
-        sequence: z.number().int().min(0)
-      })
-    )
-    .min(1)
-    .max(100)
-});
+const stageContentSchema = z
+  .strictObject({
+    stages: z
+      .array(
+        z.strictObject({
+          code: stableCodeSchema,
+          name: templateNameSchema,
+          description: z.string().trim().min(1).max(2000).optional(),
+          sequence: z.number().int().min(0).refine(Number.isSafeInteger)
+        })
+      )
+      .min(1)
+      .max(100)
+  })
+  .superRefine(({ stages }, context) => {
+    const codes = new Set<string>();
+    const sequences = new Set<number>();
+    for (const [index, stage] of stages.entries()) {
+      if (codes.has(stage.code)) {
+        context.addIssue({
+          code: "custom",
+          message: "阶段代码不能重复。",
+          path: ["stages", index, "code"]
+        });
+      }
+      codes.add(stage.code);
+      if (sequences.has(stage.sequence)) {
+        context.addIssue({
+          code: "custom",
+          message: "阶段顺序不能重复。",
+          path: ["stages", index, "sequence"]
+        });
+      }
+      sequences.add(stage.sequence);
+    }
+  });
 const gateContentSchema = z.strictObject({
   gates: z
     .array(

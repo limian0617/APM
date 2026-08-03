@@ -25,6 +25,76 @@ describe("APM-010 template HTTP contracts", () => {
     ).toMatchObject({ componentType: "STAGE", version: 0 });
   });
 
+  it("accepts an optional normalized stage description", () => {
+    expect(
+      parseDto(
+        saveTemplateComponentDraftBodySchema,
+        {
+          version: 0,
+          componentType: "STAGE",
+          name: "九阶段",
+          content: {
+            stages: [
+              {
+                code: " S0 ",
+                name: " 项目启动 ",
+                description: " 客户项目启动 ",
+                sequence: 0
+              }
+            ]
+          },
+          reason: "创建阶段组件"
+        },
+        "body"
+      )
+    ).toMatchObject({
+      content: {
+        stages: [
+          { code: "S0", name: "项目启动", description: "客户项目启动", sequence: 0 }
+        ]
+      }
+    });
+  });
+
+  it("rejects duplicate stage codes and sequences", () => {
+    const base = {
+      version: 0,
+      componentType: "STAGE" as const,
+      name: "阶段",
+      reason: "错误负载"
+    };
+    expect(() =>
+      parseDto(
+        saveTemplateComponentDraftBodySchema,
+        {
+          ...base,
+          content: {
+            stages: [
+              { code: "S0", name: "启动", sequence: 0 },
+              { code: "S0", name: "方案冻结", sequence: 1 }
+            ]
+          }
+        },
+        "body"
+      )
+    ).toThrowError(ApiContractError);
+    expect(() =>
+      parseDto(
+        saveTemplateComponentDraftBodySchema,
+        {
+          ...base,
+          content: {
+            stages: [
+              { code: "S0", name: "启动", sequence: 0 },
+              { code: "S1", name: "方案冻结", sequence: 0 }
+            ]
+          }
+        },
+        "body"
+      )
+    ).toThrowError(ApiContractError);
+  });
+
   it("rejects unknown fields and type/content mismatches", () => {
     expect(() =>
       parseDto(
