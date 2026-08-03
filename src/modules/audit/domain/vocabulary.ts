@@ -34,7 +34,14 @@ export const AUDIT_ACTIONS = {
   RESPONSIBILITY_PACKAGE_ACCEPTANCE_SUBMITTED: "RESPONSIBILITY_PACKAGE_ACCEPTANCE_SUBMITTED",
   RESPONSIBILITY_PACKAGE_ACCEPTED: "RESPONSIBILITY_PACKAGE_ACCEPTED",
   RESPONSIBILITY_PACKAGE_REOPENED: "RESPONSIBILITY_PACKAGE_REOPENED",
-  RESPONSIBILITY_PACKAGE_CLOSED: "RESPONSIBILITY_PACKAGE_CLOSED"
+  RESPONSIBILITY_PACKAGE_CLOSED: "RESPONSIBILITY_PACKAGE_CLOSED",
+  WBS_NODE_CREATED: "WBS_NODE_CREATED",
+  WBS_NODE_UPDATED: "WBS_NODE_UPDATED",
+  WBS_NODE_CLOSED: "WBS_NODE_CLOSED",
+  PLANNING_TASK_CREATED: "PLANNING_TASK_CREATED",
+  PLANNING_TASK_UPDATED: "PLANNING_TASK_UPDATED",
+  PLANNING_TASK_PROGRESS_UPDATED: "PLANNING_TASK_PROGRESS_UPDATED",
+  PLANNING_TASK_CLOSED: "PLANNING_TASK_CLOSED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -56,7 +63,9 @@ export const AUDIT_OBJECT_TYPES = {
   DELIVERY_UNIT: "DELIVERY_UNIT",
   PROJECT_MODULE: "PROJECT_MODULE",
   PROJECT_CAPABILITY: "PROJECT_CAPABILITY",
-  RESPONSIBILITY_PACKAGE: "RESPONSIBILITY_PACKAGE"
+  RESPONSIBILITY_PACKAGE: "RESPONSIBILITY_PACKAGE",
+  WBS_NODE: "WBS_NODE",
+  PLANNING_TASK: "PLANNING_TASK"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -226,6 +235,40 @@ export const RESPONSIBILITY_PACKAGE_AUDIT_FIELDS = [
   "status",
   "acceptanceCycle",
   "transitionSequence",
+  "version"
+] as const;
+
+export const WBS_NODE_AUDIT_FIELDS = [
+  "projectId",
+  "nodeId",
+  "parentId",
+  "code",
+  "name",
+  "position",
+  "status",
+  "version"
+] as const;
+
+export const PLANNING_TASK_AUDIT_FIELDS = [
+  "projectId",
+  "taskId",
+  "wbsNodeId",
+  "responsibilityPackageId",
+  "deliveryUnitId",
+  "moduleId",
+  "ownerMembershipId",
+  "code",
+  "name",
+  "position",
+  "plannedStartAt",
+  "plannedFinishAt",
+  "plannedDurationMinutes",
+  "weight",
+  "status",
+  "actualStartAt",
+  "actualFinishAt",
+  "remainingDurationMinutes",
+  "forecastFinishAt",
   "version"
 ] as const;
 
