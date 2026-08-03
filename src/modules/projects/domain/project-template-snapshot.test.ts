@@ -39,6 +39,12 @@ function sourceComponents(): SourceSnapshotComponent[] {
       content: {
         packages: [{ code: "START", name: "启动", stageCode: "S0", weight: 10 }]
       }
+    },
+    {
+      type: "MILESTONE",
+      content: {
+        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10 }]
+      }
     }
   ];
   return definitions.map(({ type, content }, position) => {
@@ -103,8 +109,17 @@ describe("APM-011 project template snapshot", () => {
       "STAGE.0",
       "GATE.0",
       "ROLE.0",
-      "WBS.0"
+      "WBS.0",
+      "MILESTONE.0"
     ]);
+    expect(
+      first.components.find(({ componentType }) => componentType === "MILESTONE")
+    ).toMatchObject({
+      slot: "MILESTONE.0",
+      content: {
+        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10 }]
+      }
+    });
   });
 
   it("rejects stale caller and tampered component checksums", () => {

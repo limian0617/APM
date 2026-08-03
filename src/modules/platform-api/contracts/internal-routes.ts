@@ -33,7 +33,14 @@ const templateIdentityCodeSchema = z
   .regex(/^[A-Z][A-Z0-9_.-]{2,100}$/u);
 const templateNameSchema = z.string().trim().min(1).max(200);
 const templateDescriptionSchema = z.string().trim().max(2000).nullable().optional();
-const templateComponentTypeSchema = z.enum(["STAGE", "GATE", "ROLE", "WBS", "CAPABILITY_RULE"]);
+const templateComponentTypeSchema = z.enum([
+  "STAGE",
+  "GATE",
+  "ROLE",
+  "WBS",
+  "MILESTONE",
+  "CAPABILITY_RULE"
+]);
 const stageContentSchema = z.strictObject({
   stages: z
     .array(
@@ -84,6 +91,19 @@ const wbsContentSchema = z.strictObject({
     .min(1)
     .max(1000)
 });
+const milestoneContentSchema = z.strictObject({
+  milestones: z
+    .array(
+      z.strictObject({
+        code: stableCodeSchema,
+        name: templateNameSchema,
+        description: z.string().trim().min(1).max(2000).optional(),
+        position: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+      })
+    )
+    .min(1)
+    .max(1000)
+});
 const capabilityRuleContentSchema = z.strictObject({
   capabilities: z
     .array(
@@ -129,6 +149,11 @@ export const saveTemplateComponentDraftBodySchema = z.discriminatedUnion("compon
     ...templateComponentDraftBase,
     componentType: z.literal("WBS"),
     content: wbsContentSchema
+  }),
+  z.strictObject({
+    ...templateComponentDraftBase,
+    componentType: z.literal("MILESTONE"),
+    content: milestoneContentSchema
   }),
   z.strictObject({
     ...templateComponentDraftBase,

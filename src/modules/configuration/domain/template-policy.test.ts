@@ -48,6 +48,62 @@ describe("APM-010 template policy", () => {
     ).toThrow(/至少一个检查器/u);
   });
 
+  it("validates a canonical milestone component payload", () => {
+    expect(
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
+          {
+            code: "FAT.READY",
+            name: "FAT 准备",
+            description: "客户验收前置",
+            position: 20
+          }
+        ]
+      })
+    ).toEqual({
+      milestones: [
+        { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
+        {
+          code: "FAT.READY",
+          description: "客户验收前置",
+          name: "FAT 准备",
+          position: 20
+        }
+      ]
+    });
+  });
+
+  it("rejects milestone rules with duplicate codes", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
+          { code: "DESIGN.FREEZE", name: "FAT 准备", position: 20 }
+        ]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects milestone rules with duplicate positions", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
+          { code: "FAT.READY", name: "FAT 准备", position: 10 }
+        ]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects a milestone rule without a name", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", position: 10 }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
   it("requires complete template component types and unique positions", () => {
     const base = [
       {

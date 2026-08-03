@@ -5,6 +5,7 @@ export const TEMPLATE_COMPONENT_TYPES = {
   GATE: "GATE",
   ROLE: "ROLE",
   WBS: "WBS",
+  MILESTONE: "MILESTONE",
   CAPABILITY_RULE: "CAPABILITY_RULE"
 } as const;
 
@@ -117,6 +118,45 @@ export function validateTemplateComponentContent(
         stableCode(item.stageCode, "packages.stageCode");
         if (typeof item.weight !== "number" || !Number.isFinite(item.weight) || item.weight <= 0) {
           throw new TemplateValidationError("INVALID_COMPONENT_RULES", "责任包权重必须大于零。");
+        }
+      }
+      break;
+    }
+    case TEMPLATE_COMPONENT_TYPES.MILESTONE: {
+      const items = array(content.milestones, "milestones");
+      if (items.length > 1000) {
+        throw new TemplateValidationError("INVALID_COMPONENT_RULES", "里程碑最多包含 1000 项。");
+      }
+      uniqueCodes(items, "milestones");
+      const positions = items.map((item) => item.position);
+      if (
+        positions.some((position) => !Number.isSafeInteger(position) || (position as number) < 0)
+      ) {
+        throw new TemplateValidationError(
+          "INVALID_COMPONENT_RULES",
+          "里程碑位置必须是非负安全整数。"
+        );
+      }
+      if (new Set(positions).size !== positions.length) {
+        throw new TemplateValidationError("DUPLICATE_RULE_POSITION", "里程碑位置不能重复。");
+      }
+      for (const item of items) {
+        if (typeof item.name !== "string" || item.name.length < 1 || item.name.length > 200) {
+          throw new TemplateValidationError(
+            "INCOMPLETE_COMPONENT_RULES",
+            "里程碑名称必须是 1 到 200 个字符。"
+          );
+        }
+        if (
+          item.description !== undefined &&
+          (typeof item.description !== "string" ||
+            item.description.length < 1 ||
+            item.description.length > 2000)
+        ) {
+          throw new TemplateValidationError(
+            "INVALID_COMPONENT_RULES",
+            "里程碑描述必须是 1 到 2000 个字符。"
+          );
         }
       }
       break;
