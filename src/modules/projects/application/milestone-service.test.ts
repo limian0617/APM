@@ -5,6 +5,7 @@ import {
   linkMilestoneTask,
   manuallyAchieveProjectMilestone,
   ProjectMilestoneError,
+  reconcileMilestonesForTask,
   shouldInstantiateMilestoneSnapshotComponent,
   updateProjectMilestone,
   voidMilestoneTaskLink,
@@ -44,6 +45,7 @@ describe("APM-025 project milestone lifecycle service", () => {
     expect(manuallyAchieveProjectMilestone).toBeTypeOf("function");
     expect(linkMilestoneTask).toBeTypeOf("function");
     expect(voidMilestoneTaskLink).toBeTypeOf("function");
+    expect(reconcileMilestonesForTask).toBeTypeOf("function");
   });
 
   it("creates a project-owned milestone together with its first durable lifecycle event", async () => {

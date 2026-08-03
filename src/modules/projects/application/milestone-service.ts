@@ -11,6 +11,8 @@ import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { TEMPLATE_COMPONENT_TYPES } from "@/modules/configuration/domain/template-policy";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 
+import { shouldAutoAchieveMilestone } from "../domain/project-milestone";
+
 export class ProjectMilestoneError extends Error {
   constructor(
     readonly code: string,
@@ -410,6 +412,92 @@ async function recordMilestoneMutation(
     payload: milestoneEventSnapshot(input.milestone, input.link)
   });
   return { event, auditId: audit.id, outboxEventId: outbox.id };
+}
+
+export async function reconcileMilestonesForTask(
+  client: Prisma.TransactionClient,
+  input: {
+    projectId: string;
+    taskId: string;
+    actorId: string;
+    auditContext: AuditContext;
+    reason: string;
+  }
+) {
+  const candidateLinks = await client.projectMilestoneTaskLink.findMany({
+    where: {
+      projectId: input.projectId,
+      taskId: input.taskId,
+      status: "ACTIVE",
+      milestone: { status: "PENDING" }
+    },
+    select: { milestoneId: true }
+  });
+  const candidateIds = [...new Set(candidateLinks.map(({ milestoneId }) => milestoneId))].sort();
+  if (candidateIds.length === 0) return [];
+
+  const project = await client.project.findUnique({ where: { id: input.projectId } });
+  if (!project) throw new ProjectMilestoneError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+  assertProjectWritable(project);
+
+  const lockedMilestones = await client.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "project_milestones"
+    WHERE "project_id" = ${input.projectId}
+      AND "status" = 'PENDING'::"ProjectMilestoneStatus"
+      AND "id" IN (${Prisma.join(candidateIds)})
+    ORDER BY "id"
+    FOR UPDATE
+  `;
+  const achieved = [];
+  for (const { id } of lockedMilestones) {
+    const current = await client.projectMilestone.findFirst({
+      where: { id, projectId: input.projectId, status: "PENDING" },
+      include: {
+        taskLinks: {
+          where: { status: "ACTIVE" },
+          select: { status: true, task: { select: { status: true } } }
+        }
+      }
+    });
+    if (
+      !current ||
+      !shouldAutoAchieveMilestone({
+        status: current.status,
+        links: current.taskLinks.map((link) => ({
+          status: link.status,
+          taskStatus: link.task.status
+        }))
+      })
+    ) {
+      continue;
+    }
+    const changed = await client.projectMilestone.updateMany({
+      where: { id: current.id, projectId: input.projectId, status: "PENDING" },
+      data: {
+        status: "ACHIEVED",
+        achievementSource: "LINKED_TASKS",
+        achievedAt: await databaseNow(client),
+        version: { increment: 1 },
+        updatedById: input.actorId
+      }
+    });
+    if (changed.count !== 1) continue;
+    const milestone = await client.projectMilestone.findUniqueOrThrow({
+      where: { id: current.id }
+    });
+    const recorded = await recordMilestoneMutation(client, {
+      project,
+      milestone,
+      previous: current,
+      eventType: "ACHIEVED_FROM_LINKED_TASKS",
+      reason: input.reason,
+      actorId: input.actorId,
+      auditContext: input.auditContext
+    });
+    achieved.push({ milestone, ...recorded });
+  }
+  return achieved;
 }
 
 export async function manuallyAchieveProjectMilestone(
