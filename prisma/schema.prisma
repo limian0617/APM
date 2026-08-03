@@ -654,6 +654,32 @@ enum ResponsibilityPackageEventType {
   CLOSED
 }
 
+enum ProjectMilestoneStatus {
+  PENDING
+  ACHIEVED
+  VOID
+}
+
+enum ProjectMilestoneAchievementSource {
+  MANUAL
+  LINKED_TASKS
+}
+
+enum ProjectMilestoneEventType {
+  CREATED
+  UPDATED
+  TASK_LINKED
+  TASK_LINK_VOIDED
+  ACHIEVED_MANUALLY
+  ACHIEVED_FROM_LINKED_TASKS
+  VOIDED
+}
+
+enum ProjectMilestoneTaskLinkStatus {
+  ACTIVE
+  VOID
+}
+
 enum PlanningNodeStatus {
   ACTIVE
   CLOSED
@@ -749,6 +775,13 @@ enum AuditAction {
   TASK_DEPENDENCY_CREATED
   TASK_DEPENDENCY_UPDATED
   TASK_DEPENDENCY_CLOSED
+  PROJECT_MILESTONE_CREATED
+  PROJECT_MILESTONE_UPDATED
+  PROJECT_MILESTONE_TASK_LINKED
+  PROJECT_MILESTONE_TASK_LINK_VOIDED
+  PROJECT_MILESTONE_ACHIEVED_MANUALLY
+  PROJECT_MILESTONE_ACHIEVED_FROM_LINKED_TASKS
+  PROJECT_MILESTONE_VOIDED
 }
 
 enum AuditObjectType {
@@ -775,6 +808,7 @@ enum AuditObjectType {
   PLANNING_TASK
   PROJECT_CALENDAR
   TASK_DEPENDENCY
+  PROJECT_MILESTONE
 }
 
 enum AuditSource {
@@ -834,6 +868,11 @@ model User {
   responsibilityPackagesCreated         ResponsibilityPackage[]       @relation("ResponsibilityPackageCreatedBy")
   responsibilityPackagesUpdated         ResponsibilityPackage[]       @relation("ResponsibilityPackageUpdatedBy")
   responsibilityPackageEventsActed      ResponsibilityPackageEvent[]  @relation("ResponsibilityPackageEventActor")
+  projectMilestonesCreated              ProjectMilestone[]            @relation("ProjectMilestoneCreatedBy")
+  projectMilestonesUpdated              ProjectMilestone[]            @relation("ProjectMilestoneUpdatedBy")
+  projectMilestoneTaskLinksCreated      ProjectMilestoneTaskLink[]    @relation("ProjectMilestoneTaskLinkCreatedBy")
+  projectMilestoneTaskLinksVoided       ProjectMilestoneTaskLink[]    @relation("ProjectMilestoneTaskLinkVoidedBy")
+  projectMilestoneEventsActed           ProjectMilestoneEvent[]       @relation("ProjectMilestoneEventActor")
   wbsNodesCreated                       WbsNode[]                     @relation("WbsNodeCreatedBy")
   wbsNodesUpdated                       WbsNode[]                     @relation("WbsNodeUpdatedBy")
   planningTasksCreated                  PlanningTask[]                @relation("PlanningTaskCreatedBy")
@@ -931,6 +970,9 @@ model Project {
   projectModules                ProjectModule[]
   projectCapabilities           ProjectCapability[]
   responsibilityPackages        ResponsibilityPackage[]
+  projectMilestones             ProjectMilestone[]
+  projectMilestoneTaskLinks     ProjectMilestoneTaskLink[]
+  projectMilestoneEvents        ProjectMilestoneEvent[]
   wbsNodes                      WbsNode[]
   planningTasks                 PlanningTask[]
   planningCalendar              ProjectCalendar?
@@ -983,6 +1025,7 @@ model ProjectTemplateSnapshotComponent {
   snapshot                 ProjectTemplateSnapshot  @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
   sourceComponentVersion   TemplateComponentVersion @relation(fields: [sourceComponentVersionId], references: [id], onDelete: Restrict)
   projectCapabilities      ProjectCapability[]
+  projectMilestones        ProjectMilestone[]       @relation("ProjectMilestoneSourceSnapshotComponent")
 
   @@unique([snapshotId, slot])
   @@unique([snapshotId, position])
@@ -1163,6 +1206,83 @@ model ResponsibilityPackageEvent {
   @@map("responsibility_package_events")
 }
 
+model ProjectMilestone {
+  id                        String                             @id @default(cuid())
+  projectId                 String                             @map("project_id")
+  sourceSnapshotComponentId String?                            @map("source_snapshot_component_id")
+  code                      String
+  name                      String
+  description               String?
+  position                  Int
+  targetAt                  DateTime?                          @map("target_at")
+  status                    ProjectMilestoneStatus             @default(PENDING)
+  achievementSource         ProjectMilestoneAchievementSource? @map("achievement_source")
+  achievedAt                DateTime?                          @map("achieved_at")
+  voidedAt                  DateTime?                          @map("voided_at")
+  version                   Int                                @default(1)
+  createdById               String                             @map("created_by_id")
+  updatedById               String                             @map("updated_by_id")
+  createdAt                 DateTime                           @default(now()) @map("created_at")
+  updatedAt                 DateTime                           @updatedAt @map("updated_at")
+  project                   Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceSnapshotComponent   ProjectTemplateSnapshotComponent?  @relation("ProjectMilestoneSourceSnapshotComponent", fields: [sourceSnapshotComponentId], references: [id], onDelete: Restrict)
+  createdBy                 User                               @relation("ProjectMilestoneCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                 User                               @relation("ProjectMilestoneUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  taskLinks                 ProjectMilestoneTaskLink[]
+  events                    ProjectMilestoneEvent[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@index([projectId, status, position])
+  @@index([sourceSnapshotComponentId])
+  @@map("project_milestones")
+}
+
+model ProjectMilestoneTaskLink {
+  id          String                         @id @default(cuid())
+  projectId   String                         @map("project_id")
+  milestoneId String                         @map("milestone_id")
+  taskId      String                         @map("task_id")
+  status      ProjectMilestoneTaskLinkStatus @default(ACTIVE)
+  createdById String                         @map("created_by_id")
+  createdAt   DateTime                       @default(now()) @map("created_at")
+  voidedById  String?                        @map("voided_by_id")
+  voidedAt    DateTime?                      @map("voided_at")
+  voidReason  String?                        @map("void_reason")
+  project     Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  milestone   ProjectMilestone               @relation(fields: [milestoneId, projectId], references: [id, projectId], onDelete: Restrict)
+  task        PlanningTask                   @relation("PlanningTaskMilestoneLinks", fields: [taskId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy   User                           @relation("ProjectMilestoneTaskLinkCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voidedBy    User?                          @relation("ProjectMilestoneTaskLinkVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+
+  @@unique([milestoneId, taskId])
+  @@index([milestoneId, status])
+  @@index([taskId, status])
+  @@map("project_milestone_task_links")
+}
+
+model ProjectMilestoneEvent {
+  id           String                    @id @default(cuid())
+  milestoneId  String                    @map("milestone_id")
+  projectId    String                    @map("project_id")
+  sequence     Int
+  eventType    ProjectMilestoneEventType @map("event_type")
+  fromStatus   ProjectMilestoneStatus?   @map("from_status")
+  toStatus     ProjectMilestoneStatus    @map("to_status")
+  reason       String
+  snapshotJson Json                      @map("snapshot_json")
+  actorId      String                    @map("actor_id")
+  createdAt    DateTime                  @default(now()) @map("created_at")
+  milestone    ProjectMilestone          @relation(fields: [milestoneId, projectId], references: [id, projectId], onDelete: Restrict)
+  project      Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  actor        User                      @relation("ProjectMilestoneEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([milestoneId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("project_milestone_events")
+}
+
 model WbsNode {
   id          String             @id @default(cuid())
   projectId   String             @map("project_id")
@@ -1194,42 +1314,43 @@ model WbsNode {
 }
 
 model PlanningTask {
-  id                       String                 @id @default(cuid())
-  projectId                String                 @map("project_id")
-  wbsNodeId                String                 @map("wbs_node_id")
-  responsibilityPackageId  String?                @map("responsibility_package_id")
-  deliveryUnitId           String?                @map("delivery_unit_id")
-  moduleId                 String?                @map("module_id")
-  ownerMembershipId        String                 @map("owner_membership_id")
+  id                       String                     @id @default(cuid())
+  projectId                String                     @map("project_id")
+  wbsNodeId                String                     @map("wbs_node_id")
+  responsibilityPackageId  String?                    @map("responsibility_package_id")
+  deliveryUnitId           String?                    @map("delivery_unit_id")
+  moduleId                 String?                    @map("module_id")
+  ownerMembershipId        String                     @map("owner_membership_id")
   code                     String
   name                     String
   description              String?
   position                 Int
-  plannedStartAt           DateTime               @map("planned_start_at")
-  plannedFinishAt          DateTime               @map("planned_finish_at")
-  plannedDurationMinutes   Int                    @map("planned_duration_minutes")
+  plannedStartAt           DateTime                   @map("planned_start_at")
+  plannedFinishAt          DateTime                   @map("planned_finish_at")
+  plannedDurationMinutes   Int                        @map("planned_duration_minutes")
   weight                   Int
-  status                   PlanningTaskStatus     @default(NOT_STARTED)
-  actualStartAt            DateTime?              @map("actual_start_at")
-  actualFinishAt           DateTime?              @map("actual_finish_at")
-  remainingDurationMinutes Int                    @map("remaining_duration_minutes")
-  forecastFinishAt         DateTime               @map("forecast_finish_at")
-  version                  Int                    @default(1)
-  closedAt                 DateTime?              @map("closed_at")
-  createdById              String                 @map("created_by_id")
-  updatedById              String                 @map("updated_by_id")
-  createdAt                DateTime               @default(now()) @map("created_at")
-  updatedAt                DateTime               @updatedAt @map("updated_at")
-  project                  Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  wbsNode                  WbsNode                @relation(fields: [wbsNodeId, projectId], references: [id, projectId], onDelete: Restrict)
-  responsibilityPackage    ResponsibilityPackage? @relation(fields: [responsibilityPackageId, projectId], references: [id, projectId], onDelete: Restrict)
-  deliveryUnit             DeliveryUnit?          @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
-  module                   ProjectModule?         @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
-  ownerMembership          ProjectMember          @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
-  createdBy                User                   @relation("PlanningTaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy                User                   @relation("PlanningTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  predecessorDependencies  TaskDependency[]       @relation("TaskDependencyPredecessor")
-  successorDependencies    TaskDependency[]       @relation("TaskDependencySuccessor")
+  status                   PlanningTaskStatus         @default(NOT_STARTED)
+  actualStartAt            DateTime?                  @map("actual_start_at")
+  actualFinishAt           DateTime?                  @map("actual_finish_at")
+  remainingDurationMinutes Int                        @map("remaining_duration_minutes")
+  forecastFinishAt         DateTime                   @map("forecast_finish_at")
+  version                  Int                        @default(1)
+  closedAt                 DateTime?                  @map("closed_at")
+  createdById              String                     @map("created_by_id")
+  updatedById              String                     @map("updated_by_id")
+  createdAt                DateTime                   @default(now()) @map("created_at")
+  updatedAt                DateTime                   @updatedAt @map("updated_at")
+  project                  Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  wbsNode                  WbsNode                    @relation(fields: [wbsNodeId, projectId], references: [id, projectId], onDelete: Restrict)
+  responsibilityPackage    ResponsibilityPackage?     @relation(fields: [responsibilityPackageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit             DeliveryUnit?              @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module                   ProjectModule?             @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership          ProjectMember              @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                User                       @relation("PlanningTaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                User                       @relation("PlanningTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  predecessorDependencies  TaskDependency[]           @relation("TaskDependencyPredecessor")
+  successorDependencies    TaskDependency[]           @relation("TaskDependencySuccessor")
+  milestoneLinks           ProjectMilestoneTaskLink[] @relation("PlanningTaskMilestoneLinks")
   scheduleForecasts        ScheduleTaskForecast[]
 
   @@unique([projectId, code])
