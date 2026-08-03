@@ -310,8 +310,9 @@ describeDatabase("APM-020 PostgreSQL WBS and planning tasks", () => {
     );
     const childBody = (await childResponse.json()) as { wbsNode: { nodeId: string } };
     const rootDetailUrl = `${url}/${rootBody.wbsNode.nodeId}`;
+    const { code: _code, ...cycleDefinition } = wbsBody("IGNORED", childBody.wbsNode.nodeId);
     const cycleBody = {
-      ...wbsBody("IGNORED", childBody.wbsNode.nodeId),
+      ...cycleDefinition,
       version: rootBody.wbsNode.resourceVersion
     };
     expect(
