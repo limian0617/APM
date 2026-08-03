@@ -680,6 +680,36 @@ enum ProjectMilestoneTaskLinkStatus {
   VOID
 }
 
+enum ProjectStageExecutionStatus {
+  NOT_STARTED
+  AUTHORIZED
+  IN_PROGRESS
+  AWAITING_GATE
+  COMPLETED
+  CONDITIONALLY_RELEASED
+  SKIPPED
+}
+
+enum ProjectStageEventType {
+  CREATED
+  AUTHORIZED
+  STARTED
+  AWAITING_GATE
+  COMPLETED
+  CONDITIONALLY_RELEASED
+  SKIPPED
+}
+
+enum StageReleaseAuthorizationScope {
+  PROJECT
+  DELIVERY_UNIT
+}
+
+enum StageReleaseAuthorizationStatus {
+  ACTIVE
+  REVOKED
+}
+
 enum PlanningNodeStatus {
   ACTIVE
   CLOSED
@@ -873,6 +903,13 @@ model User {
   projectMilestoneTaskLinksCreated      ProjectMilestoneTaskLink[]    @relation("ProjectMilestoneTaskLinkCreatedBy")
   projectMilestoneTaskLinksVoided       ProjectMilestoneTaskLink[]    @relation("ProjectMilestoneTaskLinkVoidedBy")
   projectMilestoneEventsActed           ProjectMilestoneEvent[]       @relation("ProjectMilestoneEventActor")
+  projectStagesCreated                  ProjectStage[]                @relation("ProjectStageCreatedBy")
+  projectStagesUpdated                  ProjectStage[]                @relation("ProjectStageUpdatedBy")
+  deliveryUnitStagesCreated             DeliveryUnitStage[]           @relation("DeliveryUnitStageCreatedBy")
+  deliveryUnitStagesUpdated             DeliveryUnitStage[]           @relation("DeliveryUnitStageUpdatedBy")
+  stageReleaseAuthorizationsAuthorized  StageReleaseAuthorization[]   @relation("StageReleaseAuthorizationAuthorizedBy")
+  stageReleaseAuthorizationsRevoked     StageReleaseAuthorization[]   @relation("StageReleaseAuthorizationRevokedBy")
+  projectStageEventsActed               ProjectStageEvent[]           @relation("ProjectStageEventActor")
   wbsNodesCreated                       WbsNode[]                     @relation("WbsNodeCreatedBy")
   wbsNodesUpdated                       WbsNode[]                     @relation("WbsNodeUpdatedBy")
   planningTasksCreated                  PlanningTask[]                @relation("PlanningTaskCreatedBy")
@@ -955,6 +992,12 @@ model Project {
   sourceTemplateVersionId       String?                              @map("source_template_version_id")
   sourceTemplateChecksum        String?                              @map("source_template_checksum")
   initializedAt                 DateTime?                            @map("initialized_at")
+  mainControlStageId            String?                              @map("main_control_stage_id")
+  mainControlStageProjectId     String?                              @map("main_control_stage_project_id")
+  mainControlStageCode          String?                              @map("main_control_stage_code")
+  mainControlStageStatus        ProjectStageExecutionStatus?        @map("main_control_stage_status")
+  mainControlStageSequence      Int?                                 @map("main_control_stage_sequence")
+  mainControlStageUpdatedAt     DateTime?                            @map("main_control_stage_updated_at")
   version                       Int                                  @default(1)
   createdById                   String                               @map("created_by_id")
   createdAt                     DateTime                             @default(now()) @map("created_at")
@@ -962,6 +1005,7 @@ model Project {
   createdBy                     User                                 @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   sourceTemplateVersion         ProjectTemplateVersion?              @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
   templateSnapshot              ProjectTemplateSnapshot?
+  mainControlStage              ProjectStage?                        @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
   members                       ProjectMember[]
   auditLogs                     AuditLog[]
   files                         FileObject[]
@@ -973,6 +1017,10 @@ model Project {
   projectMilestones             ProjectMilestone[]
   projectMilestoneTaskLinks     ProjectMilestoneTaskLink[]
   projectMilestoneEvents        ProjectMilestoneEvent[]
+  projectStages                 ProjectStage[]                       @relation("ProjectStages")
+  deliveryUnitStages            DeliveryUnitStage[]
+  stageReleaseAuthorizations    StageReleaseAuthorization[]
+  projectStageEvents            ProjectStageEvent[]
   wbsNodes                      WbsNode[]
   planningTasks                 PlanningTask[]
   planningCalendar              ProjectCalendar?
@@ -987,6 +1035,7 @@ model Project {
   @@index([initializationStatus, createdAt])
   @@index([projectType, equipmentShape, structureStatus])
   @@index([capabilityConfigurationStatus, createdAt])
+  @@unique([mainControlStageId, mainControlStageProjectId])
   @@map("projects")
 }
 
@@ -1026,6 +1075,7 @@ model ProjectTemplateSnapshotComponent {
   sourceComponentVersion   TemplateComponentVersion @relation(fields: [sourceComponentVersionId], references: [id], onDelete: Restrict)
   projectCapabilities      ProjectCapability[]
   projectMilestones        ProjectMilestone[]       @relation("ProjectMilestoneSourceSnapshotComponent")
+  projectStages            ProjectStage[]           @relation("ProjectStageSourceSnapshotComponent")
 
   @@unique([snapshotId, slot])
   @@unique([snapshotId, position])
@@ -1053,6 +1103,8 @@ model DeliveryUnit {
   modules                ProjectModule[]
   responsibilityPackages ResponsibilityPackage[]
   planningTasks          PlanningTask[]
+  stageExecutions        DeliveryUnitStage[]
+  stageReleaseAuthorizations StageReleaseAuthorization[] @relation("DeliveryUnitStageReleaseAuthorizations")
   createdBy              User                       @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy              User                       @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
@@ -1280,6 +1332,119 @@ model ProjectMilestoneEvent {
   @@index([projectId, createdAt])
   @@index([actorId, createdAt])
   @@map("project_milestone_events")
+}
+
+model ProjectStage {
+  id                       String                         @id @default(cuid())
+  projectId                String                         @map("project_id")
+  sourceSnapshotComponentId String?                       @map("source_snapshot_component_id")
+  code                     String
+  name                     String
+  description              String?
+  sequence                 Int
+  status                   ProjectStageExecutionStatus   @default(NOT_STARTED)
+  exceptionalReason        String?                        @map("exceptional_reason")
+  statusChangedAt          DateTime                       @default(now()) @map("status_changed_at")
+  version                  Int                            @default(1)
+  createdById              String                         @map("created_by_id")
+  updatedById              String                         @map("updated_by_id")
+  createdAt                DateTime                       @default(now()) @map("created_at")
+  updatedAt                DateTime                       @updatedAt @map("updated_at")
+  project                  Project                        @relation("ProjectStages", fields: [projectId], references: [id], onDelete: Restrict)
+  sourceSnapshotComponent  ProjectTemplateSnapshotComponent? @relation("ProjectStageSourceSnapshotComponent", fields: [sourceSnapshotComponentId], references: [id], onDelete: Restrict)
+  mainControlForProject    Project?                       @relation("ProjectMainControlStage")
+  deliveryUnitStages       DeliveryUnitStage[]
+  releaseAuthorizationsFrom StageReleaseAuthorization[]   @relation("StageReleaseAuthorizationFromStage")
+  releaseAuthorizationsTo  StageReleaseAuthorization[]    @relation("StageReleaseAuthorizationToStage")
+  events                   ProjectStageEvent[]
+  createdBy                User                           @relation("ProjectStageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                User                           @relation("ProjectStageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, code])
+  @@unique([projectId, sequence])
+  @@unique([id, projectId])
+  @@index([projectId, status, sequence])
+  @@index([sourceSnapshotComponentId])
+  @@map("project_stages")
+}
+
+model DeliveryUnitStage {
+  id                String                       @id @default(cuid())
+  projectId         String                       @map("project_id")
+  deliveryUnitId    String                       @map("delivery_unit_id")
+  projectStageId    String                       @map("project_stage_id")
+  status            ProjectStageExecutionStatus @default(NOT_STARTED)
+  exceptionalReason String?                     @map("exceptional_reason")
+  statusChangedAt   DateTime                    @default(now()) @map("status_changed_at")
+  version           Int                         @default(1)
+  createdById       String                      @map("created_by_id")
+  updatedById       String                      @map("updated_by_id")
+  createdAt         DateTime                    @default(now()) @map("created_at")
+  updatedAt         DateTime                    @updatedAt @map("updated_at")
+  project           Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deliveryUnit      DeliveryUnit                @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  projectStage      ProjectStage                @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy         User                        @relation("DeliveryUnitStageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy         User                        @relation("DeliveryUnitStageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([deliveryUnitId, projectStageId])
+  @@unique([id, projectId])
+  @@index([projectId, status, deliveryUnitId])
+  @@index([projectStageId, status])
+  @@map("delivery_unit_stages")
+}
+
+model StageReleaseAuthorization {
+  id                String                         @id @default(cuid())
+  projectId         String                         @map("project_id")
+  scope             StageReleaseAuthorizationScope
+  status            StageReleaseAuthorizationStatus @default(ACTIVE)
+  fromProjectStageId String                        @map("from_project_stage_id")
+  toProjectStageId  String                         @map("to_project_stage_id")
+  deliveryUnitId    String?                        @map("delivery_unit_id")
+  reason            String
+  authorizedById    String                         @map("authorized_by_id")
+  authorizedAt      DateTime                       @default(now()) @map("authorized_at")
+  revokedById       String?                        @map("revoked_by_id")
+  revokedAt         DateTime?                      @map("revoked_at")
+  revocationReason  String?                        @map("revocation_reason")
+  version           Int                            @default(1)
+  createdAt         DateTime                       @default(now()) @map("created_at")
+  updatedAt         DateTime                       @updatedAt @map("updated_at")
+  project           Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  fromProjectStage  ProjectStage                   @relation("StageReleaseAuthorizationFromStage", fields: [fromProjectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  toProjectStage    ProjectStage                   @relation("StageReleaseAuthorizationToStage", fields: [toProjectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit      DeliveryUnit?                  @relation("DeliveryUnitStageReleaseAuthorizations", fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  authorizedBy      User                           @relation("StageReleaseAuthorizationAuthorizedBy", fields: [authorizedById], references: [id], onDelete: Restrict)
+  revokedBy         User?                          @relation("StageReleaseAuthorizationRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@index([projectId, scope, status, fromProjectStageId, toProjectStageId])
+  @@index([deliveryUnitId, status])
+  @@index([authorizedById, authorizedAt])
+  @@map("stage_release_authorizations")
+}
+
+model ProjectStageEvent {
+  id            String                       @id @default(cuid())
+  projectId     String                       @map("project_id")
+  projectStageId String                      @map("project_stage_id")
+  sequence      Int
+  eventType     ProjectStageEventType        @map("event_type")
+  fromStatus    ProjectStageExecutionStatus? @map("from_status")
+  toStatus      ProjectStageExecutionStatus  @map("to_status")
+  reason        String?
+  snapshotJson  Json                         @map("snapshot_json")
+  actorId       String                       @map("actor_id")
+  createdAt     DateTime                     @default(now()) @map("created_at")
+  project       Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectStage  ProjectStage                 @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor         User                         @relation("ProjectStageEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([projectStageId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("project_stage_events")
 }
 
 model WbsNode {
