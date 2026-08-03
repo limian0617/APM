@@ -444,6 +444,49 @@ export const taskDependencyCloseBodySchema = z.strictObject({
 export const taskDependencyQuerySchema = z.strictObject({
   status: z.enum(["ACTIVE", "CLOSED"]).optional()
 });
+export const projectMilestonePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  milestoneId: identifierSchema
+});
+export const milestoneCommandPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  milestoneId: identifierSchema,
+  command: z.enum(["achieve", "void", "link-task", "void-task-link"])
+});
+const projectMilestoneDefinitionShape = {
+  name: templateNameSchema,
+  description: templateDescriptionSchema,
+  position: planningPositionSchema,
+  targetAt: planningDateTimeSchema.nullable().optional()
+};
+export const createProjectMilestoneBodySchema = z.strictObject({
+  code: stableCodeSchema,
+  ...projectMilestoneDefinitionShape,
+  reason: reasonSchema
+});
+export const updateProjectMilestoneBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  ...projectMilestoneDefinitionShape,
+  reason: reasonSchema
+});
+export const milestoneAchieveBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const milestoneVoidBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const milestoneLinkTaskBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  taskId: identifierSchema,
+  reason: reasonSchema
+});
+export const milestoneVoidTaskLinkBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  linkId: identifierSchema,
+  reason: reasonSchema
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema

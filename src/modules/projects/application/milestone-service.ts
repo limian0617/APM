@@ -1,6 +1,6 @@
 import { Prisma, ProjectMilestoneAchievementSource, ProjectMilestoneStatus } from "@prisma/client";
 
-import { inTransaction } from "@/lib/db";
+import { db, inTransaction } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   AUDIT_ACTIONS,
@@ -47,6 +47,16 @@ type ProjectValue = {
   initializationStatus: string;
   structureStatus: string;
 };
+
+const milestoneReadInclude = {
+  taskLinks: {
+    where: { status: "ACTIVE" },
+    orderBy: { createdAt: "asc" },
+    include: {
+      task: { select: { id: true, code: true, name: true, status: true } }
+    }
+  }
+} satisfies Prisma.ProjectMilestoneInclude;
 
 function positiveVersion(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
@@ -218,6 +228,59 @@ export function shouldInstantiateMilestoneSnapshotComponent(input: {
           position
         };
   });
+}
+
+type ProjectMilestoneReadValue = ProjectMilestoneValue & {
+  taskLinks: Array<{
+    id: string;
+    taskId: string;
+    status: string;
+    task: { id: string; code: string; name: string; status: string };
+  }>;
+};
+
+function serializeProjectMilestone(value: ProjectMilestoneReadValue) {
+  return {
+    milestoneId: value.id,
+    projectId: value.projectId,
+    sourceSnapshotComponentId: value.sourceSnapshotComponentId,
+    code: value.code,
+    name: value.name,
+    description: value.description,
+    position: value.position,
+    targetAt: value.targetAt,
+    status: value.status,
+    achievementSource: value.achievementSource,
+    achievedAt: value.achievedAt,
+    voidedAt: value.voidedAt,
+    resourceVersion: value.version,
+    links: value.taskLinks.map((link) => ({
+      linkId: link.id,
+      taskId: link.taskId,
+      status: link.status,
+      task: link.task
+    }))
+  };
+}
+
+export async function listProjectMilestones(projectId: string) {
+  const milestones = await db.projectMilestone.findMany({
+    where: { projectId },
+    include: milestoneReadInclude,
+    orderBy: [{ position: "asc" }, { id: "asc" }]
+  });
+  return { milestones: milestones.map(serializeProjectMilestone) };
+}
+
+export async function getProjectMilestone(projectId: string, milestoneId: string) {
+  const milestone = await db.projectMilestone.findFirst({
+    where: { id: milestoneId, projectId },
+    include: milestoneReadInclude
+  });
+  if (!milestone) {
+    throw new ProjectMilestoneError("MILESTONE_NOT_FOUND", "项目里程碑不存在。", 404);
+  }
+  return { milestone: serializeProjectMilestone(milestone) };
 }
 
 export async function instantiateProjectMilestones(

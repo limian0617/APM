@@ -19,11 +19,14 @@ import { createResponsibilityPackage } from "@/modules/projects/application/resp
 import { initializeProjectStructure } from "@/modules/projects/application/project-structure";
 
 import {
+  closePlanningTask,
   createPlanningTask,
   createWbsNode,
   updatePlanningTask,
   updatePlanningTaskProgress
 } from "../application/planning-service";
+import { saveProjectCalendar } from "../application/schedule-network-service";
+import { GET as readExecutionRoute } from "../../../app/api/projects/[projectId]/execution/route";
 import {
   GET as listWbsRoute,
   POST as createWbsRoute
@@ -695,6 +698,127 @@ describeDatabase("APM-020 PostgreSQL WBS and planning tasks", () => {
         }
       })
     ).resolves.toBe(0);
+  });
+
+  it("exposes only authorized project execution data with stable empty, stale, and failed states", async () => {
+    const ready = await createReadyProject("EXECUTION-READ");
+    const url = `http://localhost/api/projects/${ready.project.id}/execution`;
+
+    expect(
+      (
+        await readExecutionRoute(readRequest(url, ids.outsider), {
+          params: Promise.resolve({ projectId: ready.project.id })
+        })
+      ).status
+    ).toBe(403);
+
+    const emptyResponse = await readExecutionRoute(readRequest(url, ids.owner), {
+      params: Promise.resolve({ projectId: ready.project.id })
+    });
+    expect(emptyResponse.status).toBe(200);
+    await expect(emptyResponse.json()).resolves.toMatchObject({
+      progress: { status: "EMPTY" },
+      schedule: { status: "NOT_REQUESTED", stale: false },
+      tasks: []
+    });
+
+    await saveProjectCalendar({
+      projectId: ready.project.id,
+      version: 0,
+      name: "每工作日十小时",
+      timeZone: "Asia/Shanghai",
+      weeklyRules: [1, 2, 3, 4, 5].map((dayOfWeek) => ({
+        dayOfWeek,
+        intervals: [{ startMinute: 480, endMinute: 1080 }]
+      })),
+      exceptions: [],
+      reason: "配置执行页工日口径",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `execution-calendar-${suffix}`, ready.project.id)
+    });
+    const wbs = await createWbsNode({
+      projectId: ready.project.id,
+      ...wbsBody("EXECUTION-READ"),
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `execution-wbs-${suffix}`, ready.project.id)
+    });
+    const created = await createPlanningTask({
+      projectId: ready.project.id,
+      ...taskBody(ready, wbs.wbsNode.nodeId),
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `execution-task-${suffix}`, ready.project.id)
+    });
+
+    const staleResponse = await readExecutionRoute(readRequest(url, ids.owner), {
+      params: Promise.resolve({ projectId: ready.project.id })
+    });
+    expect(staleResponse.status).toBe(200);
+    const stalePayload = (await staleResponse.json()) as {
+      progress: {
+        status: string;
+        completedWorkdays: number;
+        totalWorkdays: number;
+        percent: number;
+      };
+      schedule: { status: string; stale: boolean; error: unknown };
+      tasks: Array<Record<string, unknown>>;
+    };
+    expect(stalePayload.progress).toEqual({
+      status: "READY",
+      completedWorkdays: 0,
+      totalWorkdays: 4,
+      percent: 0,
+      calculatedAt: expect.any(String)
+    });
+    expect(stalePayload.schedule).toMatchObject({ status: "PENDING", stale: true, error: null });
+    expect(stalePayload.tasks).toHaveLength(1);
+    expect(stalePayload.tasks[0]).not.toHaveProperty("plannedDurationMinutes");
+    expect(stalePayload.tasks[0]).toMatchObject({ taskId: created.task.taskId });
+
+    const state = await db.projectScheduleState.findUniqueOrThrow({
+      where: { projectId: ready.project.id }
+    });
+    await db.scheduleRecalculation.update({
+      where: {
+        projectId_inputVersion: { projectId: ready.project.id, inputVersion: state.inputVersion }
+      },
+      data: {
+        status: "FAILED",
+        errorCode: "EXECUTION_FORECAST_FAILED",
+        errorMessage: "项目预测计算失败。"
+      }
+    });
+
+    const failedResponse = await readExecutionRoute(readRequest(url, ids.owner), {
+      params: Promise.resolve({ projectId: ready.project.id })
+    });
+    expect(failedResponse.status).toBe(200);
+    const failedPayload = (await failedResponse.json()) as {
+      schedule: { status: string; stale: boolean; error: Record<string, unknown> | null };
+    };
+    expect(failedPayload.schedule).toMatchObject({
+      status: "FAILED",
+      stale: true,
+      error: { code: "EXECUTION_FORECAST_FAILED", message: "项目预测计算失败。" }
+    });
+    expect(failedPayload.schedule.error).not.toHaveProperty("stack");
+
+    await closePlanningTask({
+      projectId: ready.project.id,
+      taskId: created.task.taskId,
+      version: created.resourceVersion,
+      reason: "关闭后不再参与项目执行进度",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `execution-close-${suffix}`, ready.project.id)
+    });
+    const closedTaskResponse = await readExecutionRoute(readRequest(url, ids.owner), {
+      params: Promise.resolve({ projectId: ready.project.id })
+    });
+    await expect(closedTaskResponse.json()).resolves.toMatchObject({
+      progress: { status: "EMPTY" },
+      tasks: [],
+      responsibilityPackages: [{ effectiveTaskCount: 0 }]
+    });
   });
 
   it("completes and closes tasks without creating dependency, baseline, or progress models", async () => {

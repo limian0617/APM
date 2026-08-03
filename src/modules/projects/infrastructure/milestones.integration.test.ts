@@ -19,12 +19,32 @@ import {
   voidMilestoneTaskLink,
   voidProjectMilestone
 } from "@/modules/projects/application/milestone-service";
+import { POST as commandMilestoneRoute } from "../../../app/api/projects/[projectId]/milestones/[milestoneId]/[command]/route";
+import { GET as readMilestoneRoute } from "../../../app/api/projects/[projectId]/milestones/[milestoneId]/route";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
 const ids = {
-  admin: `milestone-admin-${suffix}`
+  admin: `milestone-admin-${suffix}`,
+  outsider: `milestone-outsider-${suffix}`
 };
+
+function commandRequest(url: string, body: unknown, key: string, actorId: string) {
+  return new Request(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-apm-user-id": actorId,
+      "idempotency-key": key,
+      "x-request-id": `request-${key}`
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+function readRequest(url: string, actorId: string) {
+  return new Request(url, { headers: { "x-apm-user-id": actorId } });
+}
 
 function context(
   actorId: string,
@@ -259,16 +279,31 @@ async function seedProject(label: string) {
 
 describeDatabase("APM-025 PostgreSQL project milestone facts", () => {
   beforeAll(async () => {
-    await db.user.create({
-      data: {
-        id: ids.admin,
-        employeeNo: `MILESTONE-ADMIN-${suffix}`,
-        name: "Milestone administrator",
-        departmentId: "engineering"
-      }
+    await db.user.createMany({
+      data: [
+        {
+          id: ids.admin,
+          employeeNo: `MILESTONE-ADMIN-${suffix}`,
+          name: "Milestone administrator",
+          departmentId: "engineering"
+        },
+        {
+          id: ids.outsider,
+          employeeNo: `MILESTONE-OUTSIDER-${suffix}`,
+          name: "Milestone outsider",
+          departmentId: "engineering"
+        }
+      ]
     });
-    await db.userRole.create({
-      data: { id: `milestone-role-admin-${suffix}`, userId: ids.admin, roleId: "role-admin" }
+    await db.userRole.createMany({
+      data: [
+        { id: `milestone-role-admin-${suffix}`, userId: ids.admin, roleId: "role-admin" },
+        {
+          id: `milestone-role-outsider-${suffix}`,
+          userId: ids.outsider,
+          roleId: "role-engineer"
+        }
+      ]
     });
   });
 
@@ -417,6 +452,70 @@ describeDatabase("APM-025 PostgreSQL project milestone facts", () => {
     await expect(db.$executeRawUnsafe('TRUNCATE TABLE "project_milestone_events"')).rejects.toThrow(
       /append-only/u
     );
+  });
+
+  it("guards milestone commands and binds idempotency keys to the full command body", async () => {
+    const template = await seedPublishedTemplate("API");
+    const ready = await createReadySnapshotProject(template, "API");
+    const other = await createReadySnapshotProject(template, "API-OTHER");
+    const milestone = await db.projectMilestone.findFirstOrThrow({
+      where: { projectId: ready.project.id, code: "DESIGN.FREEZE" }
+    });
+    const commandUrl = `http://localhost/api/projects/${ready.project.id}/milestones/${milestone.id}/achieve`;
+    const commandContext = {
+      params: Promise.resolve({
+        projectId: ready.project.id,
+        milestoneId: milestone.id,
+        command: "achieve"
+      })
+    };
+
+    const forbidden = await commandMilestoneRoute(
+      commandRequest(
+        commandUrl,
+        { version: milestone.version, reason: "越权尝试" },
+        `milestone-forbidden-${suffix}`,
+        ids.outsider
+      ),
+      commandContext
+    );
+    expect(forbidden.status).toBe(403);
+
+    const idempotencyKey = `milestone-achieve-${suffix}`;
+    const body = { version: milestone.version, reason: "PM 确认设计冻结" };
+    const first = await commandMilestoneRoute(
+      commandRequest(commandUrl, body, idempotencyKey, ids.admin),
+      commandContext
+    );
+    const replay = await commandMilestoneRoute(
+      commandRequest(commandUrl, body, idempotencyKey, ids.admin),
+      commandContext
+    );
+    const conflictingPayload = await commandMilestoneRoute(
+      commandRequest(
+        commandUrl,
+        { ...body, reason: "同一幂等键的不同确认原因" },
+        idempotencyKey,
+        ids.admin
+      ),
+      commandContext
+    );
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(200);
+    expect(replay.headers.get("idempotency-replayed")).toBe("true");
+    expect(conflictingPayload.status).toBe(409);
+    await expect(conflictingPayload.json()).resolves.toMatchObject({
+      error: { code: "IDEMPOTENCY_KEY_REUSED" }
+    });
+
+    const crossProjectRead = await readMilestoneRoute(
+      readRequest(
+        `http://localhost/api/projects/${other.project.id}/milestones/${milestone.id}`,
+        ids.admin
+      ),
+      { params: Promise.resolve({ projectId: other.project.id, milestoneId: milestone.id }) }
+    );
+    expect(crossProjectRead.status).toBe(404);
   });
 
   it("copies template milestones, preserves durable history, and rolls failed link commands back", async () => {
