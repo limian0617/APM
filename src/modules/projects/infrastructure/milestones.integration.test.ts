@@ -16,6 +16,7 @@ import {
   linkMilestoneTask,
   manuallyAchieveProjectMilestone,
   updateProjectMilestone,
+  voidMilestoneTaskLink,
   voidProjectMilestone
 } from "@/modules/projects/application/milestone-service";
 
@@ -432,6 +433,69 @@ describeDatabase("APM-025 PostgreSQL project milestone facts", () => {
       })
     ).resolves.toMatchObject([{ sequence: 1, eventType: "CREATED", toStatus: "PENDING" }]);
 
+    const sourceComponentVersion = await db.templateComponentVersion.findUniqueOrThrow({
+      where: {
+        id: ready.snapshot.components.find(({ componentType }) => componentType === "MILESTONE")!
+          .sourceComponentVersionId
+      },
+      include: { component: true }
+    });
+    const revisedComponent = await saveTemplateComponentDraft({
+      code: sourceComponentVersion.component.code,
+      componentType: "MILESTONE",
+      name: "已更新的里程碑模板组件",
+      content: { milestones: [{ code: "DESIGN.FREEZE", name: "更新后的模板名称", position: 0 }] },
+      version: sourceComponentVersion.component.version,
+      reason: "更新模板里程碑定义",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `template-component-update-${suffix}`)
+    });
+    const publishedComponent = await publishTemplateComponent({
+      code: sourceComponentVersion.component.code,
+      version: revisedComponent.component.version,
+      reason: "发布更新后的模板里程碑定义",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `template-component-republish-${suffix}`)
+    });
+    const currentTemplate = await db.projectTemplate.findUniqueOrThrow({
+      where: { code: template.code }
+    });
+    const sourceTemplate = await db.projectTemplateVersion.findUniqueOrThrow({
+      where: { id: template.publishedVersion.id },
+      include: { components: true }
+    });
+    const revisedTemplate = await saveProjectTemplateDraft({
+      code: template.code,
+      name: currentTemplate.name,
+      description: currentTemplate.description,
+      version: currentTemplate.version,
+      reason: "模板引用新发布的里程碑组件版本",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `template-update-${suffix}`),
+      components: sourceTemplate.components.map((reference) => ({
+        componentVersionId:
+          reference.componentType === "MILESTONE"
+            ? publishedComponent.publishedVersion.id
+            : reference.componentVersionId,
+        componentType: reference.componentType,
+        slot: reference.slot,
+        position: reference.position
+      }))
+    });
+    await publishProjectTemplate({
+      code: template.code,
+      version: revisedTemplate.template.version,
+      reason: "发布更新后的模板版本",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `template-republish-${suffix}`)
+    });
+    await expect(
+      db.projectMilestone.findUniqueOrThrow({ where: { id: milestone.id } })
+    ).resolves.toMatchObject({
+      name: "设计冻结",
+      sourceSnapshotComponentId: milestone.sourceSnapshotComponentId
+    });
+
     const achieved = await manuallyAchieveProjectMilestone({
       projectId: ready.project.id,
       milestoneId: milestone.id,
@@ -491,17 +555,51 @@ describeDatabase("APM-025 PostgreSQL project milestone facts", () => {
       status: "ACHIEVED"
     });
 
-    const voided = await voidProjectMilestone({
+    const firstLink = await linkMilestoneTask({
       projectId: ready.project.id,
       milestoneId: milestone.id,
       version: achieved.resourceVersion,
+      taskId: ready.task.id,
+      reason: "关联设计冻结的验证任务",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `link-task-${suffix}`, ready.project.id)
+    });
+    const voidedLink = await voidMilestoneTaskLink({
+      projectId: ready.project.id,
+      milestoneId: milestone.id,
+      linkId: firstLink.link.id,
+      version: firstLink.resourceVersion,
+      reason: "PM 作废原有任务关联",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `void-link-${suffix}`, ready.project.id)
+    });
+    const relinked = await linkMilestoneTask({
+      projectId: ready.project.id,
+      milestoneId: milestone.id,
+      version: voidedLink.resourceVersion,
+      taskId: ready.task.id,
+      reason: "PM 重新关联同一任务",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `relink-task-${suffix}`, ready.project.id)
+    });
+    await expect(
+      db.projectMilestoneTaskLink.findMany({
+        where: { milestoneId: milestone.id, taskId: ready.task.id },
+        orderBy: { createdAt: "asc" }
+      })
+    ).resolves.toMatchObject([{ status: "VOID" }, { status: "ACTIVE" }]);
+
+    const voided = await voidProjectMilestone({
+      projectId: ready.project.id,
+      milestoneId: milestone.id,
+      version: relinked.resourceVersion,
       reason: "PM 作废已替代的里程碑",
       actorId: ids.admin,
       auditContext: context(ids.admin, `void-milestone-${suffix}`, ready.project.id)
     });
     expect(voided).toMatchObject({
       milestone: { status: "VOID" },
-      event: { sequence: 3, eventType: "VOIDED" }
+      event: { sequence: 6, eventType: "VOIDED" }
     });
     await expect(
       db.projectMilestone.findUniqueOrThrow({ where: { id: milestone.id } })

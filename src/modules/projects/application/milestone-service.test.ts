@@ -10,6 +10,7 @@ import {
   voidMilestoneTaskLink,
   voidProjectMilestone
 } from "@/modules/projects/application/milestone-service";
+import { validateTemplateComponentContent } from "@/modules/configuration/domain/template-policy";
 
 describe("APM-025 project milestone lifecycle service", () => {
   it("accepts only canonical MILESTONE snapshot component content for instantiation", () => {
@@ -121,5 +122,40 @@ describe("APM-025 project milestone lifecycle service", () => {
     expect(client.projectMilestone.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ projectId: "project-1" }) })
     );
+  });
+
+  it("rejects code and position values outside the durable milestone bounds before a transaction starts", async () => {
+    const auditContext = {
+      actorId: "user-1",
+      requestId: "request-boundary",
+      traceId: null,
+      source: "API" as const,
+      sourceIp: null,
+      userAgent: "Vitest",
+      reason: null,
+      projectId: null,
+      departmentId: null,
+      operationId: "operation-boundary"
+    };
+    const input = {
+      projectId: "project-1",
+      name: "设计冻结",
+      position: 10,
+      reason: "验证里程碑边界",
+      actorId: "user-1",
+      auditContext
+    };
+
+    await expect(
+      createProjectMilestone({ ...input, code: `A${"B".repeat(100)}` })
+    ).rejects.toMatchObject({ code: "MILESTONE_CODE_INVALID", status: 422 });
+    await expect(
+      createProjectMilestone({ ...input, code: "DESIGN.FREEZE", position: 1_000_001 })
+    ).rejects.toMatchObject({ code: "MILESTONE_POSITION_INVALID", status: 422 });
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 1_000_001 }]
+      })
+    ).toThrow(/位置/u);
   });
 });

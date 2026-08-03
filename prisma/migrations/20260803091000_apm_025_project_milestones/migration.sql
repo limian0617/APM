@@ -122,8 +122,8 @@ CREATE INDEX "project_milestones_project_id_status_position_idx"
   ON "project_milestones"("project_id", "status", "position");
 CREATE INDEX "project_milestones_source_snapshot_component_id_idx"
   ON "project_milestones"("source_snapshot_component_id");
-CREATE UNIQUE INDEX "project_milestone_task_links_milestone_id_task_id_key"
-  ON "project_milestone_task_links"("milestone_id", "task_id");
+CREATE UNIQUE INDEX "project_milestone_task_links_active_milestone_task_key"
+  ON "project_milestone_task_links"("milestone_id", "task_id") WHERE "status" = 'ACTIVE';
 CREATE INDEX "project_milestone_task_links_milestone_id_status_idx"
   ON "project_milestone_task_links"("milestone_id", "status");
 CREATE INDEX "project_milestone_task_links_task_id_status_idx"

@@ -61,14 +61,14 @@ function commandReason(value: unknown): string {
 }
 
 function milestoneCode(value: unknown): string {
-  if (typeof value !== "string" || !/^[A-Z][A-Z0-9_.-]{1,100}$/u.test(value.trim())) {
+  if (typeof value !== "string" || !/^[A-Z][A-Z0-9_.-]{1,99}$/u.test(value.trim())) {
     throw new ProjectMilestoneError("MILESTONE_CODE_INVALID", "里程碑代码格式无效。", 422);
   }
   return value.trim();
 }
 
 function milestoneName(value: unknown): string {
-  if (typeof value !== "string" || !value.trim() || value.trim().length > 191) {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 200) {
     throw new ProjectMilestoneError(
       "MILESTONE_NAME_INVALID",
       "里程碑名称必须是 1 到 191 个字符。",
@@ -80,7 +80,7 @@ function milestoneName(value: unknown): string {
 
 function milestoneDescription(value: unknown): string | null {
   if (value === undefined || value === null) return null;
-  if (typeof value !== "string" || value.trim().length > 1024) {
+  if (typeof value !== "string" || value.trim().length > 2000) {
     throw new ProjectMilestoneError(
       "MILESTONE_DESCRIPTION_INVALID",
       "里程碑说明不能超过 1024 个字符。",
@@ -91,7 +91,7 @@ function milestoneDescription(value: unknown): string | null {
 }
 
 function milestonePosition(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 1_000_000) {
     throw new ProjectMilestoneError(
       "MILESTONE_POSITION_INVALID",
       "里程碑位置必须是非负整数。",
@@ -189,9 +189,17 @@ export function shouldInstantiateMilestoneSnapshotComponent(input: {
     if (
       typeof value.code !== "string" ||
       typeof value.name !== "string" ||
+      !/^[A-Z][A-Z0-9_.-]{1,99}$/u.test(value.code) ||
+      !value.name.trim() ||
+      value.name.trim().length > 200 ||
       typeof position !== "number" ||
       !Number.isSafeInteger(position) ||
-      (typeof value.description !== "undefined" && typeof value.description !== "string")
+      position < 0 ||
+      position > 1_000_000 ||
+      (typeof value.description !== "undefined" &&
+        (typeof value.description !== "string" ||
+          !value.description.trim() ||
+          value.description.trim().length > 2000))
     ) {
       throw new ProjectMilestoneError(
         "MILESTONE_SNAPSHOT_INVALID",
@@ -200,11 +208,11 @@ export function shouldInstantiateMilestoneSnapshotComponent(input: {
       );
     }
     return value.description === undefined
-      ? { code: value.code, name: value.name, position }
+      ? { code: value.code.trim(), name: value.name.trim(), position }
       : {
-          code: value.code,
-          name: value.name,
-          description: value.description,
+          code: value.code.trim(),
+          name: value.name.trim(),
+          description: value.description.trim(),
           position
         };
   });

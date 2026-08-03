@@ -1255,7 +1255,6 @@ model ProjectMilestoneTaskLink {
   createdBy   User                           @relation("ProjectMilestoneTaskLinkCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   voidedBy    User?                          @relation("ProjectMilestoneTaskLinkVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
 
-  @@unique([milestoneId, taskId])
   @@index([milestoneId, status])
   @@index([taskId, status])
   @@map("project_milestone_task_links")

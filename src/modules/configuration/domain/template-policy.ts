@@ -161,7 +161,11 @@ export function validateTemplateComponentContent(
             ? undefined
             : trimmedText(item.description, "里程碑描述", 1, 2000);
         const position = item.position;
-        if (!Number.isSafeInteger(position) || (position as number) < 0) {
+        if (
+          !Number.isSafeInteger(position) ||
+          (position as number) < 0 ||
+          (position as number) > 1_000_000
+        ) {
           throw new TemplateValidationError(
             "INVALID_COMPONENT_RULES",
             "里程碑位置必须是非负安全整数。"
