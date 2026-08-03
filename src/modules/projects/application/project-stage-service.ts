@@ -32,6 +32,8 @@ export function stageAllowedActions(status: ProjectStageExecutionStatus): Projec
       return ["AWAIT_GATE"];
     case "AWAITING_GATE":
       return ["COMPLETE", "CONDITIONALLY_RELEASE"];
+    case "CONDITIONALLY_RELEASED":
+      return ["COMPLETE"];
     default:
       return [];
   }

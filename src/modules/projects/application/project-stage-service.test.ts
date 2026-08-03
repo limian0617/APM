@@ -8,6 +8,7 @@ describe("APM-030 project stage command actions", () => {
     expect(stageAllowedActions("AUTHORIZED")).toEqual(["START", "SKIP"]);
     expect(stageAllowedActions("IN_PROGRESS")).toEqual(["AWAIT_GATE"]);
     expect(stageAllowedActions("AWAITING_GATE")).toEqual(["COMPLETE", "CONDITIONALLY_RELEASE"]);
+    expect(stageAllowedActions("CONDITIONALLY_RELEASED")).toEqual(["COMPLETE"]);
     expect(stageAllowedActions("COMPLETED")).toEqual([]);
   });
 
