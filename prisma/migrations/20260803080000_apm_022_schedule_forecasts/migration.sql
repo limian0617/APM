@@ -57,7 +57,7 @@ CREATE TABLE "project_schedule_states" (
   "updated_at" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "project_schedule_states_pkey" PRIMARY KEY ("project_id"),
   CONSTRAINT "project_schedule_states_input_version_check" CHECK ("input_version" >= 0),
-  CONSTRAINT "project_schedule_states_publication_check" CHECK (
+  CONSTRAINT "project_schedule_states_publication_pointer_check" CHECK (
     ("latest_published_input_version" IS NULL) = ("latest_published_recalculation_id" IS NULL)
     AND (
       "latest_published_input_version" IS NULL
