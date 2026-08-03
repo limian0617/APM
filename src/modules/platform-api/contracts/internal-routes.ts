@@ -511,6 +511,57 @@ export const milestoneVoidTaskLinkBodySchema = z.strictObject({
   linkId: identifierSchema,
   reason: reasonSchema
 });
+
+const projectStageStatusSchema = z.enum([
+  "AUTHORIZED",
+  "IN_PROGRESS",
+  "AWAITING_GATE",
+  "COMPLETED",
+  "CONDITIONALLY_RELEASED",
+  "SKIPPED"
+]);
+export const projectStagePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  stageId: identifierSchema
+});
+export const projectStageTransitionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  deliveryUnitStageId: identifierSchema.optional(),
+  toStatus: projectStageStatusSchema,
+  reason: reasonSchema
+});
+export const stageReleasePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  releaseId: identifierSchema
+});
+export const createStageReleaseBodySchema = z
+  .strictObject({
+    scope: z.enum(["PROJECT", "DELIVERY_UNIT"]),
+    fromStageId: identifierSchema,
+    toStageId: identifierSchema,
+    deliveryUnitId: identifierSchema.optional(),
+    reason: reasonSchema
+  })
+  .superRefine((value, context) => {
+    if (value.scope === "PROJECT" && value.deliveryUnitId !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["deliveryUnitId"],
+        message: "项目范围不能指定交付单元。"
+      });
+    }
+    if (value.scope === "DELIVERY_UNIT" && value.deliveryUnitId === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["deliveryUnitId"],
+        message: "交付单元范围必须指定交付单元。"
+      });
+    }
+  });
+export const revokeStageReleaseBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema

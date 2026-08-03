@@ -3,6 +3,11 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/lib/db";
+import {
+  authorizeStageRelease,
+  revokeStageRelease,
+  transitionProjectStage
+} from "@/modules/projects/application/project-stage-service";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
@@ -53,6 +58,8 @@ async function seedStageFacts(label: string) {
   await db.project.update({
     where: { id: project.id },
     data: {
+      initializationStatus: "READY",
+      status: "IN_PROGRESS",
       mainControlStageId: firstStage.id,
       mainControlStageProjectId: project.id,
       mainControlStageCode: firstStage.code,
@@ -134,5 +141,74 @@ describeDatabase("APM-030 PostgreSQL project stage persistence", () => {
     await expect(
       db.$executeRaw`UPDATE "stage_release_authorizations" SET "id" = ${`mutated-stage-release-${suffix}`} WHERE "id" = ${facts.releaseAuthorization.id}`
     ).rejects.toThrow(/stage release authorization stable identity is immutable/u);
+  });
+
+  it("requires an adjacent release before authorizing an unfinished next project stage", async () => {
+    const facts = await seedStageFacts("COMMAND");
+    const auditContext = {
+      actorId: ids.admin,
+      requestId: null,
+      traceId: null,
+      source: "API" as const,
+      sourceIp: null,
+      userAgent: null,
+      reason: "Stage command integration test",
+      projectId: facts.project.id,
+      departmentId: "engineering",
+      operationId: null
+    };
+    const nextStage = await db.projectStage.findFirstOrThrow({
+      where: { projectId: facts.project.id, sequence: 1 }
+    });
+
+    await expect(
+      transitionProjectStage({
+        projectId: facts.project.id,
+        stageId: nextStage.id,
+        toStatus: "AUTHORIZED",
+        version: nextStage.version,
+        reason: "Try to start the next stage without release",
+        actorId: ids.admin,
+        auditContext
+      })
+    ).rejects.toMatchObject({ code: "STAGE_RELEASE_REQUIRED" });
+
+    const authorization = await authorizeStageRelease({
+      projectId: facts.project.id,
+      scope: "PROJECT",
+      fromStageId: facts.firstStage.id,
+      toStageId: nextStage.id,
+      reason: "Authorize project-level parallel preparation",
+      actorId: ids.admin,
+      auditContext
+    });
+    const transitioned = await transitionProjectStage({
+      projectId: facts.project.id,
+      stageId: nextStage.id,
+      toStatus: "AUTHORIZED",
+      version: nextStage.version,
+      reason: "Start released adjacent stage",
+      actorId: ids.admin,
+      auditContext
+    });
+    const revoked = await revokeStageRelease({
+      projectId: facts.project.id,
+      releaseId: authorization.release.stageReleaseAuthorizationId,
+      version: authorization.resourceVersion,
+      reason: "Parallel preparation is no longer needed",
+      actorId: ids.admin,
+      auditContext
+    });
+
+    expect(transitioned.stage).toMatchObject({ status: "AUTHORIZED", resourceVersion: 2 });
+    expect(revoked.release).toMatchObject({ status: "REVOKED", version: 2 });
+    await expect(
+      db.auditLog.count({ where: { projectId: facts.project.id, action: "PROJECT_STAGE_UPDATED" } })
+    ).resolves.toBe(1);
+    await expect(
+      db.outboxEvent.count({
+        where: { aggregateId: nextStage.id, eventType: "project.stage.updated" }
+      })
+    ).resolves.toBe(1);
   });
 });
