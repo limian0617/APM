@@ -9,6 +9,7 @@ import {
   templateChecksum,
   TemplateValidationError,
   validateTemplateComponentContent,
+  validateTemplateMilestoneCodesUnique,
   validateTemplateReferences
 } from "./template-policy";
 
@@ -87,6 +88,21 @@ describe("APM-010 template policy", () => {
         ]
       })
     ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects duplicate milestone codes across separate template components", () => {
+    expect(() =>
+      validateTemplateMilestoneCodesUnique([
+        {
+          componentType: "MILESTONE",
+          content: { milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10 }] }
+        },
+        {
+          componentType: "MILESTONE",
+          content: { milestones: [{ code: "DESIGN.FREEZE", name: "重复设计冻结", position: 20 }] }
+        }
+      ])
+    ).toThrow(/重复/u);
   });
 
   it("rejects milestone rules with duplicate positions", () => {

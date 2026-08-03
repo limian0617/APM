@@ -200,6 +200,21 @@ export function validateTemplateComponentContent(
   return payloadHash(content).value as TemplateComponentContent;
 }
 
+export function validateTemplateMilestoneCodesUnique(
+  components: ReadonlyArray<{ componentType: TemplateComponentTypeCode; content: unknown }>
+) {
+  const codes = components.flatMap(({ componentType, content }) => {
+    if (componentType !== TEMPLATE_COMPONENT_TYPES.MILESTONE) return [];
+    const validated = validateTemplateComponentContent(componentType, content) as {
+      milestones: Array<{ code: string }>;
+    };
+    return validated.milestones.map(({ code }) => code);
+  });
+  if (new Set(codes).size !== codes.length) {
+    throw new TemplateValidationError("DUPLICATE_RULE_CODE", "模板包含重复里程碑代码。");
+  }
+}
+
 export function componentChecksum(input: {
   componentType: TemplateComponentTypeCode;
   name: string;

@@ -588,6 +588,25 @@ describeDatabase("APM-025 PostgreSQL project milestone facts", () => {
         orderBy: { createdAt: "asc" }
       })
     ).resolves.toMatchObject([{ status: "VOID" }, { status: "ACTIVE" }]);
+    await expect(
+      db.auditLog.findMany({
+        where: {
+          objectId: milestone.id,
+          action: { in: ["PROJECT_MILESTONE_TASK_LINKED", "PROJECT_MILESTONE_TASK_LINK_VOIDED"] }
+        },
+        orderBy: { occurredAt: "asc" }
+      })
+    ).resolves.toMatchObject([
+      { metadataJson: { taskId: ready.task.id, taskLinkStatus: "ACTIVE" } },
+      {
+        metadataJson: {
+          taskId: ready.task.id,
+          taskLinkStatus: "VOID",
+          voidReason: "PM 作废原有任务关联"
+        }
+      },
+      { metadataJson: { taskId: ready.task.id, taskLinkStatus: "ACTIVE" } }
+    ]);
 
     const voided = await voidProjectMilestone({
       projectId: ready.project.id,

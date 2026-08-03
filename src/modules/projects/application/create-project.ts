@@ -269,7 +269,15 @@ export async function createProjectFromTemplate(
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      throw new ProjectCreationError("PROJECT_CODE_CONFLICT", "项目号已存在。", 409);
+      const target = Array.isArray(error.meta?.target) ? error.meta.target.join(",") : "";
+      if (target.includes("projects_code")) {
+        throw new ProjectCreationError("PROJECT_CODE_CONFLICT", "项目号已存在。", 409);
+      }
+      throw new ProjectCreationError(
+        "PROJECT_CREATION_CONFLICT",
+        "项目创建发生并发冲突，请刷新后重试。",
+        409
+      );
     }
     throw error;
   }

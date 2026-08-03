@@ -317,9 +317,18 @@ export const PROJECT_MILESTONE_AUDIT_FIELDS = [
   "milestoneId",
   "code",
   "name",
+  "description",
+  "position",
   "targetAt",
   "status",
   "achievementSource",
+  "achievedAt",
+  "voidedAt",
+  "sourceSnapshotComponentId",
+  "taskLinkId",
+  "taskId",
+  "taskLinkStatus",
+  "voidReason",
   "version"
 ] as const;
 

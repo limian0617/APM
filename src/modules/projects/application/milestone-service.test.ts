@@ -122,6 +122,17 @@ describe("APM-025 project milestone lifecycle service", () => {
     expect(client.projectMilestone.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ projectId: "project-1" }) })
     );
+    expect(client.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          afterJson: expect.objectContaining({
+            description: null,
+            position: 10,
+            sourceSnapshotComponentId: null
+          })
+        })
+      })
+    );
   });
 
   it("rejects code and position values outside the durable milestone bounds before a transaction starts", async () => {

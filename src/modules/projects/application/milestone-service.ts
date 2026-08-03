@@ -71,7 +71,7 @@ function milestoneName(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 200) {
     throw new ProjectMilestoneError(
       "MILESTONE_NAME_INVALID",
-      "里程碑名称必须是 1 到 191 个字符。",
+      "里程碑名称必须是 1 到 200 个字符。",
       422
     );
   }
@@ -83,7 +83,7 @@ function milestoneDescription(value: unknown): string | null {
   if (typeof value !== "string" || value.trim().length > 2000) {
     throw new ProjectMilestoneError(
       "MILESTONE_DESCRIPTION_INVALID",
-      "里程碑说明不能超过 1024 个字符。",
+      "里程碑说明不能超过 2000 个字符。",
       422
     );
   }
@@ -268,10 +268,29 @@ function milestoneAuditValue(value: ProjectMilestoneValue) {
     milestoneId: value.id,
     code: value.code,
     name: value.name,
+    description: value.description,
+    position: value.position,
     targetAt: value.targetAt?.toISOString() ?? null,
     status: value.status,
     achievementSource: value.achievementSource,
+    achievedAt: value.achievedAt?.toISOString() ?? null,
+    voidedAt: value.voidedAt?.toISOString() ?? null,
+    sourceSnapshotComponentId: value.sourceSnapshotComponentId,
     version: value.version
+  };
+}
+
+function milestoneTaskLinkAuditValue(link: {
+  id: string;
+  taskId: string;
+  status: string;
+  voidReason: string | null;
+}) {
+  return {
+    taskLinkId: link.id,
+    taskId: link.taskId,
+    taskLinkStatus: link.status,
+    voidReason: link.voidReason
   };
 }
 
@@ -373,7 +392,15 @@ async function recordMilestoneMutation(
     after: {
       value: milestoneAuditValue(input.milestone),
       allowedFields: PROJECT_MILESTONE_AUDIT_FIELDS
-    }
+    },
+    ...(input.link
+      ? {
+          metadata: {
+            value: milestoneTaskLinkAuditValue(input.link),
+            allowedFields: PROJECT_MILESTONE_AUDIT_FIELDS
+          }
+        }
+      : {})
   });
   const outbox = await appendOutboxEvent(client, {
     eventType: configuration.outboxEventType,
