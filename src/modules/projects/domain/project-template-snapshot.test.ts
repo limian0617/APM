@@ -4,7 +4,8 @@ import {
   componentChecksum,
   templateChecksum,
   type TemplateComponentContent,
-  type TemplateComponentTypeCode
+  type TemplateComponentTypeCode,
+  validateTemplateComponentContent
 } from "@/modules/configuration/domain/template-policy";
 
 import {
@@ -42,9 +43,16 @@ function sourceComponents(): SourceSnapshotComponent[] {
     },
     {
       type: "MILESTONE",
-      content: {
-        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10 }]
-      }
+      content: validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          {
+            code: " DESIGN.FREEZE ",
+            name: "  设计冻结  ",
+            description: " 客户验收前置 ",
+            position: 10
+          }
+        ]
+      })
     }
   ];
   return definitions.map(({ type, content }, position) => {
@@ -117,7 +125,14 @@ describe("APM-011 project template snapshot", () => {
     ).toMatchObject({
       slot: "MILESTONE.0",
       content: {
-        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10 }]
+        milestones: [
+          {
+            code: "DESIGN.FREEZE",
+            name: "设计冻结",
+            description: "客户验收前置",
+            position: 10
+          }
+        ]
       }
     });
   });

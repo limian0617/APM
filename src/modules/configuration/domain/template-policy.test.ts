@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   componentChecksum,
+  TEMPLATE_COMPONENT_TYPES,
   templateChecksum,
   TemplateValidationError,
   validateTemplateComponentContent,
@@ -102,6 +106,109 @@ describe("APM-010 template policy", () => {
         milestones: [{ code: "DESIGN.FREEZE", position: 10 }]
       })
     ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects a milestone rule with a blank name", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", name: "   ", position: 10 }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects a milestone rule with a blank description", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", description: "   ", position: 10 }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects unknown root fields in a milestone component", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10 }],
+        unexpected: true
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects unknown fields in a milestone rule", () => {
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [{ code: "DESIGN.FREEZE", name: "设计冻结", position: 10, unexpected: true }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("normalizes milestone text before calculating its checksum", () => {
+    const content = validateTemplateComponentContent("MILESTONE", {
+      milestones: [
+        {
+          code: " DESIGN.FREEZE ",
+          name: "  设计冻结  ",
+          description: " 客户验收前置 ",
+          position: 10
+        }
+      ]
+    });
+    const normalizedContent = {
+      milestones: [
+        {
+          code: "DESIGN.FREEZE",
+          name: "设计冻结",
+          description: "客户验收前置",
+          position: 10
+        }
+      ]
+    };
+
+    expect(content).toEqual(normalizedContent);
+    expect(
+      componentChecksum({
+        componentType: "MILESTONE",
+        name: "里程碑",
+        description: null,
+        content
+      })
+    ).toBe(
+      componentChecksum({
+        componentType: "MILESTONE",
+        name: "里程碑",
+        description: null,
+        content: normalizedContent
+      })
+    );
+  });
+
+  it("keeps template component declarations aligned with the enum append migration", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260803090000_apm_025_milestone_component/migration.sql"
+      ),
+      "utf8"
+    );
+
+    expect(Object.values(TEMPLATE_COMPONENT_TYPES)).toEqual([
+      "STAGE",
+      "GATE",
+      "ROLE",
+      "WBS",
+      "CAPABILITY_RULE",
+      "MILESTONE"
+    ]);
+    expect(schema).toContain(`enum TemplateComponentType {
+  STAGE
+  GATE
+  ROLE
+  WBS
+  CAPABILITY_RULE
+  MILESTONE
+}`);
+    expect(migration.trim()).toBe("ALTER TYPE \"TemplateComponentType\" ADD VALUE 'MILESTONE';");
+    expect(migration).not.toMatch(/\b(?:BEFORE|AFTER)\b/u);
   });
 
   it("requires complete template component types and unique positions", () => {

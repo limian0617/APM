@@ -508,8 +508,8 @@ enum TemplateComponentType {
   GATE
   ROLE
   WBS
-  MILESTONE
   CAPABILITY_RULE
+  MILESTONE
 }
 
 enum TemplateMasterStatus {

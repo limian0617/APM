@@ -5,8 +5,8 @@ export const TEMPLATE_COMPONENT_TYPES = {
   GATE: "GATE",
   ROLE: "ROLE",
   WBS: "WBS",
-  MILESTONE: "MILESTONE",
-  CAPABILITY_RULE: "CAPABILITY_RULE"
+  CAPABILITY_RULE: "CAPABILITY_RULE",
+  MILESTONE: "MILESTONE"
 } as const;
 
 export type TemplateComponentTypeCode =
@@ -70,6 +70,30 @@ function uniqueCodes(items: Array<Record<string, unknown>>, field: string): Set<
   return new Set(codes);
 }
 
+function rejectUnknownKeys(value: Record<string, unknown>, allowedKeys: string[], field: string) {
+  if (Object.keys(value).some((key) => !allowedKeys.includes(key))) {
+    throw new TemplateValidationError("INVALID_COMPONENT_RULES", `${field} 包含未知字段。`);
+  }
+}
+
+function trimmedStableCode(value: unknown, field: string): string {
+  return stableCode(typeof value === "string" ? value.trim() : value, field);
+}
+
+function trimmedText(value: unknown, field: string, minLength: number, maxLength: number): string {
+  if (typeof value !== "string") {
+    throw new TemplateValidationError("INVALID_COMPONENT_RULES", `${field} 必须是文本。`);
+  }
+  const normalized = value.trim();
+  if (normalized.length < minLength || normalized.length > maxLength) {
+    throw new TemplateValidationError(
+      "INVALID_COMPONENT_RULES",
+      `${field} 必须是 ${minLength} 到 ${maxLength} 个字符。`
+    );
+  }
+  return normalized;
+}
+
 export function validateTemplateComponentContent(
   componentType: TemplateComponentTypeCode,
   value: unknown
@@ -123,43 +147,39 @@ export function validateTemplateComponentContent(
       break;
     }
     case TEMPLATE_COMPONENT_TYPES.MILESTONE: {
+      rejectUnknownKeys(content, ["milestones"], "里程碑组件");
       const items = array(content.milestones, "milestones");
       if (items.length > 1000) {
         throw new TemplateValidationError("INVALID_COMPONENT_RULES", "里程碑最多包含 1000 项。");
       }
-      uniqueCodes(items, "milestones");
-      const positions = items.map((item) => item.position);
-      if (
-        positions.some((position) => !Number.isSafeInteger(position) || (position as number) < 0)
-      ) {
-        throw new TemplateValidationError(
-          "INVALID_COMPONENT_RULES",
-          "里程碑位置必须是非负安全整数。"
-        );
+      const milestones = items.map((item) => {
+        rejectUnknownKeys(item, ["code", "name", "description", "position"], "里程碑");
+        const code = trimmedStableCode(item.code, "milestones.code");
+        const name = trimmedText(item.name, "里程碑名称", 1, 200);
+        const description =
+          item.description === undefined
+            ? undefined
+            : trimmedText(item.description, "里程碑描述", 1, 2000);
+        const position = item.position;
+        if (!Number.isSafeInteger(position) || (position as number) < 0) {
+          throw new TemplateValidationError(
+            "INVALID_COMPONENT_RULES",
+            "里程碑位置必须是非负安全整数。"
+          );
+        }
+        return description === undefined
+          ? { code, name, position }
+          : { code, name, description, position };
+      });
+      const codes = milestones.map(({ code }) => code);
+      if (new Set(codes).size !== codes.length) {
+        throw new TemplateValidationError("DUPLICATE_RULE_CODE", "milestones 包含重复代码。");
       }
+      const positions = milestones.map(({ position }) => position);
       if (new Set(positions).size !== positions.length) {
         throw new TemplateValidationError("DUPLICATE_RULE_POSITION", "里程碑位置不能重复。");
       }
-      for (const item of items) {
-        if (typeof item.name !== "string" || item.name.length < 1 || item.name.length > 200) {
-          throw new TemplateValidationError(
-            "INCOMPLETE_COMPONENT_RULES",
-            "里程碑名称必须是 1 到 200 个字符。"
-          );
-        }
-        if (
-          item.description !== undefined &&
-          (typeof item.description !== "string" ||
-            item.description.length < 1 ||
-            item.description.length > 2000)
-        ) {
-          throw new TemplateValidationError(
-            "INVALID_COMPONENT_RULES",
-            "里程碑描述必须是 1 到 2000 个字符。"
-          );
-        }
-      }
-      break;
+      return payloadHash({ milestones }).value as TemplateComponentContent;
     }
     case TEMPLATE_COMPONENT_TYPES.CAPABILITY_RULE: {
       const items = array(content.capabilities, "capabilities");

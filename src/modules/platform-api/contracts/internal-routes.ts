@@ -38,8 +38,8 @@ const templateComponentTypeSchema = z.enum([
   "GATE",
   "ROLE",
   "WBS",
-  "MILESTONE",
-  "CAPABILITY_RULE"
+  "CAPABILITY_RULE",
+  "MILESTONE"
 ]);
 const stageContentSchema = z.strictObject({
   stages: z
@@ -152,13 +152,13 @@ export const saveTemplateComponentDraftBodySchema = z.discriminatedUnion("compon
   }),
   z.strictObject({
     ...templateComponentDraftBase,
-    componentType: z.literal("MILESTONE"),
-    content: milestoneContentSchema
+    componentType: z.literal("CAPABILITY_RULE"),
+    content: capabilityRuleContentSchema
   }),
   z.strictObject({
     ...templateComponentDraftBase,
-    componentType: z.literal("CAPABILITY_RULE"),
-    content: capabilityRuleContentSchema
+    componentType: z.literal("MILESTONE"),
+    content: milestoneContentSchema
   })
 ]);
 export const publishTemplateBodySchema = z.strictObject({
