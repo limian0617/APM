@@ -21,6 +21,7 @@ import {
   ProjectCreationError,
   validateProjectIdentity
 } from "../domain/project-template-snapshot";
+import { instantiateProjectMilestones } from "./milestone-service";
 
 function positiveVersion(value: unknown): number {
   if (!Number.isInteger(value) || (value as number) < 1) {
@@ -178,6 +179,11 @@ export async function createProjectFromTemplate(
         },
         include: { components: { orderBy: [{ position: "asc" }, { slot: "asc" }] } }
       });
+      const projectMilestones = await instantiateProjectMilestones(client, {
+        projectId: project.id,
+        actorId: input.actorId,
+        components: storedSnapshot.components
+      });
       const auditContext = {
         ...input.auditContext,
         actorId: input.actorId,
@@ -219,6 +225,7 @@ export async function createProjectFromTemplate(
             snapshotId: storedSnapshot.id,
             snapshotChecksum: storedSnapshot.snapshotChecksum,
             referenceCount: storedSnapshot.components.length,
+            milestoneCount: projectMilestones.length,
             version: project.version
           },
           allowedFields: PROJECT_CREATION_AUDIT_FIELDS
