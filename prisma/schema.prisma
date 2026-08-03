@@ -665,6 +665,22 @@ enum PlanningTaskStatus {
   CLOSED
 }
 
+enum PlanningCalendarStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum TaskDependencyStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum TaskDependencyType {
+  FS
+  SS
+  FF
+}
+
 enum ProjectRole {
   PROJECT_MANAGER
   DEPARTMENT_LEAD
@@ -718,6 +734,12 @@ enum AuditAction {
   PLANNING_TASK_UPDATED
   PLANNING_TASK_PROGRESS_UPDATED
   PLANNING_TASK_CLOSED
+  PROJECT_CALENDAR_CREATED
+  PROJECT_CALENDAR_UPDATED
+  PROJECT_CALENDAR_CLOSED
+  TASK_DEPENDENCY_CREATED
+  TASK_DEPENDENCY_UPDATED
+  TASK_DEPENDENCY_CLOSED
 }
 
 enum AuditObjectType {
@@ -742,6 +764,8 @@ enum AuditObjectType {
   RESPONSIBILITY_PACKAGE
   WBS_NODE
   PLANNING_TASK
+  PROJECT_CALENDAR
+  TASK_DEPENDENCY
 }
 
 enum AuditSource {
@@ -805,6 +829,11 @@ model User {
   wbsNodesUpdated                       WbsNode[]                     @relation("WbsNodeUpdatedBy")
   planningTasksCreated                  PlanningTask[]                @relation("PlanningTaskCreatedBy")
   planningTasksUpdated                  PlanningTask[]                @relation("PlanningTaskUpdatedBy")
+  projectCalendarsCreated               ProjectCalendar[]             @relation("ProjectCalendarCreatedBy")
+  projectCalendarsUpdated               ProjectCalendar[]             @relation("ProjectCalendarUpdatedBy")
+  projectCalendarRevisionsCreated       ProjectCalendarRevision[]     @relation("ProjectCalendarRevisionCreatedBy")
+  taskDependenciesCreated               TaskDependency[]              @relation("TaskDependencyCreatedBy")
+  taskDependenciesUpdated               TaskDependency[]              @relation("TaskDependencyUpdatedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -894,6 +923,9 @@ model Project {
   responsibilityPackages        ResponsibilityPackage[]
   wbsNodes                      WbsNode[]
   planningTasks                 PlanningTask[]
+  planningCalendar              ProjectCalendar?
+  projectCalendarRevisions      ProjectCalendarRevision[]
+  taskDependencies              TaskDependency[]
 
   @@index([departmentId])
   @@index([sourceTemplateVersionId])
@@ -1183,6 +1215,8 @@ model PlanningTask {
   ownerMembership          ProjectMember          @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
   createdBy                User                   @relation("PlanningTaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy                User                   @relation("PlanningTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  predecessorDependencies  TaskDependency[]       @relation("TaskDependencyPredecessor")
+  successorDependencies    TaskDependency[]       @relation("TaskDependencySuccessor")
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -1193,6 +1227,76 @@ model PlanningTask {
   @@index([deliveryUnitId, status])
   @@index([moduleId, status])
   @@map("planning_tasks")
+}
+
+model ProjectCalendar {
+  id          String                    @id @default(cuid())
+  projectId   String                    @unique @map("project_id")
+  status      PlanningCalendarStatus    @default(ACTIVE)
+  version     Int                       @default(1)
+  closedAt    DateTime?                 @map("closed_at")
+  createdById String                    @map("created_by_id")
+  updatedById String                    @map("updated_by_id")
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  updatedAt   DateTime                  @updatedAt @map("updated_at")
+  project     Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  revisions   ProjectCalendarRevision[]
+  createdBy   User                      @relation("ProjectCalendarCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User                      @relation("ProjectCalendarUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@index([status, updatedAt])
+  @@map("project_calendars")
+}
+
+model ProjectCalendarRevision {
+  id          String          @id @default(cuid())
+  calendarId  String          @map("calendar_id")
+  projectId   String          @map("project_id")
+  revision    Int
+  name        String
+  timeZone    String          @map("time_zone")
+  weeklyRules Json            @map("weekly_rules")
+  exceptions  Json
+  checksum    String
+  reason      String
+  createdById String          @map("created_by_id")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  calendar    ProjectCalendar @relation(fields: [calendarId, projectId], references: [id, projectId], onDelete: Restrict)
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy   User            @relation("ProjectCalendarRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([calendarId, revision])
+  @@index([projectId, revision])
+  @@index([checksum])
+  @@map("project_calendar_revisions")
+}
+
+model TaskDependency {
+  id                String               @id @default(cuid())
+  projectId         String               @map("project_id")
+  predecessorTaskId String               @map("predecessor_task_id")
+  successorTaskId   String               @map("successor_task_id")
+  dependencyType    TaskDependencyType   @map("dependency_type")
+  lagMinutes        Int                  @default(0) @map("lag_minutes")
+  status            TaskDependencyStatus @default(ACTIVE)
+  version           Int                  @default(1)
+  closedAt          DateTime?            @map("closed_at")
+  createdById       String               @map("created_by_id")
+  updatedById       String               @map("updated_by_id")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+  project           Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  predecessorTask   PlanningTask         @relation("TaskDependencyPredecessor", fields: [predecessorTaskId, projectId], references: [id, projectId], onDelete: Restrict)
+  successorTask     PlanningTask         @relation("TaskDependencySuccessor", fields: [successorTaskId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy         User                 @relation("TaskDependencyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy         User                 @relation("TaskDependencyUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, predecessorTaskId, successorTaskId])
+  @@unique([id, projectId])
+  @@index([projectId, status, predecessorTaskId])
+  @@index([projectId, status, successorTaskId])
+  @@map("task_dependencies")
 }
 
 model ProjectMember {
