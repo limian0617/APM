@@ -22,6 +22,7 @@ import {
   type TaskDependencyDefinition,
   type TaskDependencyTypeCode
 } from "../domain/schedule-network";
+import { requestScheduleRecalculation } from "./schedule-recalculation-service";
 
 const dependencyInclude = {
   predecessorTask: { select: { id: true, code: true, name: true, status: true } },
@@ -234,6 +235,12 @@ export async function saveProjectCalendar(
           idempotencyKey: `${calendar.id}:v${calendar.version}`,
           payload: auditValue
         });
+        await requestScheduleRecalculation(client, {
+          projectId: input.projectId,
+          actorId: input.actorId,
+          sourceAction: "planning.project-calendar.created",
+          reason
+        });
         return {
           calendar: serializeCalendar(calendar, revision),
           resourceVersion: calendar.version,
@@ -281,6 +288,12 @@ export async function saveProjectCalendar(
         aggregateId: calendar.id,
         idempotencyKey: `${calendar.id}:v${calendar.version}`,
         payload: after
+      });
+      await requestScheduleRecalculation(client, {
+        projectId: input.projectId,
+        actorId: input.actorId,
+        sourceAction: "planning.project-calendar.updated",
+        reason
       });
       return {
         calendar: serializeCalendar(calendar, revision),
@@ -370,6 +383,12 @@ export async function closeProjectCalendar(
         aggregateId: calendar.id,
         idempotencyKey: `${calendar.id}:v${calendar.version}`,
         payload: after
+      });
+      await requestScheduleRecalculation(client, {
+        projectId: input.projectId,
+        actorId: input.actorId,
+        sourceAction: "planning.project-calendar.closed",
+        reason
       });
       return {
         calendar: serializeCalendar(calendar, current.revision),
@@ -517,6 +536,12 @@ export async function createTaskDependency(
         idempotencyKey: `${dependency.id}:v${dependency.version}`,
         payload: auditValue
       });
+      await requestScheduleRecalculation(client, {
+        projectId: input.projectId,
+        actorId: input.actorId,
+        sourceAction: "planning.task-dependency.created",
+        reason
+      });
       return {
         dependency: serializeDependency(dependency),
         resourceVersion: dependency.version,
@@ -597,6 +622,12 @@ export async function updateTaskDependency(
         idempotencyKey: `${dependency.id}:v${dependency.version}`,
         payload: after
       });
+      await requestScheduleRecalculation(client, {
+        projectId: input.projectId,
+        actorId: input.actorId,
+        sourceAction: "planning.task-dependency.updated",
+        reason
+      });
       return {
         dependency: serializeDependency(dependency),
         resourceVersion: dependency.version,
@@ -668,6 +699,12 @@ export async function closeTaskDependency(
         aggregateId: dependency.id,
         idempotencyKey: `${dependency.id}:v${dependency.version}`,
         payload: after
+      });
+      await requestScheduleRecalculation(client, {
+        projectId: input.projectId,
+        actorId: input.actorId,
+        sourceAction: "planning.task-dependency.closed",
+        reason
       });
       return {
         dependency: serializeDependency(dependency),
