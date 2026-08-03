@@ -785,7 +785,8 @@ describeDatabase("APM-020 PostgreSQL WBS and planning tasks", () => {
       data: {
         status: "FAILED",
         errorCode: "EXECUTION_FORECAST_FAILED",
-        errorMessage: "项目预测计算失败。"
+        errorMessage: "项目预测计算失败。",
+        completedAt: new Date()
       }
     });
 
