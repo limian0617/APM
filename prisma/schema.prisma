@@ -653,6 +653,18 @@ enum ResponsibilityPackageEventType {
   CLOSED
 }
 
+enum PlanningNodeStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum PlanningTaskStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  CLOSED
+}
+
 enum ProjectRole {
   PROJECT_MANAGER
   DEPARTMENT_LEAD
@@ -699,6 +711,13 @@ enum AuditAction {
   RESPONSIBILITY_PACKAGE_ACCEPTED
   RESPONSIBILITY_PACKAGE_REOPENED
   RESPONSIBILITY_PACKAGE_CLOSED
+  WBS_NODE_CREATED
+  WBS_NODE_UPDATED
+  WBS_NODE_CLOSED
+  PLANNING_TASK_CREATED
+  PLANNING_TASK_UPDATED
+  PLANNING_TASK_PROGRESS_UPDATED
+  PLANNING_TASK_CLOSED
 }
 
 enum AuditObjectType {
@@ -721,6 +740,8 @@ enum AuditObjectType {
   PROJECT_MODULE
   PROJECT_CAPABILITY
   RESPONSIBILITY_PACKAGE
+  WBS_NODE
+  PLANNING_TASK
 }
 
 enum AuditSource {
@@ -780,6 +801,10 @@ model User {
   responsibilityPackagesCreated         ResponsibilityPackage[]       @relation("ResponsibilityPackageCreatedBy")
   responsibilityPackagesUpdated         ResponsibilityPackage[]       @relation("ResponsibilityPackageUpdatedBy")
   responsibilityPackageEventsActed      ResponsibilityPackageEvent[]  @relation("ResponsibilityPackageEventActor")
+  wbsNodesCreated                       WbsNode[]                     @relation("WbsNodeCreatedBy")
+  wbsNodesUpdated                       WbsNode[]                     @relation("WbsNodeUpdatedBy")
+  planningTasksCreated                  PlanningTask[]                @relation("PlanningTaskCreatedBy")
+  planningTasksUpdated                  PlanningTask[]                @relation("PlanningTaskUpdatedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -867,6 +892,8 @@ model Project {
   projectModules                ProjectModule[]
   projectCapabilities           ProjectCapability[]
   responsibilityPackages        ResponsibilityPackage[]
+  wbsNodes                      WbsNode[]
+  planningTasks                 PlanningTask[]
 
   @@index([departmentId])
   @@index([sourceTemplateVersionId])
@@ -937,6 +964,7 @@ model DeliveryUnit {
   children               DeliveryUnit[]             @relation("DeliveryUnitHierarchy")
   modules                ProjectModule[]
   responsibilityPackages ResponsibilityPackage[]
+  planningTasks          PlanningTask[]
   createdBy              User                       @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy              User                       @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
@@ -966,6 +994,7 @@ model ProjectModule {
   createdBy              User                       @relation("ProjectModuleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy              User                       @relation("ProjectModuleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   responsibilityPackages ResponsibilityPackage[]
+  planningTasks          PlanningTask[]
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -1055,6 +1084,7 @@ model ResponsibilityPackage {
   createdBy              User                         @relation("ResponsibilityPackageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy              User                         @relation("ResponsibilityPackageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   events                 ResponsibilityPackageEvent[]
+  planningTasks          PlanningTask[]
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -1088,6 +1118,83 @@ model ResponsibilityPackageEvent {
   @@map("responsibility_package_events")
 }
 
+model WbsNode {
+  id          String             @id @default(cuid())
+  projectId   String             @map("project_id")
+  parentId    String?            @map("parent_id")
+  code        String
+  name        String
+  description String?
+  position    Int
+  status      PlanningNodeStatus @default(ACTIVE)
+  version     Int                @default(1)
+  closedAt    DateTime?          @map("closed_at")
+  createdById String             @map("created_by_id")
+  updatedById String             @map("updated_by_id")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  project     Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  parent      WbsNode?           @relation("WbsNodeHierarchy", fields: [parentId, projectId], references: [id, projectId], onDelete: Restrict)
+  children    WbsNode[]          @relation("WbsNodeHierarchy")
+  tasks       PlanningTask[]
+  createdBy   User               @relation("WbsNodeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User               @relation("WbsNodeUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@unique([projectId, parentId, position])
+  @@index([projectId, status, position])
+  @@index([parentId, position])
+  @@map("wbs_nodes")
+}
+
+model PlanningTask {
+  id                       String                 @id @default(cuid())
+  projectId                String                 @map("project_id")
+  wbsNodeId                String                 @map("wbs_node_id")
+  responsibilityPackageId  String?                @map("responsibility_package_id")
+  deliveryUnitId           String?                @map("delivery_unit_id")
+  moduleId                 String?                @map("module_id")
+  ownerMembershipId        String                 @map("owner_membership_id")
+  code                     String
+  name                     String
+  description              String?
+  position                 Int
+  plannedStartAt           DateTime               @map("planned_start_at")
+  plannedFinishAt          DateTime               @map("planned_finish_at")
+  plannedDurationMinutes   Int                    @map("planned_duration_minutes")
+  weight                   Int
+  status                   PlanningTaskStatus     @default(NOT_STARTED)
+  actualStartAt            DateTime?              @map("actual_start_at")
+  actualFinishAt           DateTime?              @map("actual_finish_at")
+  remainingDurationMinutes Int                    @map("remaining_duration_minutes")
+  forecastFinishAt         DateTime               @map("forecast_finish_at")
+  version                  Int                    @default(1)
+  closedAt                 DateTime?              @map("closed_at")
+  createdById              String                 @map("created_by_id")
+  updatedById              String                 @map("updated_by_id")
+  createdAt                DateTime               @default(now()) @map("created_at")
+  updatedAt                DateTime               @updatedAt @map("updated_at")
+  project                  Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  wbsNode                  WbsNode                @relation(fields: [wbsNodeId, projectId], references: [id, projectId], onDelete: Restrict)
+  responsibilityPackage    ResponsibilityPackage? @relation(fields: [responsibilityPackageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit             DeliveryUnit?          @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module                   ProjectModule?         @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership          ProjectMember          @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                User                   @relation("PlanningTaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                User                   @relation("PlanningTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@unique([wbsNodeId, position])
+  @@index([projectId, status, code])
+  @@index([ownerMembershipId, status])
+  @@index([responsibilityPackageId, status])
+  @@index([deliveryUnitId, status])
+  @@index([moduleId, status])
+  @@map("planning_tasks")
+}
+
 model ProjectMember {
   id                          String                  @id @default(cuid())
   projectId                   String                  @map("project_id")
@@ -1104,7 +1211,9 @@ model ProjectMember {
   assignedBy                  User                    @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
   leftBy                      User?                   @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
   ownedResponsibilityPackages ResponsibilityPackage[]
+  assignedPlanningTasks       PlanningTask[]
 
+  @@unique([id, projectId])
   @@index([projectId, leftAt])
   @@index([userId, leftAt])
   @@map("project_members")

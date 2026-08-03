@@ -293,6 +293,82 @@ export const responsibilityPackageQuerySchema = z.strictObject({
     .transform((value) => (value === undefined ? 50 : Number(value)))
     .pipe(z.number().int().min(1).max(100))
 });
+const planningPositionSchema = z.number().int().min(0).max(1_000_000);
+const planningDurationSchema = z.number().int().min(1).max(5_256_000);
+const planningWeightSchema = z.number().int().min(1).max(1_000_000);
+const planningDateTimeSchema = z.string().datetime({ offset: true });
+const wbsNodeDefinitionShape = {
+  name: templateNameSchema,
+  description: templateDescriptionSchema,
+  parentId: identifierSchema.nullable().optional(),
+  position: planningPositionSchema
+};
+export const wbsNodePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  nodeId: identifierSchema
+});
+export const createWbsNodeBodySchema = z.strictObject({
+  code: stableCodeSchema,
+  ...wbsNodeDefinitionShape,
+  reason: reasonSchema
+});
+export const updateWbsNodeBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  ...wbsNodeDefinitionShape,
+  reason: reasonSchema
+});
+export const closePlanningBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const wbsNodeQuerySchema = z.strictObject({
+  status: z.enum(["ACTIVE", "CLOSED"]).optional()
+});
+const planningTaskDefinitionShape = {
+  name: templateNameSchema,
+  description: templateDescriptionSchema,
+  wbsNodeId: identifierSchema,
+  responsibilityPackageId: identifierSchema.nullable().optional(),
+  deliveryUnitId: identifierSchema.nullable().optional(),
+  moduleId: identifierSchema.nullable().optional(),
+  ownerMembershipId: identifierSchema,
+  position: planningPositionSchema,
+  plannedStartAt: planningDateTimeSchema,
+  plannedFinishAt: planningDateTimeSchema,
+  plannedDurationMinutes: planningDurationSchema,
+  weight: planningWeightSchema
+};
+export const planningTaskPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  taskId: identifierSchema
+});
+export const planningTaskCommandPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  taskId: identifierSchema,
+  command: z.enum(["progress", "close"])
+});
+export const createPlanningTaskBodySchema = z.strictObject({
+  code: stableCodeSchema,
+  ...planningTaskDefinitionShape,
+  reason: reasonSchema
+});
+export const updatePlanningTaskBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  ...planningTaskDefinitionShape,
+  reason: reasonSchema
+});
+export const planningTaskProgressBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  actualStartAt: planningDateTimeSchema.nullable().optional(),
+  actualFinishAt: planningDateTimeSchema.nullable().optional(),
+  remainingDurationMinutes: z.number().int().min(0).max(5_256_000),
+  forecastFinishAt: planningDateTimeSchema.nullable().optional(),
+  reason: reasonSchema
+});
+export const planningTaskQuerySchema = z.strictObject({
+  status: z.enum(["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "CLOSED"]).optional(),
+  wbsNodeId: identifierSchema.optional()
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema

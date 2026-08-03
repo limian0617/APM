@@ -564,6 +564,6 @@ describeDatabase("APM-014 PostgreSQL responsibility packages", () => {
       db.$executeRawUnsafe(
         'TRUNCATE TABLE "responsibility_package_events", "responsibility_packages"'
       )
-    ).rejects.toThrow(/durable and cannot be removed/u);
+    ).rejects.toThrow(/durable and cannot be removed|cannot truncate a table referenced/iu);
   });
 });
