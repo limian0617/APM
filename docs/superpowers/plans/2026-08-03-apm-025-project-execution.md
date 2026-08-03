@@ -12,24 +12,25 @@
 
 ## Locked file structure
 
-| Path | Responsibility |
-| --- | --- |
-| `prisma/schema.prisma` | Milestone enum/models, template component enum, foreign keys, indexes, audit vocabulary enum values. |
-| `prisma/migrations/20260803091000_apm_025_project_milestones/migration.sql` | PostgreSQL types/tables/constraints and append-only triggers for milestone facts. |
-| `src/modules/configuration/domain/template-policy.ts` | Validate canonical `MILESTONE` component content and retain non-required status. |
-| `src/modules/projects/domain/project-milestone.ts` | Pure milestone definition, state-transition, and task-link reconciliation rules. |
-| `src/modules/projects/application/milestone-service.ts` | Transactional CRUD, task linking, event/audit/Outbox persistence, and template snapshot instantiation. |
-| `src/modules/planning/domain/project-progress.ts` | Pure task-duration progress and aggregate workday conversion rules. |
-| `src/modules/planning/application/project-execution-query.ts` | Authorized read-side aggregation of tasks, schedule forecast, packages, milestones, and exceptions. |
-| `src/modules/planning/contracts/execution-page-state.ts` | Pure mapping of the execution DTO to normal/loading/empty/error/denied/stale/pending/failed/read-only UI states. |
-| `src/app/api/projects/[projectId]/execution/route.ts` | Thin `PROJECT_READ` execution query handler. |
-| `src/app/api/projects/[projectId]/milestones/**/route.ts` | Thin `PROJECT_PLAN_UPDATE` milestone read/command handlers. |
-| `src/app/projects/[projectId]/execution/*` | Responsive read-only execution page and stable same-page drill-down UI. |
-| `src/app/globals.css` | Narrow styles for the execution layout and state-preserving skeletons only. |
+| Path                                                                        | Responsibility                                                                                                   |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `prisma/schema.prisma`                                                      | Milestone enum/models, template component enum, foreign keys, indexes, audit vocabulary enum values.             |
+| `prisma/migrations/20260803091000_apm_025_project_milestones/migration.sql` | PostgreSQL types/tables/constraints and append-only triggers for milestone facts.                                |
+| `src/modules/configuration/domain/template-policy.ts`                       | Validate canonical `MILESTONE` component content and retain non-required status.                                 |
+| `src/modules/projects/domain/project-milestone.ts`                          | Pure milestone definition, state-transition, and task-link reconciliation rules.                                 |
+| `src/modules/projects/application/milestone-service.ts`                     | Transactional CRUD, task linking, event/audit/Outbox persistence, and template snapshot instantiation.           |
+| `src/modules/planning/domain/project-progress.ts`                           | Pure task-duration progress and aggregate workday conversion rules.                                              |
+| `src/modules/planning/application/project-execution-query.ts`               | Authorized read-side aggregation of tasks, schedule forecast, packages, milestones, and exceptions.              |
+| `src/modules/planning/contracts/execution-page-state.ts`                    | Pure mapping of the execution DTO to normal/loading/empty/error/denied/stale/pending/failed/read-only UI states. |
+| `src/app/api/projects/[projectId]/execution/route.ts`                       | Thin `PROJECT_READ` execution query handler.                                                                     |
+| `src/app/api/projects/[projectId]/milestones/**/route.ts`                   | Thin `PROJECT_PLAN_UPDATE` milestone read/command handlers.                                                      |
+| `src/app/projects/[projectId]/execution/*`                                  | Responsive read-only execution page and stable same-page drill-down UI.                                          |
+| `src/app/globals.css`                                                       | Narrow styles for the execution layout and state-preserving skeletons only.                                      |
 
 ## Task 1: Define the milestone template contract
 
 **Files:**
+
 - Modify: `prisma/schema.prisma`
 - Modify: `src/modules/configuration/domain/template-policy.ts`
 - Modify: `src/modules/platform-api/contracts/internal-routes.ts`
@@ -42,23 +43,27 @@
 
   ```ts
   it("validates canonical milestone definitions without making them template-required", () => {
-    expect(validateTemplateComponentContent("MILESTONE", {
-      milestones: [
-        { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
-        { code: "FAT.READY", name: "FAT 准备", description: "客户验收前置", position: 20 }
-      ]
-    })).toEqual({
+    expect(
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
+          { code: "FAT.READY", name: "FAT 准备", description: "客户验收前置", position: 20 }
+        ]
+      })
+    ).toEqual({
       milestones: [
         { code: "DESIGN.FREEZE", name: "设计冻结", position: 10 },
         { code: "FAT.READY", name: "FAT 准备", description: "客户验收前置", position: 20 }
       ]
     });
-    expect(() => validateTemplateComponentContent("MILESTONE", {
-      milestones: [
-        { code: "DESIGN.FREEZE", name: "A", position: 1 },
-        { code: "DESIGN.FREEZE", name: "B", position: 2 }
-      ]
-    })).toThrow(/重复代码/u);
+    expect(() =>
+      validateTemplateComponentContent("MILESTONE", {
+        milestones: [
+          { code: "DESIGN.FREEZE", name: "A", position: 1 },
+          { code: "DESIGN.FREEZE", name: "B", position: 2 }
+        ]
+      })
+    ).toThrow(/重复代码/u);
   });
   ```
 
@@ -124,6 +129,7 @@
 ## Task 2: Add durable project milestone and event facts
 
 **Files:**
+
 - Modify: `prisma/schema.prisma`
 - Create: `prisma/migrations/20260803091000_apm_025_project_milestones/migration.sql`
 - Create: `src/modules/projects/infrastructure/milestones.integration.test.ts`
@@ -134,12 +140,23 @@
   test must attempt each invalid write below and expect PostgreSQL to reject it:
 
   ```ts
-  await expect(db.projectMilestoneTaskLink.create({
-    data: { projectId, milestoneId: milestone.id, taskId: foreignTask.id, status: "ACTIVE", createdById: adminId }
-  })).rejects.toThrow();
-  await expect(db.projectMilestoneEvent.update({
-    where: { id: event.id }, data: { reason: "tampered" }
-  })).rejects.toThrow(/append-only/u);
+  await expect(
+    db.projectMilestoneTaskLink.create({
+      data: {
+        projectId,
+        milestoneId: milestone.id,
+        taskId: foreignTask.id,
+        status: "ACTIVE",
+        createdById: adminId
+      }
+    })
+  ).rejects.toThrow();
+  await expect(
+    db.projectMilestoneEvent.update({
+      where: { id: event.id },
+      data: { reason: "tampered" }
+    })
+  ).rejects.toThrow(/append-only/u);
   ```
 
 - [ ] **Step 2: Run the test to verify it cannot compile against the current Prisma client.**
@@ -197,6 +214,7 @@
 ## Task 3: Implement pure workday progress and milestone state rules
 
 **Files:**
+
 - Create: `src/modules/planning/domain/project-progress.ts`
 - Create: `src/modules/planning/domain/project-progress.test.ts`
 - Create: `src/modules/projects/domain/project-milestone.ts`
@@ -207,11 +225,16 @@
   Use this representative assertion:
 
   ```ts
-  expect(calculateProjectProgress([
-    { status: "COMPLETED", plannedDurationMinutes: 960, remainingDurationMinutes: 99 },
-    { status: "IN_PROGRESS", plannedDurationMinutes: 480, remainingDurationMinutes: 240 },
-    { status: "CLOSED", plannedDurationMinutes: 960, remainingDurationMinutes: 0 }
-  ], 480)).toEqual({
+  expect(
+    calculateProjectProgress(
+      [
+        { status: "COMPLETED", plannedDurationMinutes: 960, remainingDurationMinutes: 99 },
+        { status: "IN_PROGRESS", plannedDurationMinutes: 480, remainingDurationMinutes: 240 },
+        { status: "CLOSED", plannedDurationMinutes: 960, remainingDurationMinutes: 0 }
+      ],
+      480
+    )
+  ).toEqual({
     status: "READY",
     completedWorkdays: 2.5,
     totalWorkdays: 3,
@@ -225,14 +248,24 @@
   Cover manual achievement, void rejection, and the all-linked-task rule:
 
   ```ts
-  expect(shouldAutoAchieveMilestone({
-    status: "PENDING",
-    links: [{ status: "ACTIVE", taskStatus: "COMPLETED" }, { status: "ACTIVE", taskStatus: "COMPLETED" }]
-  })).toBe(true);
-  expect(shouldAutoAchieveMilestone({
-    status: "PENDING",
-    links: [{ status: "ACTIVE", taskStatus: "COMPLETED" }, { status: "ACTIVE", taskStatus: "IN_PROGRESS" }]
-  })).toBe(false);
+  expect(
+    shouldAutoAchieveMilestone({
+      status: "PENDING",
+      links: [
+        { status: "ACTIVE", taskStatus: "COMPLETED" },
+        { status: "ACTIVE", taskStatus: "COMPLETED" }
+      ]
+    })
+  ).toBe(true);
+  expect(
+    shouldAutoAchieveMilestone({
+      status: "PENDING",
+      links: [
+        { status: "ACTIVE", taskStatus: "COMPLETED" },
+        { status: "ACTIVE", taskStatus: "IN_PROGRESS" }
+      ]
+    })
+  ).toBe(false);
   ```
 
 - [ ] **Step 3: Run both tests and verify imports fail.**
@@ -262,6 +295,7 @@
 ## Task 4: Instantiate and manage project milestones transactionally
 
 **Files:**
+
 - Modify: `src/modules/projects/application/create-project.ts`
 - Create: `src/modules/projects/application/milestone-service.ts`
 - Modify: `src/modules/audit/domain/vocabulary.ts`
@@ -276,7 +310,11 @@
   `MANUAL`:
 
   ```ts
-  expect(result.milestone).toMatchObject({ code: "DESIGN.FREEZE", status: "ACHIEVED", achievementSource: "MANUAL" });
+  expect(result.milestone).toMatchObject({
+    code: "DESIGN.FREEZE",
+    status: "ACHIEVED",
+    achievementSource: "MANUAL"
+  });
   expect(result.event).toMatchObject({ sequence: 2, eventType: "ACHIEVED_MANUALLY" });
   ```
 
@@ -323,6 +361,7 @@
 ## Task 5: Reconcile milestones in the task-progress transaction
 
 **Files:**
+
 - Modify: `src/modules/planning/application/planning-service.ts`
 - Modify: `src/modules/projects/application/milestone-service.ts`
 - Modify: `src/modules/planning/infrastructure/planning.integration.test.ts`
@@ -369,6 +408,7 @@
 ## Task 6: Expose secure milestone and project execution APIs
 
 **Files:**
+
 - Modify: `src/modules/platform-api/contracts/internal-routes.ts`
 - Create: `src/modules/planning/application/project-execution-query.ts`
 - Create: `src/modules/planning/contracts/project-execution-http.ts`
@@ -418,6 +458,7 @@
 ## Task 7: Build the responsive read-only execution page
 
 **Files:**
+
 - Create: `src/modules/planning/contracts/execution-page-state.ts`
 - Create: `src/modules/planning/contracts/execution-page-state.test.ts`
 - Create: `src/app/projects/[projectId]/execution/page.tsx`
@@ -443,7 +484,12 @@
   ```ts
   type PopulatedExecutionState = {
     kind: "populated";
-    progress: { completedWorkdays: number; totalWorkdays: number; percent: number; calculatedAt: string };
+    progress: {
+      completedWorkdays: number;
+      totalWorkdays: number;
+      percent: number;
+      calculatedAt: string;
+    };
     exceptions: ExecutionException[];
     nextMilestone: ExecutionMilestone | null;
     criticalTasks: ExecutionTask[];
@@ -479,6 +525,7 @@
 ## Task 8: Perform browser acceptance and complete the work-package gate
 
 **Files:**
+
 - Modify after all gates pass: `D:/GPT Prj/自动化设备项目管理/规划/APM-开发进度跟踪.html`
 
 - [ ] **Step 1: Start the local application with deterministic development fixtures and inspect the desktop page.**
