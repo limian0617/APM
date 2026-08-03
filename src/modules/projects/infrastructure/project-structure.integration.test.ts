@@ -51,7 +51,19 @@ function context(
 function componentDefinition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
   switch (type) {
     case "STAGE":
-      return { stages: [{ code: "S0", name: "项目启动", sequence: 0 }] };
+      return {
+        stages: [
+          { code: "S0", name: "项目启动", sequence: 0 },
+          { code: "S1", name: "需求澄清", sequence: 1 },
+          { code: "S2", name: "详细设计", sequence: 2 },
+          { code: "S3", name: "采购制造", sequence: 3 },
+          { code: "S4", name: "装配调试", sequence: 4 },
+          { code: "S5", name: "系统联调", sequence: 5 },
+          { code: "S6", name: "FAT发运", sequence: 6 },
+          { code: "S7", name: "现场SAT", sequence: 7 },
+          { code: "S8", name: "结项移交", sequence: 8 }
+        ]
+      };
     case "GATE":
       return {
         gates: [
@@ -298,6 +310,14 @@ describeDatabase("APM-012 PostgreSQL project structure", () => {
     expect(replay.status).toBe(201);
     expect(replay.headers.get("idempotency-replayed")).toBe("true");
     expect(await replay.json()).toEqual(firstBody);
+    await expect(db.deliveryUnitStage.count({ where: { projectId: project.id } })).resolves.toBe(9);
+    await expect(
+      db.deliveryUnitStage.findMany({
+        where: { projectId: project.id, deliveryUnitId: firstBody.deliveryUnits[0]!.id },
+        include: { projectStage: true },
+        orderBy: { projectStage: { sequence: "asc" } }
+      })
+    ).resolves.toHaveLength(9);
     await expect(
       db.auditLog.count({
         where: { projectId: project.id, action: "PROJECT_STRUCTURE_INITIALIZED" }
@@ -479,6 +499,9 @@ describeDatabase("APM-012 PostgreSQL project structure", () => {
     await expect(db.deliveryUnit.count({ where: { projectId: rollbackProject.id } })).resolves.toBe(
       0
     );
+    await expect(
+      db.deliveryUnitStage.count({ where: { projectId: rollbackProject.id } })
+    ).resolves.toBe(0);
     await expect(
       db.auditLog.count({
         where: { projectId: rollbackProject.id, action: "PROJECT_STRUCTURE_INITIALIZED" }

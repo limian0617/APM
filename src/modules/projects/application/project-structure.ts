@@ -178,6 +178,31 @@ export async function initializeProjectStructure(
         );
       }
 
+      const projectStages = await client.projectStage.findMany({
+        where: { projectId: input.projectId },
+        orderBy: { sequence: "asc" }
+      });
+      if (deliveryUnits.length > 0 && projectStages.length === 0) {
+        throw new ProjectStructureError(
+          "PROJECT_STAGES_NOT_READY",
+          "项目阶段尚未从模板快照初始化。",
+          409
+        );
+      }
+      if (deliveryUnits.length > 0) {
+        await client.deliveryUnitStage.createMany({
+          data: deliveryUnits.flatMap((deliveryUnit) =>
+            projectStages.map((projectStage) => ({
+              projectId: input.projectId,
+              deliveryUnitId: deliveryUnit.id,
+              projectStageId: projectStage.id,
+              createdById: input.actorId,
+              updatedById: input.actorId
+            }))
+          )
+        });
+      }
+
       const project = await client.project.findUniqueOrThrow({ where: { id: input.projectId } });
       const auditContext = {
         ...input.auditContext,

@@ -10,6 +10,7 @@ import {
 
 import {
   buildProjectTemplateSnapshot,
+  extractProjectStageDefinitions,
   ProjectCreationError,
   type SourceSnapshotComponent,
   validateProjectIdentity
@@ -104,6 +105,47 @@ function sourceInput() {
 }
 
 describe("APM-011 project template snapshot", () => {
+  it("extracts normalized stage definitions from the exact snapshot component", () => {
+    expect(
+      extractProjectStageDefinitions({
+        id: "snapshot-stage-component",
+        componentType: "STAGE",
+        contentJson: {
+          stages: [
+            { code: " S1 ", name: " 方案冻结 ", description: " 需求已确认 ", sequence: 1 },
+            { code: "S0", name: "项目启动", sequence: 0 }
+          ]
+        }
+      })
+    ).toEqual([
+      {
+        sourceSnapshotComponentId: "snapshot-stage-component",
+        code: "S0",
+        name: "项目启动",
+        sequence: 0
+      },
+      {
+        sourceSnapshotComponentId: "snapshot-stage-component",
+        code: "S1",
+        name: "方案冻结",
+        description: "需求已确认",
+        sequence: 1
+      }
+    ]);
+  });
+
+  it("does not create project stages when the snapshot has no stage component", () => {
+    expect(
+      extractProjectStageDefinitions({
+        id: "snapshot-gate-component",
+        componentType: "GATE",
+        contentJson: {
+          gates: [{ code: "G1", name: "基线", stageCode: "S0", requiredCheckerCodes: ["X"] }]
+        }
+      })
+    ).toEqual([]);
+  });
+
   it("builds a deterministic project-owned snapshot", () => {
     const input = sourceInput();
     const first = buildProjectTemplateSnapshot(input);

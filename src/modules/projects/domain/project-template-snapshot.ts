@@ -3,7 +3,8 @@ import {
   componentChecksum,
   templateChecksum,
   type TemplateComponentContent,
-  type TemplateComponentTypeCode
+  type TemplateComponentTypeCode,
+  validateTemplateComponentContent
 } from "@/modules/configuration/domain/template-policy";
 
 export class ProjectCreationError extends Error {
@@ -40,6 +41,32 @@ export type ProjectTemplateSnapshotData = {
   templatePublishedAt: Date;
   components: SourceSnapshotComponent[];
 };
+
+export type ProjectStageDefinition = {
+  sourceSnapshotComponentId: string;
+  code: string;
+  name: string;
+  description?: string;
+  sequence: number;
+};
+
+export function extractProjectStageDefinitions(input: {
+  id: string;
+  componentType: string;
+  contentJson: unknown;
+}): ProjectStageDefinition[] {
+  if (input.componentType !== "STAGE") return [];
+  const content = validateTemplateComponentContent("STAGE", input.contentJson) as {
+    stages: Array<{ code: string; name: string; description?: string; sequence: number }>;
+  };
+  return content.stages.map((stage) => ({
+    sourceSnapshotComponentId: input.id,
+    code: stage.code,
+    name: stage.name,
+    ...(stage.description === undefined ? {} : { description: stage.description }),
+    sequence: stage.sequence
+  }));
+}
 
 export function validateProjectIdentity(input: {
   code: unknown;
