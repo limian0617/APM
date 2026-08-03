@@ -446,7 +446,9 @@ async function assertDependencyTasks(
 }
 
 async function lockDependencyGraph(client: Prisma.TransactionClient, projectId: string) {
-  await client.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0))`;
+  await client.$queryRaw<Array<{ locked: boolean }>>`
+    SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0)) IS NULL AS "locked"
+  `;
 }
 
 export async function listTaskDependencies(input: {

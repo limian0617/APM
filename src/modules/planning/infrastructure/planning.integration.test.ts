@@ -535,7 +535,7 @@ describeDatabase("APM-020 PostgreSQL WBS and planning tasks", () => {
     const tables = await db.$queryRaw<Array<{ table_name: string }>>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_name IN (
-        'task_dependencies', 'planning_baselines', 'critical_paths', 'project_progress_projections'
+        'planning_baselines', 'critical_paths', 'project_progress_projections'
       )
     `;
     expect(tables).toEqual([]);
@@ -586,7 +586,7 @@ describeDatabase("APM-020 PostgreSQL WBS and planning tasks", () => {
       /closed instead of removed/u
     );
     await expect(
-      db.$executeRawUnsafe('TRUNCATE TABLE "planning_tasks", "wbs_nodes"')
+      db.$executeRawUnsafe('TRUNCATE TABLE "planning_tasks", "wbs_nodes", "task_dependencies"')
     ).rejects.toThrow(/closed instead of removed/u);
 
     await expect(
