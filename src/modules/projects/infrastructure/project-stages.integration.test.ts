@@ -21,6 +21,7 @@ async function seedStageFacts(label: string) {
       code: `P30.${label}.${suffix}`.toUpperCase(),
       name: `${label} stage persistence project`,
       departmentId: "engineering",
+      initializationStatus: "READY",
       projectType: "CUSTOMER_DELIVERY",
       equipmentShape: "SINGLE_MACHINE",
       structureStatus: "READY",
@@ -61,7 +62,6 @@ async function seedStageFacts(label: string) {
   await db.project.update({
     where: { id: project.id },
     data: {
-      initializationStatus: "READY",
       status: "IN_PROGRESS",
       mainControlStageId: firstStage.id,
       mainControlStageProjectId: project.id,
