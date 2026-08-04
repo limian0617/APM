@@ -91,19 +91,57 @@ const stageContentSchema = z
       sequences.add(stage.sequence);
     }
   });
-const gateContentSchema = z.strictObject({
-  gates: z
-    .array(
-      z.strictObject({
-        code: stableCodeSchema,
-        name: templateNameSchema,
-        stageCode: stableCodeSchema,
-        requiredCheckerCodes: z.array(stableCodeSchema).min(1).max(100)
-      })
-    )
-    .min(1)
-    .max(100)
+const gateCheckerBindingSchema = z.strictObject({
+  code: stableCodeSchema,
+  version: z.number().int().positive().refine(Number.isSafeInteger)
 });
+const legacyGateDefinitionSchema = z.strictObject({
+  code: stableCodeSchema,
+  name: templateNameSchema,
+  stageCode: stableCodeSchema,
+  requiredCheckerCodes: z.array(stableCodeSchema).min(1).max(100)
+});
+const explicitGateDefinitionSchema = z.strictObject({
+  code: stableCodeSchema,
+  name: templateNameSchema,
+  stageCode: stableCodeSchema,
+  scope: z.enum(["PROJECT", "DELIVERY_UNIT", "MODULE"]).optional(),
+  checkers: z.array(gateCheckerBindingSchema).min(1).max(100)
+});
+const gateContentSchema = z
+  .strictObject({
+    gates: z
+      .array(z.union([legacyGateDefinitionSchema, explicitGateDefinitionSchema]))
+      .min(1)
+      .max(100)
+  })
+  .superRefine(({ gates }, context) => {
+    const gateCodes = new Set<string>();
+    for (const [gateIndex, gate] of gates.entries()) {
+      if (gateCodes.has(gate.code)) {
+        context.addIssue({
+          code: "custom",
+          message: "Gate 代码不能重复。",
+          path: ["gates", gateIndex, "code"]
+        });
+      }
+      gateCodes.add(gate.code);
+      if (!("checkers" in gate)) continue;
+
+      const checkerBindings = new Set<string>();
+      for (const [checkerIndex, checker] of gate.checkers.entries()) {
+        const bindingKey = `${checker.code}@${checker.version}`;
+        if (checkerBindings.has(bindingKey)) {
+          context.addIssue({
+            code: "custom",
+            message: "Gate 检查器绑定不能重复。",
+            path: ["gates", gateIndex, "checkers", checkerIndex]
+          });
+        }
+        checkerBindings.add(bindingKey);
+      }
+    }
+  });
 const roleContentSchema = z.strictObject({
   roles: z
     .array(
@@ -573,6 +611,37 @@ export const createStageReleaseBodySchema = z
     }
   });
 export const revokeStageReleaseBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const gateInstancePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  instanceId: identifierSchema
+});
+export const createGateInstanceBodySchema = z
+  .strictObject({
+    definitionId: identifierSchema,
+    scope: z.enum(["DELIVERY_UNIT", "MODULE"]),
+    deliveryUnitId: identifierSchema,
+    moduleId: identifierSchema.optional()
+  })
+  .superRefine((value, context) => {
+    if (value.scope === "DELIVERY_UNIT" && value.moduleId !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["moduleId"],
+        message: "交付单元范围不能指定模块。"
+      });
+    }
+    if (value.scope === "MODULE" && value.moduleId === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["moduleId"],
+        message: "模块范围必须指定模块。"
+      });
+    }
+  });
+export const runGateChecksBodySchema = z.strictObject({
   version: positiveVersionSchema,
   reason: reasonSchema
 });

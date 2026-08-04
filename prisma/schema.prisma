@@ -700,6 +700,18 @@ enum ProjectStageEventType {
   SKIPPED
 }
 
+enum GateScope {
+  PROJECT
+  DELIVERY_UNIT
+  MODULE
+}
+
+enum GateCheckStatus {
+  PASSED
+  WARNING
+  HARD_FAILED
+}
+
 enum StageReleaseAuthorizationScope {
   PROJECT
   DELIVERY_UNIT
@@ -817,6 +829,9 @@ enum AuditAction {
   DELIVERY_UNIT_STAGE_UPDATED
   STAGE_RELEASE_AUTHORIZED
   STAGE_RELEASE_REVOKED
+  GATE_DEFINITION_MATERIALIZED
+  GATE_INSTANCE_CREATED
+  GATE_CHECK_RUN_COMPLETED
 }
 
 enum AuditObjectType {
@@ -847,6 +862,9 @@ enum AuditObjectType {
   PROJECT_STAGE
   DELIVERY_UNIT_STAGE
   STAGE_RELEASE_AUTHORIZATION
+  PROJECT_GATE_DEFINITION
+  PROJECT_GATE_INSTANCE
+  GATE_CHECK_SNAPSHOT
 }
 
 enum AuditSource {
@@ -1029,6 +1047,10 @@ model Project {
   deliveryUnitStages            DeliveryUnitStage[]
   stageReleaseAuthorizations    StageReleaseAuthorization[]
   projectStageEvents            ProjectStageEvent[]
+  gateDefinitions               ProjectGateDefinition[]
+  gateInstances                 ProjectGateInstance[]
+  gateCheckSnapshots            GateCheckSnapshot[]
+  gateCheckResults              GateCheckResult[]
   wbsNodes                      WbsNode[]
   planningTasks                 PlanningTask[]
   planningCalendar              ProjectCalendar?
@@ -1084,6 +1106,7 @@ model ProjectTemplateSnapshotComponent {
   projectCapabilities      ProjectCapability[]
   projectMilestones        ProjectMilestone[]       @relation("ProjectMilestoneSourceSnapshotComponent")
   projectStages            ProjectStage[]           @relation("ProjectStageSourceSnapshotComponent")
+  gateDefinitions          ProjectGateDefinition[]
 
   @@unique([snapshotId, slot])
   @@unique([snapshotId, position])
@@ -1113,6 +1136,7 @@ model DeliveryUnit {
   planningTasks          PlanningTask[]
   stageExecutions        DeliveryUnitStage[]
   stageReleaseAuthorizations StageReleaseAuthorization[] @relation("DeliveryUnitStageReleaseAuthorizations")
+  gateInstances            ProjectGateInstance[]
   createdBy              User                       @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy              User                       @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
@@ -1143,6 +1167,7 @@ model ProjectModule {
   updatedBy              User                       @relation("ProjectModuleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   responsibilityPackages ResponsibilityPackage[]
   planningTasks          PlanningTask[]
+  gateInstances          ProjectGateInstance[]
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -1365,6 +1390,8 @@ model ProjectStage {
   releaseAuthorizationsFrom StageReleaseAuthorization[]   @relation("StageReleaseAuthorizationFromStage")
   releaseAuthorizationsTo  StageReleaseAuthorization[]    @relation("StageReleaseAuthorizationToStage")
   events                   ProjectStageEvent[]
+  gateDefinitions          ProjectGateDefinition[]
+  gateInstances            ProjectGateInstance[]
   createdBy                User                           @relation("ProjectStageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy                User                           @relation("ProjectStageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
@@ -1453,6 +1480,105 @@ model ProjectStageEvent {
   @@index([projectId, createdAt])
   @@index([actorId, createdAt])
   @@map("project_stage_events")
+}
+
+model ProjectGateDefinition {
+  id                        String                           @id @default(cuid())
+  projectId                 String                           @map("project_id")
+  sourceSnapshotComponentId String                           @map("source_snapshot_component_id")
+  projectStageId            String                           @map("project_stage_id")
+  code                      String
+  name                      String
+  scope                     GateScope
+  definitionJson            Json                             @map("definition_json")
+  checkerBindingsJson       Json                             @map("checker_bindings_json")
+  definitionChecksum        String                           @map("definition_checksum")
+  materializedById          String                           @map("materialized_by_id")
+  materializedAt            DateTime                         @default(now()) @map("materialized_at")
+  project                   Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceSnapshotComponent   ProjectTemplateSnapshotComponent @relation(fields: [sourceSnapshotComponentId], references: [id], onDelete: Restrict)
+  projectStage              ProjectStage                     @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  instances                 ProjectGateInstance[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@index([projectId, projectStageId])
+  @@index([sourceSnapshotComponentId])
+  @@map("project_gate_definitions")
+}
+
+model ProjectGateInstance {
+  id               String                @id @default(cuid())
+  projectId        String                @map("project_id")
+  gateDefinitionId String                @map("gate_definition_id")
+  projectStageId   String                @map("project_stage_id")
+  scope            GateScope
+  deliveryUnitId   String?               @map("delivery_unit_id")
+  moduleId         String?               @map("module_id")
+  checkRunSequence Int                   @default(0) @map("check_run_sequence")
+  version          Int                   @default(1)
+  createdById      String                @map("created_by_id")
+  updatedById      String                @map("updated_by_id")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+  project          Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateDefinition   ProjectGateDefinition @relation(fields: [gateDefinitionId, projectId], references: [id, projectId], onDelete: Restrict)
+  projectStage     ProjectStage          @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit     DeliveryUnit?         @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module           ProjectModule?        @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  checkSnapshots   GateCheckSnapshot[]
+
+  @@unique([id, projectId])
+  @@index([projectId, projectStageId, scope])
+  @@index([gateDefinitionId])
+  @@index([deliveryUnitId])
+  @@index([moduleId])
+  @@map("project_gate_instances")
+}
+
+model GateCheckSnapshot {
+  id                  String               @id @default(cuid())
+  projectId           String               @map("project_id")
+  gateInstanceId      String               @map("gate_instance_id")
+  sequence            Int
+  status              GateCheckStatus
+  definitionSnapshot  Json                 @map("definition_snapshot")
+  scopeSnapshot       Json                 @map("scope_snapshot")
+  checkerBindingsJson Json                 @map("checker_bindings_json")
+  reason              String
+  inputChecksum       String               @map("input_checksum")
+  resultChecksum      String               @map("result_checksum")
+  checkedById         String               @map("checked_by_id")
+  checkedAt           DateTime             @default(now()) @map("checked_at")
+  project             Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateInstance        ProjectGateInstance  @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
+  results             GateCheckResult[]
+
+  @@unique([id, projectId])
+  @@unique([gateInstanceId, sequence])
+  @@index([projectId, checkedAt])
+  @@map("gate_check_snapshots")
+}
+
+model GateCheckResult {
+  id                  String            @id @default(cuid())
+  projectId           String            @map("project_id")
+  gateCheckSnapshotId String            @map("gate_check_snapshot_id")
+  position            Int
+  checkerCode         String            @map("checker_code")
+  checkerVersion      Int               @map("checker_version")
+  status              GateCheckStatus
+  failureCode         String?           @map("failure_code")
+  message             String
+  evidenceJson        Json              @map("evidence_json")
+  evidenceChecksum    String            @map("evidence_checksum")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  project             Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateCheckSnapshot   GateCheckSnapshot @relation(fields: [gateCheckSnapshotId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([gateCheckSnapshotId, position])
+  @@index([projectId, checkerCode, createdAt])
+  @@map("gate_check_results")
 }
 
 model WbsNode {

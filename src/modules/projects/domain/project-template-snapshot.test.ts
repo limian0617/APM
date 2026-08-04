@@ -162,6 +162,12 @@ describe("APM-011 project template snapshot", () => {
       "WBS.0",
       "MILESTONE.0"
     ]);
+    const sourceGate = input.components.find(({ componentType }) => componentType === "GATE");
+    const snapshotGate = first.components.find(({ componentType }) => componentType === "GATE");
+    expect(snapshotGate).toMatchObject({
+      content: sourceGate?.content,
+      sourceChecksum: sourceGate?.sourceChecksum
+    });
     expect(
       first.components.find(({ componentType }) => componentType === "MILESTONE")
     ).toMatchObject({

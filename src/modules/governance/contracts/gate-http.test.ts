@@ -1,0 +1,80 @@
+import { describe, expect, it } from "vitest";
+
+import { GateServiceError } from "../application/gate-service";
+
+import {
+  gateServiceErrorResponse,
+  parseGateCheckPayload,
+  parseGateInstancePayload
+} from "./gate-http";
+
+describe("APM-031 Gate HTTP contracts", () => {
+  it("accepts only explicit non-project scope targets", () => {
+    expect(
+      parseGateInstancePayload({
+        definitionId: "definition-1",
+        scope: "DELIVERY_UNIT",
+        deliveryUnitId: "unit-1"
+      })
+    ).toEqual({
+      definitionId: "definition-1",
+      scope: "DELIVERY_UNIT",
+      deliveryUnitId: "unit-1"
+    });
+    expect(
+      parseGateInstancePayload({
+        definitionId: "definition-1",
+        scope: "MODULE",
+        deliveryUnitId: "unit-1",
+        moduleId: "module-1"
+      })
+    ).toMatchObject({ scope: "MODULE", moduleId: "module-1" });
+  });
+
+  it("rejects invalid scope targets and unknown instance properties", () => {
+    expect(() =>
+      parseGateInstancePayload({ definitionId: "definition-1", scope: "PROJECT" })
+    ).toThrow(expect.objectContaining({ code: "VALIDATION_FAILED", status: 422 }));
+    expect(() =>
+      parseGateInstancePayload({
+        definitionId: "definition-1",
+        scope: "DELIVERY_UNIT",
+        deliveryUnitId: "unit-1",
+        moduleId: "module-1"
+      })
+    ).toThrow(expect.objectContaining({ code: "VALIDATION_FAILED", status: 422 }));
+    expect(() =>
+      parseGateInstancePayload({
+        definitionId: "definition-1",
+        scope: "MODULE",
+        deliveryUnitId: "unit-1",
+        moduleId: "module-1",
+        extra: true
+      })
+    ).toThrow(expect.objectContaining({ code: "VALIDATION_FAILED", status: 422 }));
+  });
+
+  it("requires a positive optimistic version and an execution reason", () => {
+    expect(parseGateCheckPayload({ version: 1, reason: "Run the Gate checks" })).toEqual({
+      version: 1,
+      reason: "Run the Gate checks"
+    });
+    expect(() => parseGateCheckPayload({ version: 0, reason: "Run the Gate checks" })).toThrow(
+      expect.objectContaining({ code: "VALIDATION_FAILED", status: 422 })
+    );
+    expect(() => parseGateCheckPayload({ version: 1, reason: "", unexpected: true })).toThrow(
+      expect.objectContaining({ code: "VALIDATION_FAILED", status: 422 })
+    );
+  });
+
+  it("maps typed Gate service failures without leaking implementation details", async () => {
+    const response = gateServiceErrorResponse(
+      new GateServiceError("GATE_INSTANCE_NOT_FOUND", "内部实例信息", 404)
+    );
+
+    expect(response?.status).toBe(404);
+    await expect(response?.json()).resolves.toMatchObject({
+      error: { code: "GATE_INSTANCE_NOT_FOUND", message: "内部实例信息" }
+    });
+  });
+});

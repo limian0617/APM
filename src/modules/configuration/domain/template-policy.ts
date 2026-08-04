@@ -28,6 +28,25 @@ export const REQUIRED_TEMPLATE_COMPONENT_TYPES = [
   TEMPLATE_COMPONENT_TYPES.WBS
 ] as const;
 
+export const GATE_SCOPES = ["PROJECT", "DELIVERY_UNIT", "MODULE"] as const;
+
+export type GateScope = (typeof GATE_SCOPES)[number];
+
+export type GateCheckerBinding = {
+  code: string;
+  version: number;
+};
+
+export type GateDefinitionRule = {
+  code: string;
+  name: string;
+  stageCode: string;
+  scope: GateScope;
+  definitionJson: JsonValue;
+  checkerBindings: GateCheckerBinding[];
+  bindingFormat: "LEGACY" | "EXPLICIT";
+};
+
 export class TemplateValidationError extends Error {
   constructor(
     readonly code: string,
@@ -94,6 +113,105 @@ function trimmedText(value: unknown, field: string, minLength: number, maxLength
   return normalized;
 }
 
+function gateName(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > 200) {
+    throw new TemplateValidationError(
+      "INVALID_COMPONENT_RULES",
+      "Gate 名称必须是 1 到 200 个字符。"
+    );
+  }
+  return value;
+}
+
+function checkerBindings(value: unknown, field: string): GateCheckerBinding[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new TemplateValidationError(
+      "INCOMPLETE_COMPONENT_RULES",
+      "Gate 必须配置至少一个检查器。"
+    );
+  }
+  const bindings = value.map((item) => {
+    const binding = record(item);
+    rejectUnknownKeys(binding, ["code", "version"], field);
+    const code = stableCode(binding.code, `${field}.code`);
+    const version = binding.version;
+    if (!Number.isSafeInteger(version) || (version as number) <= 0) {
+      throw new TemplateValidationError(
+        "INVALID_COMPONENT_RULES",
+        `${field}.version 必须是正安全整数。`
+      );
+    }
+    return { code, version: version as number };
+  });
+  const keys = bindings.map(({ code, version }) => `${code}@${version}`);
+  if (new Set(keys).size !== keys.length) {
+    throw new TemplateValidationError("DUPLICATE_RULE_CODE", "Gate 包含重复检查器绑定。");
+  }
+  return bindings;
+}
+
+function legacyCheckerBindings(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new TemplateValidationError(
+      "INCOMPLETE_COMPONENT_RULES",
+      "Gate 必须配置至少一个检查器。"
+    );
+  }
+  const codes = value.map((code) => stableCode(code, "gates.requiredCheckerCodes"));
+  if (new Set(codes).size !== codes.length) {
+    throw new TemplateValidationError("DUPLICATE_RULE_CODE", "Gate 包含重复检查器代码。");
+  }
+  return codes;
+}
+
+function validateGateRules(content: Record<string, unknown>) {
+  rejectUnknownKeys(content, ["gates"], "Gate 组件");
+  const items = array(content.gates, "gates");
+  if (items.length > 100) {
+    throw new TemplateValidationError("INVALID_COMPONENT_RULES", "Gate 最多包含 100 项。");
+  }
+  uniqueCodes(items, "gates");
+  for (const item of items) {
+    rejectUnknownKeys(
+      item,
+      ["code", "name", "stageCode", "scope", "requiredCheckerCodes", "checkers"],
+      "Gate"
+    );
+    stableCode(item.code, "gates.code");
+    gateName(item.name);
+    stableCode(item.stageCode, "gates.stageCode");
+
+    const hasLegacyBindings = Object.hasOwn(item, "requiredCheckerCodes");
+    const hasExplicitBindings = Object.hasOwn(item, "checkers");
+    if (hasLegacyBindings && hasExplicitBindings) {
+      throw new TemplateValidationError(
+        "INVALID_COMPONENT_RULES",
+        "Gate 不能同时配置旧检查器代码和版本化检查器绑定。"
+      );
+    }
+    if (!hasLegacyBindings && !hasExplicitBindings) {
+      throw new TemplateValidationError(
+        "INCOMPLETE_COMPONENT_RULES",
+        "Gate 必须配置至少一个检查器。"
+      );
+    }
+    if (hasLegacyBindings) {
+      rejectUnknownKeys(item, ["code", "name", "stageCode", "requiredCheckerCodes"], "Gate");
+      legacyCheckerBindings(item.requiredCheckerCodes);
+      continue;
+    }
+
+    rejectUnknownKeys(item, ["code", "name", "stageCode", "scope", "checkers"], "Gate");
+    if (
+      item.scope !== undefined &&
+      (typeof item.scope !== "string" || !GATE_SCOPES.includes(item.scope as GateScope))
+    ) {
+      throw new TemplateValidationError("INVALID_COMPONENT_RULES", "Gate 范围无效。");
+    }
+    checkerBindings(item.checkers, "gates.checkers");
+  }
+}
+
 export function validateTemplateComponentContent(
   componentType: TemplateComponentTypeCode,
   value: unknown
@@ -153,18 +271,7 @@ export function validateTemplateComponentContent(
       }).value as TemplateComponentContent;
     }
     case TEMPLATE_COMPONENT_TYPES.GATE: {
-      const items = array(content.gates, "gates");
-      uniqueCodes(items, "gates");
-      for (const item of items) {
-        stableCode(item.stageCode, "gates.stageCode");
-        if (!Array.isArray(item.requiredCheckerCodes) || item.requiredCheckerCodes.length === 0) {
-          throw new TemplateValidationError(
-            "INCOMPLETE_COMPONENT_RULES",
-            "Gate 必须配置至少一个检查器。"
-          );
-        }
-        item.requiredCheckerCodes.forEach((code) => stableCode(code, "gates.requiredCheckerCodes"));
-      }
+      validateGateRules(content);
       break;
     }
     case TEMPLATE_COMPONENT_TYPES.ROLE: {
@@ -240,6 +347,44 @@ export function validateTemplateComponentContent(
   return payloadHash(content).value as TemplateComponentContent;
 }
 
+export function parseGateDefinitionRules(value: unknown): GateDefinitionRule[] {
+  const validated = validateTemplateComponentContent(
+    TEMPLATE_COMPONENT_TYPES.GATE,
+    value
+  ) as unknown as {
+    gates: Array<{
+      code: string;
+      name: string;
+      stageCode: string;
+      scope?: GateScope;
+      requiredCheckerCodes?: string[];
+      checkers?: GateCheckerBinding[];
+    }>;
+  };
+  return validated.gates.map((gate) => {
+    if (gate.requiredCheckerCodes !== undefined) {
+      return {
+        code: gate.code,
+        name: gate.name,
+        stageCode: gate.stageCode,
+        scope: "PROJECT",
+        definitionJson: gate as JsonValue,
+        checkerBindings: gate.requiredCheckerCodes.map((code) => ({ code, version: 1 })),
+        bindingFormat: "LEGACY"
+      };
+    }
+    return {
+      code: gate.code,
+      name: gate.name,
+      stageCode: gate.stageCode,
+      scope: gate.scope ?? "PROJECT",
+      definitionJson: gate as JsonValue,
+      checkerBindings: gate.checkers ?? [],
+      bindingFormat: "EXPLICIT"
+    };
+  });
+}
+
 export function validateTemplateMilestoneCodesUnique(
   components: ReadonlyArray<{ componentType: TemplateComponentTypeCode; content: unknown }>
 ) {
@@ -252,6 +397,21 @@ export function validateTemplateMilestoneCodesUnique(
   });
   if (new Set(codes).size !== codes.length) {
     throw new TemplateValidationError("DUPLICATE_RULE_CODE", "模板包含重复里程碑代码。");
+  }
+}
+
+export function validateTemplateGateCodesUnique(
+  components: ReadonlyArray<{ componentType: TemplateComponentTypeCode; content: unknown }>
+) {
+  const codes = components.flatMap(({ componentType, content }) => {
+    if (componentType !== TEMPLATE_COMPONENT_TYPES.GATE) return [];
+    const validated = validateTemplateComponentContent(componentType, content) as {
+      gates: Array<{ code: string }>;
+    };
+    return validated.gates.map(({ code }) => code);
+  });
+  if (new Set(codes).size !== codes.length) {
+    throw new TemplateValidationError("DUPLICATE_RULE_CODE", "模板包含重复 Gate 代码。");
   }
 }
 
