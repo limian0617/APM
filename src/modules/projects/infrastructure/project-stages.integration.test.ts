@@ -21,6 +21,9 @@ async function seedStageFacts(label: string) {
       code: `P30.${label}.${suffix}`.toUpperCase(),
       name: `${label} stage persistence project`,
       departmentId: "engineering",
+      projectType: "CUSTOMER_DELIVERY",
+      equipmentShape: "SINGLE_MACHINE",
+      structureStatus: "READY",
       createdById: ids.admin
     }
   });
