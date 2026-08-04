@@ -378,7 +378,7 @@ export async function createProjectIssue(
         rootCauseDescription: value.rootCauseDescription,
         createdById: input.actorId,
         updatedById: input.actorId,
-        tags: { create: value.tags.map((tag) => ({ projectId, tag })) }
+        tags: { create: value.tags.map((tag) => ({ tag })) }
       },
       include: issueInclude
     });
