@@ -8,6 +8,7 @@ import {
   TEMPLATE_COMPONENT_TYPES,
   templateChecksum,
   TemplateValidationError,
+  parseGateDefinitionRules,
   validateTemplateComponentContent,
   validateTemplateMilestoneCodesUnique,
   validateTemplateReferences,
@@ -170,6 +171,153 @@ describe("APM-010 template policy", () => {
         gates: [{ code: "G1", name: "基线", stageCode: "S0", requiredCheckerCodes: [] }]
       })
     ).toThrow(/至少一个检查器/u);
+  });
+
+  it("preserves legacy Gate JSON while exposing project-scoped v1 bindings for materialization", () => {
+    const legacyContent = {
+      gates: [
+        {
+          code: "G1",
+          name: "执行基线批准",
+          stageCode: "S0",
+          requiredCheckerCodes: ["DOCUMENTS.COMPLETE"]
+        }
+      ]
+    };
+
+    const validated = validateTemplateComponentContent("GATE", legacyContent);
+
+    expect(validated).toEqual(legacyContent);
+    expect(validated).not.toHaveProperty("gates.0.scope");
+    expect(
+      componentChecksum({
+        componentType: "GATE",
+        name: "Gate",
+        description: null,
+        content: validated
+      })
+    ).toBe(
+      componentChecksum({
+        componentType: "GATE",
+        name: "Gate",
+        description: null,
+        content: legacyContent
+      })
+    );
+    expect(parseGateDefinitionRules(validated)).toEqual([
+      {
+        code: "G1",
+        name: "执行基线批准",
+        stageCode: "S0",
+        scope: "PROJECT",
+        checkerBindings: [{ code: "DOCUMENTS.COMPLETE", version: 1 }],
+        bindingFormat: "LEGACY"
+      }
+    ]);
+  });
+
+  it("accepts explicit Gate scopes and versioned checker bindings", () => {
+    const content = {
+      gates: [
+        {
+          code: "G2",
+          name: "模块交付确认",
+          stageCode: "S4",
+          scope: "MODULE",
+          checkers: [
+            { code: "STAGE.AWAITING_GATE", version: 1 },
+            { code: "DOCUMENTS.COMPLETE", version: 2 }
+          ]
+        }
+      ]
+    };
+
+    expect(validateTemplateComponentContent("GATE", content)).toEqual(content);
+    expect(parseGateDefinitionRules(content)).toEqual([
+      {
+        code: "G2",
+        name: "模块交付确认",
+        stageCode: "S4",
+        scope: "MODULE",
+        checkerBindings: [
+          { code: "STAGE.AWAITING_GATE", version: 1 },
+          { code: "DOCUMENTS.COMPLETE", version: 2 }
+        ],
+        bindingFormat: "EXPLICIT"
+      }
+    ]);
+  });
+
+  it("rejects invalid, duplicate, and mixed Gate checker forms", () => {
+    const invalidContents = [
+      {
+        gates: [
+          {
+            code: "G1",
+            name: "基线",
+            stageCode: "S0",
+            requiredCheckerCodes: ["DOCUMENTS.COMPLETE"]
+          },
+          {
+            code: "G1",
+            name: "重复",
+            stageCode: "S1",
+            requiredCheckerCodes: ["DOCUMENTS.COMPLETE"]
+          }
+        ]
+      },
+      {
+        gates: [
+          {
+            code: "G1",
+            name: "基线",
+            stageCode: "S0",
+            checkers: [
+              { code: "DOCUMENTS.COMPLETE", version: 1 },
+              { code: "DOCUMENTS.COMPLETE", version: 1 }
+            ]
+          }
+        ]
+      },
+      {
+        gates: [
+          {
+            code: "G1",
+            name: "基线",
+            stageCode: "S0",
+            scope: "LINE",
+            checkers: [{ code: "DOCUMENTS.COMPLETE", version: 1 }]
+          }
+        ]
+      },
+      {
+        gates: [
+          {
+            code: "G1",
+            name: "基线",
+            stageCode: "S0",
+            checkers: [{ code: "DOCUMENTS.COMPLETE", version: 0 }]
+          }
+        ]
+      },
+      {
+        gates: [
+          {
+            code: "G1",
+            name: "基线",
+            stageCode: "S0",
+            requiredCheckerCodes: ["DOCUMENTS.COMPLETE"],
+            checkers: [{ code: "DOCUMENTS.COMPLETE", version: 1 }]
+          }
+        ]
+      }
+    ];
+
+    for (const content of invalidContents) {
+      expect(() => validateTemplateComponentContent("GATE", content)).toThrowError(
+        TemplateValidationError
+      );
+    }
   });
 
   it("validates a canonical milestone component payload", () => {
