@@ -50,6 +50,18 @@ export function buildProjectGateMaterialization(input: {
     );
 }
 
+export function buildGateDefinitionMaterializedOutboxPayload(input: {
+  projectId: string;
+  gateDefinitionId: string;
+  gateInstanceId?: string;
+}) {
+  return {
+    projectId: input.projectId,
+    gateDefinitionId: input.gateDefinitionId,
+    ...(input.gateInstanceId === undefined ? {} : { gateInstanceId: input.gateInstanceId })
+  };
+}
+
 export async function instantiateProjectGateDefinitions(
   client: Prisma.TransactionClient,
   input: {
@@ -118,11 +130,11 @@ export async function instantiateProjectGateDefinitions(
       aggregateType: "PROJECT_GATE_DEFINITION",
       aggregateId: definition.id,
       idempotencyKey: definition.id,
-      payload: {
+      payload: buildGateDefinitionMaterializedOutboxPayload({
         projectId: input.projectId,
         gateDefinitionId: definition.id,
         gateInstanceId: instanceId
-      }
+      })
     });
     created.push({ definitionId: definition.id, ...(instanceId ? { instanceId } : {}) });
   }
