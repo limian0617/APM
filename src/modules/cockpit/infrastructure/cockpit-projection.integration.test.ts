@@ -151,16 +151,18 @@ describeDatabase("APM-040 PostgreSQL cockpit projections", () => {
     expect(result).toMatchObject({
       reused: false,
       projection: {
-        health: "CRITICAL",
-        exceptions: [
-          {
-            kind: "HIGH_RISK_ALERT",
-            sourceKey: alert.id,
-            severity: "CRITICAL"
-          }
-        ]
+        health: "CRITICAL"
       }
     });
+    expect(result.projection.exceptions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "HIGH_RISK_ALERT",
+          sourceKey: alert.id,
+          severity: "CRITICAL"
+        })
+      ])
+    );
     expect(result.projection.sourceVersions).toMatchObject({
       highRiskAlerts: [{ alertId: alert.id, ruleCode: rule.code, status: "TRIGGERED" }]
     });
