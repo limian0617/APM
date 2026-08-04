@@ -91,26 +91,20 @@ const stageContentSchema = z
       sequences.add(stage.sequence);
     }
   });
-const gateStableCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_.-]{1,99}$/u);
-const gateNameSchema = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine((value) => value.trim().length > 0);
 const gateCheckerBindingSchema = z.strictObject({
-  code: gateStableCodeSchema,
+  code: stableCodeSchema,
   version: z.number().int().positive().refine(Number.isSafeInteger)
 });
 const legacyGateDefinitionSchema = z.strictObject({
-  code: gateStableCodeSchema,
-  name: gateNameSchema,
-  stageCode: gateStableCodeSchema,
-  requiredCheckerCodes: z.array(gateStableCodeSchema).min(1).max(100)
+  code: stableCodeSchema,
+  name: templateNameSchema,
+  stageCode: stableCodeSchema,
+  requiredCheckerCodes: z.array(stableCodeSchema).min(1).max(100)
 });
 const explicitGateDefinitionSchema = z.strictObject({
-  code: gateStableCodeSchema,
-  name: gateNameSchema,
-  stageCode: gateStableCodeSchema,
+  code: stableCodeSchema,
+  name: templateNameSchema,
+  stageCode: stableCodeSchema,
   scope: z.enum(["PROJECT", "DELIVERY_UNIT", "MODULE"]).optional(),
   checkers: z.array(gateCheckerBindingSchema).min(1).max(100)
 });
