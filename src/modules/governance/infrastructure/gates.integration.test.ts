@@ -21,7 +21,11 @@ import { POST as runGateChecksRoute } from "../../../app/api/projects/[projectId
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
-const ids = { admin: `gate-admin-${suffix}`, outsider: `gate-outsider-${suffix}` };
+const ids = {
+  admin: `gate-admin-${suffix}`,
+  projectManager: `gate-project-manager-${suffix}`,
+  outsider: `gate-outsider-${suffix}`
+};
 
 function commandRequest(url: string, body: unknown, key: string, actorId?: string) {
   const headers = new Headers({
@@ -168,6 +172,15 @@ async function seedProject(label: string) {
     actorId: ids.admin,
     auditContext: auditContext(`project-create-${label}`)
   });
+  await db.projectMember.create({
+    data: {
+      projectId: created.project.id,
+      userId: ids.projectManager,
+      projectRole: "PROJECT_MANAGER",
+      departmentId: "engineering",
+      assignedById: ids.admin
+    }
+  });
   const structure = await initializeProjectStructure({
     projectId: created.project.id,
     projectVersion: created.project.version,
@@ -216,6 +229,12 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
           departmentId: "engineering"
         },
         {
+          id: ids.projectManager,
+          employeeNo: `GATE-PM-${suffix}`,
+          name: "Gate integration project manager",
+          departmentId: "engineering"
+        },
+        {
           id: ids.outsider,
           employeeNo: `GATE-OUTSIDER-${suffix}`,
           name: "Gate integration outsider",
@@ -226,6 +245,11 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
     await db.userRole.createMany({
       data: [
         { id: `gate-role-admin-${suffix}`, userId: ids.admin, roleId: "role-admin" },
+        {
+          id: `gate-role-project-manager-${suffix}`,
+          userId: ids.projectManager,
+          roleId: "role-project-manager"
+        },
         { id: `gate-role-outsider-${suffix}`, userId: ids.outsider, roleId: "role-engineer" }
       ]
     });
@@ -709,20 +733,25 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
       commandRequest(instanceUrl, payload, `gate-api-forbidden-${suffix}`, ids.outsider),
       instanceContext
     );
+    const administratorForbidden = await createGateInstanceRoute(
+      commandRequest(instanceUrl, payload, `gate-api-administrator-${suffix}`, ids.admin),
+      instanceContext
+    );
     expect(unauthenticated.status).toBe(401);
     expect(forbidden.status).toBe(403);
+    expect(administratorForbidden.status).toBe(403);
 
     const key = `gate-api-create-${suffix}`;
     const first = await createGateInstanceRoute(
-      commandRequest(instanceUrl, payload, key, ids.admin),
+      commandRequest(instanceUrl, payload, key, ids.projectManager),
       instanceContext
     );
     const replay = await createGateInstanceRoute(
-      commandRequest(instanceUrl, payload, key, ids.admin),
+      commandRequest(instanceUrl, payload, key, ids.projectManager),
       instanceContext
     );
     const duplicate = await createGateInstanceRoute(
-      commandRequest(instanceUrl, payload, `gate-api-duplicate-${suffix}`, ids.admin),
+      commandRequest(instanceUrl, payload, `gate-api-duplicate-${suffix}`, ids.projectManager),
       instanceContext
     );
     expect(first.status).toBe(201);
@@ -740,7 +769,7 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
         `http://localhost/api/projects/${foreign.project.id}/gate-instances/${created.gateInstance.id}/checks`,
         { version: created.gateInstance.version, reason: "Attempt foreign Gate check" },
         `gate-api-cross-project-${suffix}`,
-        ids.admin
+        ids.projectManager
       ),
       {
         params: Promise.resolve({
@@ -769,11 +798,11 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
     };
     const checkKey = `gate-api-check-${suffix}`;
     const checked = await runGateChecksRoute(
-      commandRequest(checkUrl, checkPayload, checkKey, ids.admin),
+      commandRequest(checkUrl, checkPayload, checkKey, ids.projectManager),
       checkContext
     );
     const checkedReplay = await runGateChecksRoute(
-      commandRequest(checkUrl, checkPayload, checkKey, ids.admin),
+      commandRequest(checkUrl, checkPayload, checkKey, ids.projectManager),
       checkContext
     );
     expect(checked.status).toBe(200);
