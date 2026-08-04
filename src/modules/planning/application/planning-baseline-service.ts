@@ -295,42 +295,36 @@ export async function freezeG1PlanningBaseline(
           createdById: input.actorId,
           wbsSnapshots: {
             create: snapshot.wbsNodes.map((value) => ({
-              projectId: input.projectId,
               sourceWbsNodeId: value.sourceWbsNodeId,
               snapshotJson: value as Prisma.InputJsonValue
             }))
           },
           taskSnapshots: {
             create: snapshot.tasks.map((value) => ({
-              projectId: input.projectId,
               sourceTaskId: value.sourceTaskId,
               snapshotJson: value as Prisma.InputJsonValue
             }))
           },
           dependencySnapshots: {
             create: snapshot.dependencies.map((value) => ({
-              projectId: input.projectId,
               sourceDependencyId: value.sourceDependencyId,
               snapshotJson: value as Prisma.InputJsonValue
             }))
           },
           milestoneSnapshots: {
             create: snapshot.milestones.map((value) => ({
-              projectId: input.projectId,
               sourceMilestoneId: value.sourceMilestoneId,
               snapshotJson: value as Prisma.InputJsonValue
             }))
           },
           milestoneTaskLinkSnapshots: {
             create: snapshot.milestoneTaskLinks.map((value) => ({
-              projectId: input.projectId,
               sourceMilestoneTaskLinkId: value.sourceMilestoneTaskLinkId,
               snapshotJson: value as Prisma.InputJsonValue
             }))
           },
           calendarSnapshot: {
             create: {
-              projectId: input.projectId,
               sourceCalendarId: snapshot.calendar.sourceCalendarId,
               sourceCalendarRevisionId: snapshot.calendar.sourceCalendarRevisionId,
               snapshotJson: snapshot.calendar as Prisma.InputJsonValue

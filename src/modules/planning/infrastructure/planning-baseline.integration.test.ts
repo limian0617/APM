@@ -453,42 +453,36 @@ async function persistBaseline(
       createdById: ids.projectManager,
       wbsSnapshots: {
         create: {
-          projectId: facts.project.id,
           sourceWbsNodeId: facts.wbs.id,
           snapshotJson: { sourceWbsNodeId: facts.wbs.id, code: facts.wbs.code }
         }
       },
       taskSnapshots: {
         create: facts.tasks.map((task) => ({
-          projectId: facts.project.id,
           sourceTaskId: task.id,
           snapshotJson: { sourceTaskId: task.id, code: task.code }
         }))
       },
       dependencySnapshots: {
         create: {
-          projectId: facts.project.id,
           sourceDependencyId: facts.dependency.id,
           snapshotJson: { sourceDependencyId: facts.dependency.id }
         }
       },
       milestoneSnapshots: {
         create: {
-          projectId: facts.project.id,
           sourceMilestoneId: facts.milestone.id,
           snapshotJson: { sourceMilestoneId: facts.milestone.id, code: facts.milestone.code }
         }
       },
       milestoneTaskLinkSnapshots: {
         create: {
-          projectId: facts.project.id,
           sourceMilestoneTaskLinkId: facts.milestoneTaskLink.id,
           snapshotJson: { sourceMilestoneTaskLinkId: facts.milestoneTaskLink.id }
         }
       },
       calendarSnapshot: {
         create: {
-          projectId: facts.project.id,
           sourceCalendarId: facts.calendar.id,
           sourceCalendarRevisionId: facts.calendarRevision.id,
           snapshotJson: {
