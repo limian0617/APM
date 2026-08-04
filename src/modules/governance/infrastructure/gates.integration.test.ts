@@ -91,7 +91,7 @@ function componentDefinition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
             name: "Unavailable dependency",
             stageCode: "S0",
             scope: "DELIVERY_UNIT",
-            requiredCheckerCodes: ["DOCUMENTS.COMPLETE"]
+            checkers: [{ code: "DOCUMENTS.COMPLETE", version: 1 }]
           }
         ]
       };

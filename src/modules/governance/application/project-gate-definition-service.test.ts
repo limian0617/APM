@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildProjectGateMaterialization } from "./project-gate-definition-service";
+import {
+  buildGateDefinitionMaterializedOutboxPayload,
+  buildProjectGateMaterialization
+} from "./project-gate-definition-service";
 
 describe("APM-031 project Gate materialization", () => {
   it("freezes legacy Gate bindings and creates only project-scoped instances", () => {
@@ -67,5 +70,25 @@ describe("APM-031 project Gate materialization", () => {
         createProjectInstance: false
       }
     ]);
+  });
+
+  it("omits a missing project Gate instance from the materialization Outbox payload", () => {
+    expect(
+      buildGateDefinitionMaterializedOutboxPayload({
+        projectId: "project-1",
+        gateDefinitionId: "definition-1"
+      })
+    ).toEqual({ projectId: "project-1", gateDefinitionId: "definition-1" });
+    expect(
+      buildGateDefinitionMaterializedOutboxPayload({
+        projectId: "project-1",
+        gateDefinitionId: "definition-1",
+        gateInstanceId: "instance-1"
+      })
+    ).toEqual({
+      projectId: "project-1",
+      gateDefinitionId: "definition-1",
+      gateInstanceId: "instance-1"
+    });
   });
 });
