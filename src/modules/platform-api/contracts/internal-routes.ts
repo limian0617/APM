@@ -685,6 +685,110 @@ export const verifyResidualItemBodySchema = z.strictObject({
   decision: z.enum(["VERIFY", "RETURN"]),
   reason: reasonSchema
 });
+const alertSourceTypeSchema = z.enum([
+  "SCHEDULE_FORECAST_STALE",
+  "CRITICAL_TASK_DELAY",
+  "MILESTONE_OVERDUE",
+  "GATE_HARD_FAILURE",
+  "RESIDUAL_ITEM_OVERDUE"
+]);
+const alertRiskLevelSchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
+const alertConditionSchema = z.record(z.string(), z.unknown());
+const alertRuleFields = {
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Z][A-Z0-9_.-]{2,100}$/u),
+  name: z.string().trim().min(1).max(191),
+  sourceType: alertSourceTypeSchema,
+  condition: alertConditionSchema,
+  probability: alertRiskLevelSchema,
+  impact: alertRiskLevelSchema,
+  ownerMembershipId: identifierSchema,
+  escalationMembershipId: identifierSchema,
+  escalationAfterDays: z.number().int().min(0).max(3650)
+};
+export const projectAlertRulePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  ruleId: identifierSchema
+});
+export const createProjectAlertRuleBodySchema = z
+  .strictObject(alertRuleFields)
+  .superRefine((value, context) => {
+    const integer = (field: "maximumAgeDays" | "thresholdDays", minimum: number) => {
+      const candidate = value.condition[field];
+      if (
+        !Number.isSafeInteger(candidate) ||
+        (candidate as number) < minimum ||
+        (candidate as number) > 3650
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["condition", field],
+          message: `必须是 ${minimum} 到 3650 的整数。`
+        });
+      }
+    };
+    if (value.sourceType === "SCHEDULE_FORECAST_STALE") integer("maximumAgeDays", 1);
+    if (value.sourceType === "CRITICAL_TASK_DELAY" || value.sourceType === "MILESTONE_OVERDUE")
+      integer("thresholdDays", 0);
+    if (
+      (value.sourceType === "GATE_HARD_FAILURE" || value.sourceType === "RESIDUAL_ITEM_OVERDUE") &&
+      Object.keys(value.condition).length > 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["condition"],
+        message: "该预警来源不接受条件参数。"
+      });
+    }
+  });
+export const updateProjectAlertRuleBodySchema = z
+  .strictObject({
+    version: positiveVersionSchema,
+    reason: reasonSchema,
+    ...alertRuleFields,
+    status: z.enum(["ENABLED", "DISABLED"])
+  })
+  .superRefine((value, context) => {
+    const integer = (field: "maximumAgeDays" | "thresholdDays", minimum: number) => {
+      const candidate = value.condition[field];
+      if (
+        !Number.isSafeInteger(candidate) ||
+        (candidate as number) < minimum ||
+        (candidate as number) > 3650
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["condition", field],
+          message: `必须是 ${minimum} 到 3650 的整数。`
+        });
+      }
+    };
+    if (value.sourceType === "SCHEDULE_FORECAST_STALE") integer("maximumAgeDays", 1);
+    if (value.sourceType === "CRITICAL_TASK_DELAY" || value.sourceType === "MILESTONE_OVERDUE") {
+      integer("thresholdDays", 0);
+    }
+    if (
+      (value.sourceType === "GATE_HARD_FAILURE" || value.sourceType === "RESIDUAL_ITEM_OVERDUE") &&
+      Object.keys(value.condition).length > 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["condition"],
+        message: "该预警来源不接受条件参数。"
+      });
+    }
+  });
+export const projectAlertPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  alertId: identifierSchema
+});
+export const alertTransitionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  action: z.enum(["ACKNOWLEDGE", "START", "RESOLVE", "CLOSE"]),
+  reason: reasonSchema
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema

@@ -751,6 +751,50 @@ enum ResidualItemEventType {
   RETURNED
 }
 
+enum AlertSourceType {
+  SCHEDULE_FORECAST_STALE
+  CRITICAL_TASK_DELAY
+  MILESTONE_OVERDUE
+  GATE_HARD_FAILURE
+  RESIDUAL_ITEM_OVERDUE
+}
+
+enum AlertRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AlertRuleStatus {
+  ENABLED
+  DISABLED
+}
+
+enum ProjectAlertStatus {
+  TRIGGERED
+  ACKNOWLEDGED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum ProjectAlertEventType {
+  TRIGGERED
+  ACKNOWLEDGED
+  STARTED
+  RESOLVED
+  CLOSED
+  RETRIGGERED
+  ESCALATED
+}
+
+enum ProjectAlertScanStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
 enum StageReleaseAuthorizationScope {
   PROJECT
   DELIVERY_UNIT
@@ -882,6 +926,16 @@ enum AuditAction {
   RESIDUAL_ITEM_VERIFICATION_SUBMITTED
   RESIDUAL_ITEM_VERIFIED
   RESIDUAL_ITEM_RETURNED
+  ALERT_RULE_CREATED
+  ALERT_RULE_UPDATED
+  ALERT_SCAN_REQUESTED
+  ALERT_SCAN_COMPLETED
+  ALERT_TRIGGERED
+  ALERT_ACKNOWLEDGED
+  ALERT_STARTED
+  ALERT_RESOLVED
+  ALERT_CLOSED
+  ALERT_ESCALATED
 }
 
 enum AuditObjectType {
@@ -919,6 +973,9 @@ enum AuditObjectType {
   GATE_APPROVAL
   GATE_CONDITIONAL_RELEASE
   RESIDUAL_ITEM
+  ALERT_RULE
+  PROJECT_ALERT
+  PROJECT_ALERT_SCAN
 }
 
 enum AuditSource {
@@ -1007,6 +1064,8 @@ model User {
   gateSubmissionEvents                  GateSubmissionEvent[]         @relation("GateSubmissionEventActor")
   gateConditionalReleases               GateConditionalRelease[]      @relation("GateConditionalReleaseActor")
   residualItemEvents                    ResidualItemEvent[]           @relation("ResidualItemEventActor")
+  projectAlertEvents                    ProjectAlertEvent[]           @relation("ProjectAlertEventActor")
+  projectAlertScansRequested            ProjectAlertScan[]            @relation("ProjectAlertScanRequestedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -1119,6 +1178,10 @@ model Project {
   gateConditionalReleases       GateConditionalRelease[]
   residualItems                 ResidualItem[]
   residualItemEvents            ResidualItemEvent[]
+  alertRules                    ProjectAlertRule[]
+  alerts                        ProjectAlert[]
+  alertEvents                   ProjectAlertEvent[]
+  alertScans                    ProjectAlertScan[]
   wbsNodes                      WbsNode[]
   planningTasks                 PlanningTask[]
   planningCalendar              ProjectCalendar?
@@ -1830,6 +1893,111 @@ model ResidualItemEvent {
   @@index([projectId, createdAt])
   @@index([actorId, createdAt])
   @@map("residual_item_events")
+}
+
+model ProjectAlertRule {
+  id                     String          @id @default(cuid())
+  projectId              String          @map("project_id")
+  code                   String
+  name                   String
+  sourceType             AlertSourceType @map("source_type")
+  conditionJson          Json            @map("condition_json")
+  probability            AlertRiskLevel
+  impact                 AlertRiskLevel
+  ownerMembershipId      String          @map("owner_membership_id")
+  escalationMembershipId String          @map("escalation_membership_id")
+  escalationAfterDays    Int             @map("escalation_after_days")
+  status                 AlertRuleStatus @default(ENABLED)
+  version                Int             @default(1)
+  createdById            String          @map("created_by_id")
+  updatedById            String          @map("updated_by_id")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+  project                Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  alerts                 ProjectAlert[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@index([projectId, status, sourceType])
+  @@index([ownerMembershipId, status])
+  @@index([escalationMembershipId, status])
+  @@map("project_alert_rules")
+}
+
+model ProjectAlert {
+  id                           String             @id @default(cuid())
+  projectId                    String             @map("project_id")
+  ruleId                       String             @map("rule_id")
+  sourceType                   AlertSourceType    @map("source_type")
+  sourceKey                    String             @map("source_key")
+  sourceSnapshot               Json               @map("source_snapshot")
+  probability                  AlertRiskLevel
+  impact                       AlertRiskLevel
+  ownerUserId                  String             @map("owner_user_id")
+  ownerMembershipSnapshot      Json               @map("owner_membership_snapshot")
+  escalationUserId             String             @map("escalation_user_id")
+  escalationMembershipSnapshot Json               @map("escalation_membership_snapshot")
+  status                       ProjectAlertStatus @default(TRIGGERED)
+  firstTriggeredAt             DateTime           @default(now()) @map("first_triggered_at")
+  lastObservedAt               DateTime           @default(now()) @map("last_observed_at")
+  acknowledgedAt               DateTime?          @map("acknowledged_at")
+  resolvedAt                   DateTime?          @map("resolved_at")
+  closedAt                     DateTime?          @map("closed_at")
+  escalatedAt                  DateTime?          @map("escalated_at")
+  version                      Int                @default(1)
+  createdAt                    DateTime           @default(now()) @map("created_at")
+  updatedAt                    DateTime           @updatedAt @map("updated_at")
+  project                      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  rule                         ProjectAlertRule   @relation(fields: [ruleId, projectId], references: [id, projectId], onDelete: Restrict)
+  events                       ProjectAlertEvent[]
+
+  @@unique([projectId, ruleId, sourceKey])
+  @@unique([id, projectId])
+  @@index([projectId, status, lastObservedAt])
+  @@index([ownerUserId, status, lastObservedAt])
+  @@index([escalationUserId, status, escalatedAt])
+  @@map("project_alerts")
+}
+
+model ProjectAlertEvent {
+  id           String                @id @default(cuid())
+  projectId    String                @map("project_id")
+  alertId      String                @map("alert_id")
+  sequence     Int
+  eventType    ProjectAlertEventType @map("event_type")
+  reason       String
+  snapshotJson Json                  @map("snapshot_json")
+  actorId      String?               @map("actor_id")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  project      Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  alert        ProjectAlert          @relation(fields: [alertId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor        User?                 @relation("ProjectAlertEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([alertId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("project_alert_events")
+}
+
+model ProjectAlertScan {
+  id             String                 @id @default(cuid())
+  projectId      String                 @map("project_id")
+  idempotencyKey String                 @map("idempotency_key")
+  status         ProjectAlertScanStatus @default(PENDING)
+  requestedById  String                 @map("requested_by_id")
+  requestedAt    DateTime               @default(now()) @map("requested_at")
+  startedAt      DateTime?              @map("started_at")
+  completedAt    DateTime?              @map("completed_at")
+  errorCode      String?                @map("error_code")
+  errorMessage   String?                @map("error_message")
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requestedBy    User                   @relation("ProjectAlertScanRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, idempotencyKey])
+  @@unique([id, projectId])
+  @@index([projectId, requestedAt])
+  @@index([projectId, status, requestedAt])
+  @@map("project_alert_scans")
 }
 
 model WbsNode {
