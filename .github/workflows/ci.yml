@@ -63,6 +63,12 @@ jobs:
           cp -R prisma/migrations/20260803080000_apm_022_schedule_forecasts "$upgrade_root/prisma/migrations/"
           cp -R prisma/migrations/20260803090000_apm_025_milestone_component "$upgrade_root/prisma/migrations/"
           cp -R prisma/migrations/20260803091000_apm_025_project_milestones "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804010000_apm_030_project_stages "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804020000_apm_030_stage_invariants "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804030000_apm_031_gate_foundation "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804040000_apm_032_gate_submissions "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804050000_apm_033_gate_conditional_releases "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804060000_apm_034_alert_governance "$upgrade_root/prisma/migrations/"
           cp -R prisma/migrations/20260805010000_apm_023_planning_baselines "$upgrade_root/prisma/migrations/"
           DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade?schema=public" \
             npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
