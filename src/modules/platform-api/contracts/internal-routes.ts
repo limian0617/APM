@@ -614,6 +614,37 @@ export const revokeStageReleaseBodySchema = z.strictObject({
   version: positiveVersionSchema,
   reason: reasonSchema
 });
+export const gateInstancePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  instanceId: identifierSchema
+});
+export const createGateInstanceBodySchema = z
+  .strictObject({
+    definitionId: identifierSchema,
+    scope: z.enum(["DELIVERY_UNIT", "MODULE"]),
+    deliveryUnitId: identifierSchema,
+    moduleId: identifierSchema.optional()
+  })
+  .superRefine((value, context) => {
+    if (value.scope === "DELIVERY_UNIT" && value.moduleId !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["moduleId"],
+        message: "交付单元范围不能指定模块。"
+      });
+    }
+    if (value.scope === "MODULE" && value.moduleId === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["moduleId"],
+        message: "模块范围必须指定模块。"
+      });
+    }
+  });
+export const runGateChecksBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema
