@@ -15,10 +15,22 @@ import { initializeProjectStructure } from "@/modules/projects/application/proje
 import { executeIdempotentCommand } from "@/modules/platform-api/application/idempotent-command";
 
 import { createGateInstance, runGateChecks } from "../application/gate-service";
+import { POST as createGateInstanceRoute } from "../../../app/api/projects/[projectId]/gate-instances/route";
+import { POST as runGateChecksRoute } from "../../../app/api/projects/[projectId]/gate-instances/[instanceId]/checks/route";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
-const ids = { admin: `gate-admin-${suffix}` };
+const ids = { admin: `gate-admin-${suffix}`, outsider: `gate-outsider-${suffix}` };
+
+function commandRequest(url: string, body: unknown, key: string, actorId?: string) {
+  const headers = new Headers({
+    "content-type": "application/json",
+    "idempotency-key": key,
+    "x-request-id": `request-${key}`
+  });
+  if (actorId) headers.set("x-apm-user-id", actorId);
+  return new Request(url, { method: "POST", headers, body: JSON.stringify(body) });
+}
 
 function auditContext(operationId: string, projectId: string | null = null): AuditContext {
   return {
@@ -188,13 +200,27 @@ let template: Awaited<ReturnType<typeof seedTemplate>>;
 
 describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => {
   beforeAll(async () => {
-    await db.user.create({
-      data: {
-        id: ids.admin,
-        employeeNo: `GATE-ADMIN-${suffix}`,
-        name: "Gate integration administrator",
-        departmentId: "engineering"
-      }
+    await db.user.createMany({
+      data: [
+        {
+          id: ids.admin,
+          employeeNo: `GATE-ADMIN-${suffix}`,
+          name: "Gate integration administrator",
+          departmentId: "engineering"
+        },
+        {
+          id: ids.outsider,
+          employeeNo: `GATE-OUTSIDER-${suffix}`,
+          name: "Gate integration outsider",
+          departmentId: "engineering"
+        }
+      ]
+    });
+    await db.userRole.createMany({
+      data: [
+        { id: `gate-role-admin-${suffix}`, userId: ids.admin, roleId: "role-admin" },
+        { id: `gate-role-outsider-${suffix}`, userId: ids.outsider, roleId: "role-engineer" }
+      ]
     });
     template = await seedTemplate();
   });
@@ -614,5 +640,108 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
       1,
       expect.objectContaining({ checkRunSequence: 1, version: instance.resourceVersion + 1 })
     ]);
+  });
+
+  it("enforces internal Gate API authorization, hidden relations, conflicts, and replay", async () => {
+    const facts = await seedProject("API");
+    const foreign = await seedProject("API-FOREIGN");
+    const definition = await db.projectGateDefinition.findFirstOrThrow({
+      where: { projectId: facts.project.id, code: "G.DU" }
+    });
+    await db.projectMember.create({
+      data: {
+        projectId: facts.project.id,
+        userId: ids.outsider,
+        projectRole: "ENGINEER",
+        departmentId: "engineering",
+        assignedById: ids.admin
+      }
+    });
+    const instanceUrl = `http://localhost/api/projects/${facts.project.id}/gate-instances`;
+    const instanceContext = { params: Promise.resolve({ projectId: facts.project.id }) };
+    const payload = {
+      definitionId: definition.id,
+      scope: "DELIVERY_UNIT" as const,
+      deliveryUnitId: facts.deliveryUnit.id
+    };
+    const unauthenticated = await createGateInstanceRoute(
+      commandRequest(instanceUrl, payload, `gate-api-unauth-${suffix}`),
+      instanceContext
+    );
+    const forbidden = await createGateInstanceRoute(
+      commandRequest(instanceUrl, payload, `gate-api-forbidden-${suffix}`, ids.outsider),
+      instanceContext
+    );
+    expect(unauthenticated.status).toBe(401);
+    expect(forbidden.status).toBe(403);
+
+    const key = `gate-api-create-${suffix}`;
+    const first = await createGateInstanceRoute(
+      commandRequest(instanceUrl, payload, key, ids.admin),
+      instanceContext
+    );
+    const replay = await createGateInstanceRoute(
+      commandRequest(instanceUrl, payload, key, ids.admin),
+      instanceContext
+    );
+    const duplicate = await createGateInstanceRoute(
+      commandRequest(instanceUrl, payload, `gate-api-duplicate-${suffix}`, ids.admin),
+      instanceContext
+    );
+    expect(first.status).toBe(201);
+    expect(replay.status).toBe(201);
+    expect(replay.headers.get("idempotency-replayed")).toBe("true");
+    expect(duplicate.status).toBe(409);
+    const created = (await first.json()) as {
+      gateInstance: { id: string; version: number };
+      auditId: string;
+    };
+    expect(created.auditId).toEqual(expect.any(String));
+
+    const crossProject = await runGateChecksRoute(
+      commandRequest(
+        `http://localhost/api/projects/${foreign.project.id}/gate-instances/${created.gateInstance.id}/checks`,
+        { version: created.gateInstance.version, reason: "Attempt foreign Gate check" },
+        `gate-api-cross-project-${suffix}`,
+        ids.admin
+      ),
+      {
+        params: Promise.resolve({
+          projectId: foreign.project.id,
+          instanceId: created.gateInstance.id
+        })
+      }
+    );
+    expect(crossProject.status).toBe(404);
+
+    await db.projectStage.update({
+      where: { id: facts.stage.id },
+      data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
+    });
+    const checkUrl = `http://localhost/api/projects/${facts.project.id}/gate-instances/${created.gateInstance.id}/checks`;
+    const checkContext = {
+      params: Promise.resolve({ projectId: facts.project.id, instanceId: created.gateInstance.id })
+    };
+    const checkPayload = {
+      version: created.gateInstance.version,
+      reason: "Run Gate checks from API"
+    };
+    const checkKey = `gate-api-check-${suffix}`;
+    const checked = await runGateChecksRoute(
+      commandRequest(checkUrl, checkPayload, checkKey, ids.admin),
+      checkContext
+    );
+    const checkedReplay = await runGateChecksRoute(
+      commandRequest(checkUrl, checkPayload, checkKey, ids.admin),
+      checkContext
+    );
+    expect(checked.status).toBe(200);
+    expect(checkedReplay.status).toBe(200);
+    expect(checkedReplay.headers.get("idempotency-replayed")).toBe("true");
+    await expect(
+      db.auditLog.count({
+        where: { projectId: facts.project.id, action: "GATE_CHECK_RUN_COMPLETED" }
+      })
+    ).resolves.toBe(1);
   });
 });

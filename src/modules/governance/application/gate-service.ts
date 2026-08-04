@@ -508,6 +508,25 @@ export async function createGateInstance(
   }
 }
 
+export async function listProjectGates(projectId: string) {
+  const definitions = await db.projectGateDefinition.findMany({
+    where: { projectId },
+    orderBy: { code: "asc" },
+    include: {
+      instances: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          checkSnapshots: {
+            orderBy: { sequence: "desc" },
+            include: { results: { orderBy: { position: "asc" } } }
+          }
+        }
+      }
+    }
+  });
+  return { definitions };
+}
+
 export async function runGateChecks(
   input: {
     projectId: string;
