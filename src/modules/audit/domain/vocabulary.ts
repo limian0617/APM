@@ -67,7 +67,13 @@ export const AUDIT_ACTIONS = {
   GATE_APPROVAL_RECORDED: "GATE_APPROVAL_RECORDED",
   GATE_SUBMISSION_WITHDRAWN: "GATE_SUBMISSION_WITHDRAWN",
   GATE_SUBMISSION_APPROVED: "GATE_SUBMISSION_APPROVED",
-  GATE_SUBMISSION_REJECTED: "GATE_SUBMISSION_REJECTED"
+  GATE_SUBMISSION_REJECTED: "GATE_SUBMISSION_REJECTED",
+  GATE_CONDITIONALLY_RELEASED: "GATE_CONDITIONALLY_RELEASED",
+  RESIDUAL_ITEM_CREATED: "RESIDUAL_ITEM_CREATED",
+  RESIDUAL_ITEM_STARTED: "RESIDUAL_ITEM_STARTED",
+  RESIDUAL_ITEM_VERIFICATION_SUBMITTED: "RESIDUAL_ITEM_VERIFICATION_SUBMITTED",
+  RESIDUAL_ITEM_VERIFIED: "RESIDUAL_ITEM_VERIFIED",
+  RESIDUAL_ITEM_RETURNED: "RESIDUAL_ITEM_RETURNED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -102,7 +108,9 @@ export const AUDIT_OBJECT_TYPES = {
   PROJECT_GATE_INSTANCE: "PROJECT_GATE_INSTANCE",
   GATE_CHECK_SNAPSHOT: "GATE_CHECK_SNAPSHOT",
   GATE_SUBMISSION: "GATE_SUBMISSION",
-  GATE_APPROVAL: "GATE_APPROVAL"
+  GATE_APPROVAL: "GATE_APPROVAL",
+  GATE_CONDITIONAL_RELEASE: "GATE_CONDITIONAL_RELEASE",
+  RESIDUAL_ITEM: "RESIDUAL_ITEM"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -454,6 +462,34 @@ export const GATE_APPROVAL_AUDIT_FIELDS = [
   "decision",
   "decidedById",
   "decidedAt",
+  "status",
+  "version"
+] as const;
+
+export const GATE_CONDITIONAL_RELEASE_AUDIT_FIELDS = [
+  "projectId",
+  "gateConditionalReleaseId",
+  "gateSubmissionId",
+  "gateInstanceId",
+  "projectStageId",
+  "deliveryUnitStageId",
+  "releaseReason",
+  "releasedById",
+  "releasedAt",
+  "version"
+] as const;
+
+export const RESIDUAL_ITEM_AUDIT_FIELDS = [
+  "projectId",
+  "residualItemId",
+  "conditionalReleaseId",
+  "sequence",
+  "title",
+  "ownerMembershipId",
+  "verifierMembershipId",
+  "dueAt",
+  "evidence",
+  "escalationRule",
   "status",
   "version"
 ] as const;

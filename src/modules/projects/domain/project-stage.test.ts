@@ -16,16 +16,11 @@ describe("APM-030 project stage rules", () => {
     );
   });
 
-  it("requires a reason for exceptional stage states", () => {
-    expect(() => validateStageTransition("AWAITING_GATE", "CONDITIONALLY_RELEASED")).toThrowError(
-      expect.objectContaining({ code: "STAGE_EXCEPTION_REASON_REQUIRED" })
-    );
+  it("requires a reason for a skipped stage", () => {
     expect(() => validateStageTransition("NOT_STARTED", "SKIPPED", "  ")).toThrowError(
       expect.objectContaining({ code: "STAGE_EXCEPTION_REASON_REQUIRED" })
     );
-    expect(validateStageTransition("AWAITING_GATE", "CONDITIONALLY_RELEASED", "风险已记录")).toBe(
-      "CONDITIONALLY_RELEASED"
-    );
+    expect(validateStageTransition("NOT_STARTED", "SKIPPED", "范围已取消")).toBe("SKIPPED");
   });
 
   it("authorizes releases only between adjacent stages in the same project", () => {

@@ -106,3 +106,62 @@ describe("APM-032 Gate submission persistence contract", () => {
     }
   });
 });
+
+describe("APM-033 Gate conditional release persistence contract", () => {
+  it("adds immutable conditional releases and append-only residual item history", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260804050000_apm_033_gate_conditional_releases/migration.sql"
+      ),
+      "utf8"
+    );
+
+    for (const declaration of [
+      "enum ResidualItemStatus",
+      "enum ResidualItemEventType",
+      "model GateConditionalRelease",
+      "model ResidualItem",
+      "model ResidualItemEvent",
+      "GATE_CONDITIONALLY_RELEASED",
+      "RESIDUAL_ITEM_CREATED",
+      "RESIDUAL_ITEM_STARTED",
+      "RESIDUAL_ITEM_VERIFICATION_SUBMITTED",
+      "RESIDUAL_ITEM_VERIFIED",
+      "RESIDUAL_ITEM_RETURNED",
+      "GATE_CONDITIONAL_RELEASE",
+      "RESIDUAL_ITEM"
+    ]) {
+      expect(schema).toContain(declaration);
+    }
+
+    for (const declaration of [
+      'CREATE TABLE "gate_conditional_releases"',
+      'CREATE TABLE "residual_items"',
+      'CREATE TABLE "residual_item_events"',
+      "gate_conditional_releases_submission_key",
+      "residual_items_release_sequence_key",
+      "residual_item_events_item_sequence_key",
+      "CREATE FUNCTION enforce_gate_conditional_release_relation()",
+      "CREATE FUNCTION enforce_residual_item_relation()",
+      "CREATE FUNCTION enforce_residual_item_transition()",
+      "CREATE FUNCTION require_conditional_release_residual_items()",
+      "conditional_release_requires_approved_submission",
+      "conditional_release_requires_residual_items",
+      "residual_items_reject_mutation",
+      "residual_item_events_reject_mutation",
+      "ADD VALUE 'GATE_CONDITIONALLY_RELEASED'",
+      "ADD VALUE 'RESIDUAL_ITEM_VERIFIED'"
+    ]) {
+      expect(migration).toContain(declaration);
+    }
+  });
+
+  it("keeps CI upgrade coverage at the APM-032 to APM-033 boundary", () => {
+    const workflow = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8");
+
+    expect(workflow).toContain("Validate APM-032 to APM-033 upgrade migration");
+    expect(workflow).toContain("cp -R prisma/migrations/20260804040000_apm_032_gate_submissions");
+  });
+});

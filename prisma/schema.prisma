@@ -736,6 +736,21 @@ enum GateSubmissionEventType {
   REJECTED
 }
 
+enum ResidualItemStatus {
+  OPEN
+  IN_PROGRESS
+  AWAITING_VERIFICATION
+  CLOSED
+}
+
+enum ResidualItemEventType {
+  CREATED
+  STARTED
+  VERIFICATION_SUBMITTED
+  VERIFIED
+  RETURNED
+}
+
 enum StageReleaseAuthorizationScope {
   PROJECT
   DELIVERY_UNIT
@@ -861,6 +876,12 @@ enum AuditAction {
   GATE_SUBMISSION_WITHDRAWN
   GATE_SUBMISSION_APPROVED
   GATE_SUBMISSION_REJECTED
+  GATE_CONDITIONALLY_RELEASED
+  RESIDUAL_ITEM_CREATED
+  RESIDUAL_ITEM_STARTED
+  RESIDUAL_ITEM_VERIFICATION_SUBMITTED
+  RESIDUAL_ITEM_VERIFIED
+  RESIDUAL_ITEM_RETURNED
 }
 
 enum AuditObjectType {
@@ -896,6 +917,8 @@ enum AuditObjectType {
   GATE_CHECK_SNAPSHOT
   GATE_SUBMISSION
   GATE_APPROVAL
+  GATE_CONDITIONAL_RELEASE
+  RESIDUAL_ITEM
 }
 
 enum AuditSource {
@@ -982,6 +1005,8 @@ model User {
   gateSubmissionApprovers               GateSubmissionApprover[]      @relation("GateSubmissionApproverUser")
   gateApprovals                         GateApproval[]                @relation("GateApprovalDecidedBy")
   gateSubmissionEvents                  GateSubmissionEvent[]         @relation("GateSubmissionEventActor")
+  gateConditionalReleases               GateConditionalRelease[]      @relation("GateConditionalReleaseActor")
+  residualItemEvents                    ResidualItemEvent[]           @relation("ResidualItemEventActor")
 
   @@index([departmentId])
   @@map("users")
@@ -1091,6 +1116,9 @@ model Project {
   gateSubmissionApprovers       GateSubmissionApprover[]
   gateApprovals                 GateApproval[]
   gateSubmissionEvents          GateSubmissionEvent[]
+  gateConditionalReleases       GateConditionalRelease[]
+  residualItems                 ResidualItem[]
+  residualItemEvents            ResidualItemEvent[]
   wbsNodes                      WbsNode[]
   planningTasks                 PlanningTask[]
   planningCalendar              ProjectCalendar?
@@ -1427,6 +1455,7 @@ model ProjectStage {
   sourceSnapshotComponent  ProjectTemplateSnapshotComponent? @relation("ProjectStageSourceSnapshotComponent", fields: [sourceSnapshotComponentId], references: [id], onDelete: Restrict)
   mainControlForProject    Project?                       @relation("ProjectMainControlStage")
   deliveryUnitStages       DeliveryUnitStage[]
+  conditionalReleases      GateConditionalRelease[]
   releaseAuthorizationsFrom StageReleaseAuthorization[]   @relation("StageReleaseAuthorizationFromStage")
   releaseAuthorizationsTo  StageReleaseAuthorization[]    @relation("StageReleaseAuthorizationToStage")
   events                   ProjectStageEvent[]
@@ -1459,6 +1488,7 @@ model DeliveryUnitStage {
   project           Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
   deliveryUnit      DeliveryUnit                @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
   projectStage      ProjectStage                @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  conditionalReleases GateConditionalRelease[]
   createdBy         User                        @relation("DeliveryUnitStageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy         User                        @relation("DeliveryUnitStageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
@@ -1568,6 +1598,7 @@ model ProjectGateInstance {
   module           ProjectModule?        @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
   checkSnapshots   GateCheckSnapshot[]
   submissions      GateSubmission[]
+  conditionalReleases GateConditionalRelease[]
 
   @@unique([id, projectId])
   @@index([projectId, projectStageId, scope])
@@ -1653,6 +1684,7 @@ model GateSubmission {
   approvers            GateSubmissionApprover[]
   approvals            GateApproval[]
   events               GateSubmissionEvent[]
+  conditionalRelease   GateConditionalRelease?
 
   @@unique([id, projectId])
   @@unique([gateInstanceId, sequence])
@@ -1719,6 +1751,85 @@ model GateSubmissionEvent {
   @@index([projectId, createdAt])
   @@index([actorId, createdAt])
   @@map("gate_submission_events")
+}
+
+model GateConditionalRelease {
+  id                  String             @id @default(cuid())
+  projectId           String             @map("project_id")
+  gateSubmissionId    String             @unique @map("gate_submission_id")
+  gateInstanceId      String             @map("gate_instance_id")
+  projectStageId      String             @map("project_stage_id")
+  deliveryUnitStageId String?            @map("delivery_unit_stage_id")
+  releaseReason       String             @map("release_reason")
+  releasedById        String             @map("released_by_id")
+  releasedAt          DateTime           @default(now()) @map("released_at")
+  version             Int                @default(1)
+  createdAt           DateTime           @default(now()) @map("created_at")
+  project             Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateSubmission      GateSubmission     @relation(fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateInstance        ProjectGateInstance @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
+  projectStage        ProjectStage       @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnitStage   DeliveryUnitStage? @relation(fields: [deliveryUnitStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  releasedBy          User               @relation("GateConditionalReleaseActor", fields: [releasedById], references: [id], onDelete: Restrict)
+  residualItems       ResidualItem[]
+
+  @@unique([id, projectId])
+  @@unique([gateSubmissionId, projectId])
+  @@index([projectId, releasedAt])
+  @@index([gateInstanceId])
+  @@index([projectStageId])
+  @@index([deliveryUnitStageId])
+  @@index([releasedById, releasedAt])
+  @@map("gate_conditional_releases")
+}
+
+model ResidualItem {
+  id                   String             @id @default(cuid())
+  projectId            String             @map("project_id")
+  conditionalReleaseId String             @map("conditional_release_id")
+  sequence             Int
+  title                String
+  ownerMembershipId    String             @map("owner_membership_id")
+  verifierMembershipId String             @map("verifier_membership_id")
+  dueAt                DateTime           @map("due_at")
+  evidence             String
+  escalationRule       String             @map("escalation_rule")
+  status               ResidualItemStatus @default(OPEN)
+  version              Int                @default(1)
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+  project              Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  conditionalRelease   GateConditionalRelease @relation(fields: [conditionalReleaseId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership      ProjectMember      @relation("ResidualItemOwnerMembership", fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  verifierMembership   ProjectMember      @relation("ResidualItemVerifierMembership", fields: [verifierMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  events               ResidualItemEvent[]
+
+  @@unique([id, projectId])
+  @@unique([conditionalReleaseId, sequence])
+  @@index([projectId, status, dueAt])
+  @@index([ownerMembershipId, status, dueAt])
+  @@index([verifierMembershipId, status, dueAt])
+  @@map("residual_items")
+}
+
+model ResidualItemEvent {
+  id             String                @id @default(cuid())
+  projectId      String                @map("project_id")
+  residualItemId String                @map("residual_item_id")
+  sequence       Int
+  eventType      ResidualItemEventType @map("event_type")
+  reason         String
+  snapshotJson   Json                  @map("snapshot_json")
+  actorId        String                @map("actor_id")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  project        Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  residualItem   ResidualItem          @relation(fields: [residualItemId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor          User                  @relation("ResidualItemEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([residualItemId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("residual_item_events")
 }
 
 model WbsNode {
@@ -1961,6 +2072,8 @@ model ProjectMember {
   leftBy                      User?                   @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
   ownedResponsibilityPackages ResponsibilityPackage[]
   assignedPlanningTasks       PlanningTask[]
+  ownedResidualItems          ResidualItem[]             @relation("ResidualItemOwnerMembership")
+  verifiedResidualItems       ResidualItem[]             @relation("ResidualItemVerifierMembership")
 
   @@unique([id, projectId])
   @@index([projectId, leftAt])

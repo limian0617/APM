@@ -19,8 +19,7 @@ import {
   validateStageTransition
 } from "../domain/project-stage";
 
-export type ProjectStageAction =
-  "AUTHORIZE" | "START" | "AWAIT_GATE" | "COMPLETE" | "CONDITIONALLY_RELEASE" | "SKIP";
+export type ProjectStageAction = "AUTHORIZE" | "START" | "AWAIT_GATE" | "COMPLETE" | "SKIP";
 
 export function stageAllowedActions(status: ProjectStageExecutionStatus): ProjectStageAction[] {
   switch (status) {
@@ -31,9 +30,9 @@ export function stageAllowedActions(status: ProjectStageExecutionStatus): Projec
     case "IN_PROGRESS":
       return ["AWAIT_GATE"];
     case "AWAITING_GATE":
-      return ["COMPLETE", "CONDITIONALLY_RELEASE"];
-    case "CONDITIONALLY_RELEASED":
       return ["COMPLETE"];
+    case "CONDITIONALLY_RELEASED":
+      return [];
     default:
       return [];
   }
@@ -281,16 +280,21 @@ async function assertStageMayBeAuthorized(
   }
 }
 
-export async function transitionProjectStage(
-  input: {
-    projectId: string;
-    stageId: string;
-    deliveryUnitStageId?: string | null;
-    toStatus: ProjectStageExecutionStatus;
-    version: number;
-    reason: string;
-    actorId: string;
-    auditContext: AuditContext;
+export type ProjectStageTransitionInput = {
+  projectId: string;
+  stageId: string;
+  deliveryUnitStageId?: string | null;
+  toStatus: ProjectStageExecutionStatus;
+  version: number;
+  reason: string;
+  actorId: string;
+  auditContext: AuditContext;
+};
+
+async function transitionProjectStageInternal(
+  input: ProjectStageTransitionInput & {
+    gateConditionalReleaseId?: string;
+    completeAfterConditionalRelease?: boolean;
   },
   transaction?: Prisma.TransactionClient
 ) {
@@ -320,7 +324,23 @@ export async function transitionProjectStage(
         throw new ProjectStageError("DELIVERY_UNIT_STAGE_NOT_FOUND", "交付单元阶段不存在。", 404);
       }
       const fromStatus = current.status as ProjectStageExecutionStatus;
-      validateStageTransition(fromStatus, input.toStatus, reason);
+      if (input.gateConditionalReleaseId) {
+        if (fromStatus !== "AWAITING_GATE" || input.toStatus !== "CONDITIONALLY_RELEASED") {
+          throw new ProjectStageError(
+            "STAGE_TRANSITION_INVALID",
+            "条件放行只能由等待 Gate 的阶段进入条件放行状态。"
+          );
+        }
+      } else if (input.completeAfterConditionalRelease) {
+        if (fromStatus !== "CONDITIONALLY_RELEASED" || input.toStatus !== "COMPLETED") {
+          throw new ProjectStageError(
+            "STAGE_TRANSITION_INVALID",
+            "条件放行阶段只能在所有遗留项经验证关闭后完成。"
+          );
+        }
+      } else {
+        validateStageTransition(fromStatus, input.toStatus, reason);
+      }
       if (input.toStatus === "AUTHORIZED" || input.toStatus === "IN_PROGRESS") {
         const deliveryUnitId = input.deliveryUnitStageId
           ? (current as Prisma.DeliveryUnitStageGetPayload<Record<never, never>>).deliveryUnitId
@@ -447,6 +467,33 @@ export async function transitionProjectStage(
     if (error instanceof ProjectStageError) throw error;
     mapDatabaseError(error);
   }
+}
+
+export async function transitionProjectStage(
+  input: ProjectStageTransitionInput,
+  transaction?: Prisma.TransactionClient
+) {
+  return transitionProjectStageInternal(input, transaction);
+}
+
+export async function conditionallyReleaseProjectStage(
+  input: Omit<ProjectStageTransitionInput, "toStatus"> & { gateConditionalReleaseId: string },
+  transaction?: Prisma.TransactionClient
+) {
+  return transitionProjectStageInternal(
+    { ...input, toStatus: "CONDITIONALLY_RELEASED" },
+    transaction
+  );
+}
+
+export async function completeProjectStageAfterConditionalRelease(
+  input: Omit<ProjectStageTransitionInput, "toStatus">,
+  transaction?: Prisma.TransactionClient
+) {
+  return transitionProjectStageInternal(
+    { ...input, toStatus: "COMPLETED", completeAfterConditionalRelease: true },
+    transaction
+  );
 }
 
 export async function authorizeStageRelease(
