@@ -158,12 +158,10 @@ describe("APM-033 Gate conditional release persistence contract", () => {
     }
   });
 
-  it("keeps CI upgrade coverage at the APM-033 to APM-034 boundary", () => {
+  it("keeps the APM-034 prerequisite migration in CI upgrade coverage", () => {
     const workflow = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8");
 
-    expect(workflow).toContain("Validate APM-033 to APM-034 upgrade migration");
-    expect(workflow).toContain(
-      "cp -R prisma/migrations/20260804050000_apm_033_gate_conditional_releases"
-    );
+    expect(workflow).toContain("Validate APM-034 to APM-023 upgrade migration");
+    expect(workflow).toContain("cp -R prisma/migrations/20260804060000_apm_034_alert_governance");
   });
 });
