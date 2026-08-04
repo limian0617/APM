@@ -279,6 +279,14 @@ export const jobPathSchema = z.strictObject({ jobId: identifierSchema });
 export const replayJobBodySchema = z.strictObject({ reason: reasonSchema });
 
 export const projectPathSchema = z.strictObject({ projectId: identifierSchema });
+export const planningBaselinePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  baselineId: identifierSchema
+});
+export const createPlanningBaselineBodySchema = z.strictObject({
+  planningInputVersion: positiveVersionSchema,
+  reason: reasonSchema
+});
 export const createProjectBodySchema = z.strictObject({
   code: z
     .string()

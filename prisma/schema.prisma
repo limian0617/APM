@@ -900,6 +900,7 @@ enum AuditAction {
   TASK_DEPENDENCY_CREATED
   TASK_DEPENDENCY_UPDATED
   TASK_DEPENDENCY_CLOSED
+  PLANNING_BASELINE_FROZEN
   PROJECT_MILESTONE_CREATED
   PROJECT_MILESTONE_UPDATED
   PROJECT_MILESTONE_TASK_LINKED
@@ -962,6 +963,7 @@ enum AuditObjectType {
   PLANNING_TASK
   PROJECT_CALENDAR
   TASK_DEPENDENCY
+  PLANNING_BASELINE
   PROJECT_MILESTONE
   PROJECT_STAGE
   DELIVERY_UNIT_STAGE
@@ -1057,6 +1059,7 @@ model User {
   taskDependenciesCreated               TaskDependency[]              @relation("TaskDependencyCreatedBy")
   taskDependenciesUpdated               TaskDependency[]              @relation("TaskDependencyUpdatedBy")
   scheduleRecalculationsRequested       ScheduleRecalculation[]       @relation("ScheduleRecalculationRequestedBy")
+  planningBaselinesCreated              PlanningBaseline[]            @relation("PlanningBaselineCreatedBy")
   gateSubmissionsSubmitted              GateSubmission[]              @relation("GateSubmissionSubmittedBy")
   gateSubmissionsWithdrawn              GateSubmission[]              @relation("GateSubmissionWithdrawnBy")
   gateSubmissionApprovers               GateSubmissionApprover[]      @relation("GateSubmissionApproverUser")
@@ -1190,6 +1193,7 @@ model Project {
   scheduleState                 ProjectScheduleState?
   scheduleRecalculations        ScheduleRecalculation[]
   scheduleTaskForecasts         ScheduleTaskForecast[]
+  planningBaselines             PlanningBaseline[]
 
   @@index([departmentId])
   @@index([sourceTemplateVersionId])
@@ -1748,6 +1752,7 @@ model GateSubmission {
   approvals            GateApproval[]
   events               GateSubmissionEvent[]
   conditionalRelease   GateConditionalRelease?
+  planningBaselines    PlanningBaseline[]         @relation("PlanningBaselineSourceGateSubmission")
 
   @@unique([id, projectId])
   @@unique([gateInstanceId, sequence])
@@ -2150,6 +2155,118 @@ model TaskDependency {
   @@index([projectId, status, predecessorTaskId])
   @@index([projectId, status, successorTaskId])
   @@map("task_dependencies")
+}
+
+model PlanningBaseline {
+  id                     String                            @id @default(cuid())
+  projectId              String                            @map("project_id")
+  sourceGateSubmissionId String                            @map("source_gate_submission_id")
+  version                Int
+  planningInputVersion   Int                               @map("planning_input_version")
+  reason                 String
+  checksum               String
+  createdById            String                            @map("created_by_id")
+  createdAt              DateTime                          @default(now()) @map("created_at")
+  project                Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceGateSubmission   GateSubmission                    @relation("PlanningBaselineSourceGateSubmission", fields: [sourceGateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy              User                              @relation("PlanningBaselineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  wbsSnapshots           PlanningBaselineWbsSnapshot[]
+  taskSnapshots          PlanningBaselineTaskSnapshot[]
+  dependencySnapshots    PlanningBaselineDependencySnapshot[]
+  milestoneSnapshots     PlanningBaselineMilestoneSnapshot[]
+  milestoneTaskLinkSnapshots PlanningBaselineMilestoneTaskLinkSnapshot[]
+  calendarSnapshot       PlanningBaselineCalendarSnapshot?
+
+  @@unique([projectId, version])
+  @@unique([id, projectId])
+  @@index([projectId, createdAt])
+  @@index([sourceGateSubmissionId])
+  @@map("planning_baselines")
+}
+
+model PlanningBaselineWbsSnapshot {
+  id              String           @id @default(cuid())
+  baselineId      String           @map("baseline_id")
+  projectId       String           @map("project_id")
+  sourceWbsNodeId String           @map("source_wbs_node_id")
+  snapshotJson    Json             @map("snapshot_json")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  baseline        PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceWbsNodeId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_wbs_snapshots")
+}
+
+model PlanningBaselineTaskSnapshot {
+  id           String           @id @default(cuid())
+  baselineId   String           @map("baseline_id")
+  projectId    String           @map("project_id")
+  sourceTaskId String           @map("source_task_id")
+  snapshotJson Json             @map("snapshot_json")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  baseline     PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceTaskId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_task_snapshots")
+}
+
+model PlanningBaselineDependencySnapshot {
+  id                 String           @id @default(cuid())
+  baselineId         String           @map("baseline_id")
+  projectId          String           @map("project_id")
+  sourceDependencyId String           @map("source_dependency_id")
+  snapshotJson       Json             @map("snapshot_json")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  baseline           PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceDependencyId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_dependency_snapshots")
+}
+
+model PlanningBaselineMilestoneSnapshot {
+  id                String           @id @default(cuid())
+  baselineId        String           @map("baseline_id")
+  projectId         String           @map("project_id")
+  sourceMilestoneId String           @map("source_milestone_id")
+  snapshotJson      Json             @map("snapshot_json")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  baseline          PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceMilestoneId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_milestone_snapshots")
+}
+
+model PlanningBaselineMilestoneTaskLinkSnapshot {
+  id                        String           @id @default(cuid())
+  baselineId                String           @map("baseline_id")
+  projectId                 String           @map("project_id")
+  sourceMilestoneTaskLinkId String           @map("source_milestone_task_link_id")
+  snapshotJson              Json             @map("snapshot_json")
+  createdAt                 DateTime         @default(now()) @map("created_at")
+  baseline                  PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceMilestoneTaskLinkId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_milestone_task_link_snapshots")
+}
+
+model PlanningBaselineCalendarSnapshot {
+  id                       String           @id @default(cuid())
+  baselineId               String           @map("baseline_id")
+  projectId                String           @map("project_id")
+  sourceCalendarId         String           @map("source_calendar_id")
+  sourceCalendarRevisionId String           @map("source_calendar_revision_id")
+  snapshotJson             Json             @map("snapshot_json")
+  createdAt                DateTime         @default(now()) @map("created_at")
+  baseline                 PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, projectId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_calendar_snapshots")
 }
 
 model ProjectScheduleState {
