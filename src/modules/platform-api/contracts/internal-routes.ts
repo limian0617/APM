@@ -891,3 +891,48 @@ export const completeFileUploadBodySchema = z.strictObject({
   size: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   parts: z.array(completionPartSchema).min(1).max(10_000)
 });
+
+const controlledDocumentCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z0-9][A-Z0-9._-]{0,63}$/u);
+const controlledDocumentTitleSchema = z.string().trim().min(1).max(256);
+export const controlledDocumentPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  documentId: identifierSchema
+});
+export const controlledDocumentVersionPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  documentId: identifierSchema,
+  documentVersionId: identifierSchema
+});
+export const createControlledDocumentBodySchema = z.strictObject({
+  code: controlledDocumentCodeSchema,
+  title: controlledDocumentTitleSchema,
+  sourceFileId: identifierSchema,
+  reason: reasonSchema
+});
+export const createControlledDocumentVersionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  sourceFileId: identifierSchema,
+  reason: reasonSchema
+});
+export const publishControlledDocumentVersionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const voidControlledDocumentBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const controlledDocumentQuerySchema = z.strictObject({
+  status: z.enum(["ACTIVE", "VOIDED"]).optional(),
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});

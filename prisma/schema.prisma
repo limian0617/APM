@@ -303,7 +303,9 @@ model FileObject {
   uploadedBy       User               @relation("FileObjectUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
   uploadSession    FileUploadSession?
   commands         FileCommand[]
+  documentSourceVersions ControlledDocumentVersion[] @relation("DocumentVersionSourceFile")
 
+  @@unique([id, projectId])
   @@index([projectId, status, createdAt])
   @@index([uploadedById, createdAt])
   @@map("file_objects")
@@ -556,6 +558,18 @@ enum FileCommandStatus {
   STARTED
   SUCCEEDED
   FAILED
+}
+
+enum ControlledDocumentStatus {
+  ACTIVE
+  VOIDED
+}
+
+enum ControlledDocumentVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+  VOIDED
 }
 
 enum NotificationSensitivity {
@@ -864,6 +878,11 @@ enum AuditAction {
   FILE_QUARANTINED
   FILE_PROCESSING_FAILED
   FILE_DOWNLOAD_URL_ISSUED
+  SENSITIVE_FILE_READ
+  CONTROLLED_DOCUMENT_CREATED
+  CONTROLLED_DOCUMENT_VERSION_DRAFTED
+  CONTROLLED_DOCUMENT_VERSION_PUBLISHED
+  CONTROLLED_DOCUMENT_VOIDED
   NOTIFICATION_TEMPLATE_PUBLISHED
   NOTIFICATION_TEMPLATE_STATUS_CHANGED
   NOTIFICATION_CREATED
@@ -949,6 +968,8 @@ enum AuditObjectType {
   PERSISTENT_JOB
   FILE_OBJECT
   FILE_UPLOAD_SESSION
+  CONTROLLED_DOCUMENT
+  CONTROLLED_DOCUMENT_VERSION
   NOTIFICATION_TEMPLATE
   NOTIFICATION
   NOTIFICATION_DELIVERY
@@ -1017,6 +1038,11 @@ model User {
   requestedJobReplays                   JobAttempt[]                  @relation("JobAttemptRequestedBy")
   filesUploaded                         FileObject[]                  @relation("FileObjectUploadedBy")
   fileCommands                          FileCommand[]                 @relation("FileCommandActor")
+  controlledDocumentsCreated            ControlledDocument[]          @relation("ControlledDocumentCreatedBy")
+  controlledDocumentsVoided             ControlledDocument[]          @relation("ControlledDocumentVoidedBy")
+  controlledDocumentVersionsCreated     ControlledDocumentVersion[]   @relation("ControlledDocumentVersionCreatedBy")
+  controlledDocumentVersionsPublished   ControlledDocumentVersion[]   @relation("ControlledDocumentVersionPublishedBy")
+  controlledDocumentVersionsVoided      ControlledDocumentVersion[]   @relation("ControlledDocumentVersionVoidedBy")
   notificationTemplateVersionsPublished NotificationTemplateVersion[] @relation("NotificationTemplatePublishedBy")
   notificationsReceived                 Notification[]                @relation("NotificationRecipient")
   notificationReadReceipts              NotificationReadReceipt[]     @relation("NotificationReadRecipient")
@@ -1158,6 +1184,8 @@ model Project {
   members                       ProjectMember[]
   auditLogs                     AuditLog[]
   files                         FileObject[]
+  controlledDocuments           ControlledDocument[]
+  controlledDocumentVersions    ControlledDocumentVersion[]
   notifications                 Notification[]
   deliveryUnits                 DeliveryUnit[]
   projectModules                ProjectModule[]
@@ -1202,6 +1230,66 @@ model Project {
   @@index([capabilityConfigurationStatus, createdAt])
   @@unique([mainControlStageId, mainControlStageProjectId])
   @@map("projects")
+}
+
+model ControlledDocument {
+  id                        String                   @id @default(cuid())
+  projectId                 String                   @map("project_id")
+  code                      String
+  title                     String
+  status                    ControlledDocumentStatus @default(ACTIVE)
+  currentPublishedVersionId String?                  @map("current_published_version_id")
+  version                   Int                      @default(1)
+  createdById               String                   @map("created_by_id")
+  voidedById                String?                  @map("voided_by_id")
+  voidedAt                  DateTime?                @map("voided_at")
+  voidReason                String?                  @map("void_reason")
+  createdAt                 DateTime                 @default(now()) @map("created_at")
+  updatedAt                 DateTime                 @updatedAt @map("updated_at")
+  project                   Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                 User                     @relation("ControlledDocumentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voidedBy                  User?                    @relation("ControlledDocumentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentPublishedVersion   ControlledDocumentVersion? @relation("DocumentCurrentPublishedVersion", fields: [currentPublishedVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  versions                  ControlledDocumentVersion[] @relation("ControlledDocumentVersions")
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@unique([currentPublishedVersionId, projectId])
+  @@index([projectId, status, code])
+  @@index([createdById, createdAt])
+  @@map("controlled_documents")
+}
+
+model ControlledDocumentVersion {
+  id                  String                          @id @default(cuid())
+  documentId          String                          @map("document_id")
+  projectId           String                          @map("project_id")
+  version             Int
+  status              ControlledDocumentVersionStatus @default(DRAFT)
+  sourceFileId        String                          @map("source_file_id")
+  sourceFileSha256    String                          @map("source_file_sha256")
+  sourceMimeType      String                          @map("source_mime_type")
+  sourceFileSize      BigInt                          @map("source_file_size")
+  createdById         String                          @map("created_by_id")
+  publishedById       String?                         @map("published_by_id")
+  publishedAt         DateTime?                       @map("published_at")
+  voidedById          String?                         @map("voided_by_id")
+  voidedAt            DateTime?                       @map("voided_at")
+  voidReason          String?                         @map("void_reason")
+  createdAt           DateTime                        @default(now()) @map("created_at")
+  document            ControlledDocument              @relation("ControlledDocumentVersions", fields: [documentId, projectId], references: [id, projectId], onDelete: Restrict)
+  project             Project                         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceFile          FileObject                      @relation("DocumentVersionSourceFile", fields: [sourceFileId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy           User                            @relation("ControlledDocumentVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy         User?                           @relation("ControlledDocumentVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  voidedBy            User?                           @relation("ControlledDocumentVersionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentForDocument  ControlledDocument?             @relation("DocumentCurrentPublishedVersion")
+
+  @@unique([documentId, version])
+  @@unique([id, projectId])
+  @@index([projectId, status, createdAt])
+  @@index([sourceFileId])
+  @@map("controlled_document_versions")
 }
 
 model ProjectTemplateSnapshot {

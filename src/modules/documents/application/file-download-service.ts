@@ -57,6 +57,31 @@ export async function recordFileAccessDenied(input: {
   });
 }
 
+export async function recordSensitiveFileRead(input: {
+  file: { id: string; projectId: string; sensitivity: string };
+  context: AuditContext;
+  method: string;
+  path: string;
+}) {
+  return writeAudit(db, {
+    action: AUDIT_ACTIONS.SENSITIVE_FILE_READ,
+    objectType: AUDIT_OBJECT_TYPES.FILE_OBJECT,
+    objectId: input.file.id,
+    context: { ...input.context, projectId: input.file.projectId },
+    metadata: {
+      value: {
+        fileId: input.file.id,
+        projectId: input.file.projectId,
+        sensitivity: input.file.sensitivity,
+        permission: "SENSITIVE_FILE_READ",
+        method: input.method,
+        path: input.path
+      },
+      allowedFields: FILE_AUDIT_FIELDS
+    }
+  });
+}
+
 export async function issueFileDownloadUrl(input: {
   file: NonNullable<Awaited<ReturnType<typeof findFileAuthorizationTarget>>>;
   actorId: string;
