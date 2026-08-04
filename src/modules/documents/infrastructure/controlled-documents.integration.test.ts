@@ -439,7 +439,7 @@ describeDatabase("APM-050 PostgreSQL controlled document facts", () => {
       db.controlledDocument.delete({ where: { id: created.document.id } })
     ).rejects.toThrow(/cannot be deleted/u);
     await expect(
-      db.$executeRawUnsafe('TRUNCATE TABLE "controlled_document_versions"')
+      db.$executeRawUnsafe('TRUNCATE TABLE "controlled_document_versions", "controlled_documents"')
     ).rejects.toThrow(/cannot be truncated/u);
   });
 
@@ -477,7 +477,9 @@ describeDatabase("APM-050 PostgreSQL controlled document facts", () => {
       error: { code: "IDEMPOTENCY_KEY_REUSED" }
     });
     await expect(
-      db.controlledDocument.count({ where: { projectId: ids.projectA, code: body.code } })
+      db.controlledDocument.count({
+        where: { projectId: ids.projectA, code: body.code.toUpperCase() }
+      })
     ).resolves.toBe(1);
   });
 });
