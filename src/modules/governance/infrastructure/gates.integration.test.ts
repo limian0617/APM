@@ -508,4 +508,111 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
       db.outboxEvent.count({ where: { eventType: "gate.instance.created" } })
     ).resolves.toBeGreaterThanOrEqual(1);
   });
+
+  it("rolls back and idempotently replays a Gate check run as one fact set", async () => {
+    const facts = await seedProject("CHECK-TRANSACTION");
+    const definition = await db.projectGateDefinition.findFirstOrThrow({
+      where: { projectId: facts.project.id, code: "G.DU" }
+    });
+    const instance = await createGateInstance({
+      projectId: facts.project.id,
+      gateDefinitionId: definition.id,
+      scope: "DELIVERY_UNIT",
+      deliveryUnitId: facts.deliveryUnit.id,
+      moduleId: null,
+      actorId: ids.admin,
+      auditContext: auditContext("check-transaction-instance", facts.project.id)
+    });
+    await db.projectStage.update({
+      where: { id: facts.stage.id },
+      data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
+    });
+
+    const rollbackOperation = `gate-check-rollback-${suffix}`;
+    const beforeRollback = await Promise.all([
+      db.gateCheckSnapshot.count({ where: { gateInstanceId: instance.gateInstance.id } }),
+      db.gateCheckResult.count({ where: { projectId: facts.project.id } }),
+      db.auditLog.count({ where: { operationId: rollbackOperation } }),
+      db.outboxEvent.count({ where: { eventType: "gate.check-run.completed" } })
+    ]);
+    await expect(
+      db.$transaction(async (transaction) => {
+        await runGateChecks(
+          {
+            projectId: facts.project.id,
+            gateInstanceId: instance.gateInstance.id,
+            version: instance.resourceVersion,
+            reason: "Run Gate checks before forcing a rollback",
+            actorId: ids.admin,
+            auditContext: auditContext(rollbackOperation, facts.project.id)
+          },
+          transaction
+        );
+        throw new Error("force Gate check rollback");
+      })
+    ).rejects.toThrow("force Gate check rollback");
+    await expect(
+      Promise.all([
+        db.gateCheckSnapshot.count({ where: { gateInstanceId: instance.gateInstance.id } }),
+        db.gateCheckResult.count({ where: { projectId: facts.project.id } }),
+        db.auditLog.count({ where: { operationId: rollbackOperation } }),
+        db.outboxEvent.count({ where: { eventType: "gate.check-run.completed" } })
+      ])
+    ).resolves.toEqual(beforeRollback);
+    await expect(
+      db.projectGateInstance.findUniqueOrThrow({ where: { id: instance.gateInstance.id } })
+    ).resolves.toMatchObject({ checkRunSequence: 0, version: instance.resourceVersion });
+
+    const operation = `gate-check-${suffix}`;
+    const request = {
+      gateInstanceId: instance.gateInstance.id,
+      version: instance.resourceVersion,
+      reason: "Run Gate checks through the idempotency boundary"
+    };
+    const command = () =>
+      executeIdempotentCommand({
+        actorId: ids.admin,
+        operation,
+        idempotencyKey: `gate-check-key-${suffix}`,
+        request,
+        execute: async (transaction) => ({
+          status: 200,
+          body: await runGateChecks(
+            {
+              projectId: facts.project.id,
+              ...request,
+              actorId: ids.admin,
+              auditContext: auditContext(operation, facts.project.id)
+            },
+            transaction
+          )
+        })
+      });
+    const [first, replay] = await Promise.all([command(), command()]);
+    expect(replay.replayed || first.replayed).toBe(true);
+    expect(first.body).toEqual(replay.body);
+
+    const snapshot = await db.gateCheckSnapshot.findFirstOrThrow({
+      where: { gateInstanceId: instance.gateInstance.id }
+    });
+    await expect(
+      Promise.all([
+        db.gateCheckSnapshot.count({ where: { gateInstanceId: instance.gateInstance.id } }),
+        db.gateCheckResult.count({ where: { gateCheckSnapshotId: snapshot.id } }),
+        db.auditLog.count({
+          where: { operationId: operation, action: "GATE_CHECK_RUN_COMPLETED" }
+        }),
+        db.outboxEvent.count({
+          where: { eventType: "gate.check-run.completed", aggregateId: snapshot.id }
+        }),
+        db.projectGateInstance.findUniqueOrThrow({ where: { id: instance.gateInstance.id } })
+      ])
+    ).resolves.toEqual([
+      1,
+      1,
+      1,
+      1,
+      expect.objectContaining({ checkRunSequence: 1, version: instance.resourceVersion + 1 })
+    ]);
+  });
 });
