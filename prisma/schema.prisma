@@ -795,6 +795,56 @@ enum ProjectAlertScanStatus {
   FAILED
 }
 
+enum IssueCategory {
+  SAFETY
+  FUNCTION
+  PERFORMANCE
+  APPEARANCE
+  DELIVERY_COMPLETENESS
+}
+
+enum IssueSourceType {
+  PROJECT
+  FAT
+  SAT
+}
+
+enum IssueSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IssueRootCauseCategory {
+  DESIGN
+  MANUFACTURING
+  ASSEMBLY
+  SOFTWARE
+  PROCUREMENT
+  MATERIAL
+  PROCESS
+  OTHER
+}
+
+enum IssueStatus {
+  PENDING_ACCEPTANCE
+  ANALYZING
+  PROCESSING
+  PENDING_VERIFICATION
+  CLOSED
+}
+
+enum IssueHistoryEventType {
+  CREATED
+  DETAILS_UPDATED
+  STARTED_ANALYSIS
+  STARTED_PROCESSING
+  VERIFICATION_SUBMITTED
+  CLOSED
+  REOPENED
+}
+
 enum StageReleaseAuthorizationScope {
   PROJECT
   DELIVERY_UNIT
@@ -937,6 +987,10 @@ enum AuditAction {
   ALERT_RESOLVED
   ALERT_CLOSED
   ALERT_ESCALATED
+  ISSUE_CREATED
+  ISSUE_UPDATED
+  ISSUE_STATUS_CHANGED
+  ISSUE_REOPENED
 }
 
 enum AuditObjectType {
@@ -978,6 +1032,7 @@ enum AuditObjectType {
   ALERT_RULE
   PROJECT_ALERT
   PROJECT_ALERT_SCAN
+  ISSUE
 }
 
 enum AuditSource {
@@ -1069,6 +1124,10 @@ model User {
   residualItemEvents                    ResidualItemEvent[]           @relation("ResidualItemEventActor")
   projectAlertEvents                    ProjectAlertEvent[]           @relation("ProjectAlertEventActor")
   projectAlertScansRequested            ProjectAlertScan[]            @relation("ProjectAlertScanRequestedBy")
+  issuesCreated                         Issue[]                       @relation("IssueCreatedBy")
+  issuesUpdated                         Issue[]                       @relation("IssueUpdatedBy")
+  issuesClosed                          Issue[]                       @relation("IssueClosedBy")
+  issueHistoriesActed                   IssueHistory[]                @relation("IssueHistoryActor")
 
   @@index([departmentId])
   @@map("users")
@@ -1185,6 +1244,8 @@ model Project {
   alerts                        ProjectAlert[]
   alertEvents                   ProjectAlertEvent[]
   alertScans                    ProjectAlertScan[]
+  issues                        Issue[]
+  issueHistories                IssueHistory[]
   wbsNodes                      WbsNode[]
   planningTasks                 PlanningTask[]
   planningCalendar              ProjectCalendar?
@@ -2003,6 +2064,74 @@ model ProjectAlertScan {
   @@index([projectId, requestedAt])
   @@index([projectId, status, requestedAt])
   @@map("project_alert_scans")
+}
+
+model Issue {
+  id                       String                 @id @default(cuid())
+  projectId                String                 @map("project_id")
+  title                    String
+  confirmedText            String                 @map("confirmed_text")
+  sourceType               IssueSourceType       @default(PROJECT) @map("source_type")
+  category                 IssueCategory
+  severity                 IssueSeverity
+  phenomenonDescription    String?                @map("phenomenon_description")
+  rootCauseCategory        IssueRootCauseCategory? @map("root_cause_category")
+  rootCauseDescription     String?                @map("root_cause_description")
+  status                   IssueStatus            @default(PENDING_ACCEPTANCE)
+  statusChangedAt          DateTime               @default(now()) @map("status_changed_at")
+  closedAt                 DateTime?              @map("closed_at")
+  closedById               String?                @map("closed_by_id")
+  verificationEvidence     String?                @map("verification_evidence")
+  version                  Int                    @default(1)
+  createdById              String                 @map("created_by_id")
+  updatedById              String                 @map("updated_by_id")
+  createdAt                DateTime               @default(now()) @map("created_at")
+  updatedAt                DateTime               @updatedAt @map("updated_at")
+  project                  Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                User                   @relation("IssueCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                User                   @relation("IssueUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  closedBy                 User?                  @relation("IssueClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  tags                     IssueTag[]
+  history                  IssueHistory[]
+
+  @@unique([id, projectId])
+  @@index([projectId, status, severity, updatedAt])
+  @@index([projectId, category, status])
+  @@index([closedById, closedAt])
+  @@map("issues")
+}
+
+model IssueTag {
+  id        String   @id @default(cuid())
+  projectId String   @map("project_id")
+  issueId   String   @map("issue_id")
+  tag       String
+  createdAt DateTime @default(now()) @map("created_at")
+  issue     Issue    @relation(fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([issueId, tag])
+  @@index([projectId, tag])
+  @@map("issue_tags")
+}
+
+model IssueHistory {
+  id           String                @id @default(cuid())
+  projectId    String                @map("project_id")
+  issueId      String                @map("issue_id")
+  sequence     Int
+  eventType    IssueHistoryEventType @map("event_type")
+  reason       String
+  snapshotJson Json                  @map("snapshot_json")
+  actorId      String                @map("actor_id")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  issue        Issue                 @relation(fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+  project      Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  actor        User                  @relation("IssueHistoryActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([issueId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("issue_histories")
 }
 
 model WbsNode {

@@ -84,7 +84,11 @@ export const AUDIT_ACTIONS = {
   ALERT_STARTED: "ALERT_STARTED",
   ALERT_RESOLVED: "ALERT_RESOLVED",
   ALERT_CLOSED: "ALERT_CLOSED",
-  ALERT_ESCALATED: "ALERT_ESCALATED"
+  ALERT_ESCALATED: "ALERT_ESCALATED",
+  ISSUE_CREATED: "ISSUE_CREATED",
+  ISSUE_UPDATED: "ISSUE_UPDATED",
+  ISSUE_STATUS_CHANGED: "ISSUE_STATUS_CHANGED",
+  ISSUE_REOPENED: "ISSUE_REOPENED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -125,7 +129,8 @@ export const AUDIT_OBJECT_TYPES = {
   RESIDUAL_ITEM: "RESIDUAL_ITEM",
   ALERT_RULE: "ALERT_RULE",
   PROJECT_ALERT: "PROJECT_ALERT",
-  PROJECT_ALERT_SCAN: "PROJECT_ALERT_SCAN"
+  PROJECT_ALERT_SCAN: "PROJECT_ALERT_SCAN",
+  ISSUE: "ISSUE"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -229,6 +234,21 @@ export const ALERT_AUDIT_FIELDS = [
   "permission",
   "method",
   "path"
+] as const;
+
+export const ISSUE_AUDIT_FIELDS = [
+  "projectId",
+  "issueId",
+  "title",
+  "sourceType",
+  "category",
+  "severity",
+  "status",
+  "rootCauseCategory",
+  "tagCount",
+  "eventType",
+  "reason",
+  "version"
 ] as const;
 
 export const TEMPLATE_AUDIT_FIELDS = [
