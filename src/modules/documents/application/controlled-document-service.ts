@@ -362,19 +362,21 @@ export async function createControlledDocument(
       await assertSensitiveSourceFileAccess(source, input.sourceFileAccess);
       const document = await client.controlledDocument.create({
         data: {
-          projectId: input.projectId,
           code,
           title,
-          createdById: input.actorId,
+          project: { connect: { id: input.projectId } },
+          createdBy: { connect: { id: input.actorId } },
           versions: {
             create: {
-              projectId: input.projectId,
               version: 1,
-              sourceFileId: source.id,
               sourceFileSha256: source.sha256,
               sourceMimeType: source.mimeType,
               sourceFileSize: source.size,
-              createdById: input.actorId
+              project: { connect: { id: input.projectId } },
+              sourceFile: {
+                connect: { id_projectId: { id: source.id, projectId: input.projectId } }
+              },
+              createdBy: { connect: { id: input.actorId } }
             }
           }
         },
