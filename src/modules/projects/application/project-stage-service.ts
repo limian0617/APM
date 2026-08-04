@@ -118,13 +118,18 @@ function stageSnapshot(value: {
   return {
     projectId: value.projectId,
     projectStageId: value.projectStageId ?? value.id,
-    deliveryUnitStageId: value.deliveryUnitId ? value.id : undefined,
-    deliveryUnitId: value.deliveryUnitId ?? undefined,
-    sourceSnapshotComponentId: value.sourceSnapshotComponentId ?? undefined,
-    code: value.code ?? undefined,
-    name: value.name ?? undefined,
-    description: value.description ?? undefined,
-    sequence: value.sequence ?? undefined,
+    ...(value.deliveryUnitId === null || value.deliveryUnitId === undefined
+      ? {}
+      : { deliveryUnitStageId: value.id, deliveryUnitId: value.deliveryUnitId }),
+    ...(value.sourceSnapshotComponentId === null || value.sourceSnapshotComponentId === undefined
+      ? {}
+      : { sourceSnapshotComponentId: value.sourceSnapshotComponentId }),
+    ...(value.code === undefined ? {} : { code: value.code }),
+    ...(value.name === undefined ? {} : { name: value.name }),
+    ...(value.description === null || value.description === undefined
+      ? {}
+      : { description: value.description }),
+    ...(value.sequence === undefined ? {} : { sequence: value.sequence }),
     status: value.status,
     exceptionalReason: value.exceptionalReason,
     statusChangedAt: value.statusChangedAt.toISOString(),
