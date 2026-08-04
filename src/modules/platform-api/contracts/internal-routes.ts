@@ -659,6 +659,32 @@ export const gateSubmissionCommandBodySchema = z.strictObject({
   version: positiveVersionSchema,
   reason: reasonSchema
 });
+const residualItemInputSchema = z.strictObject({
+  title: z.string().trim().min(1).max(191),
+  ownerMembershipId: identifierSchema,
+  verifierMembershipId: identifierSchema,
+  dueAt: z.string().datetime({ offset: true }),
+  evidence: z.string().trim().min(1).max(4096),
+  escalationRule: z.string().trim().min(1).max(1024)
+});
+export const conditionalReleaseBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema,
+  residualItems: z.array(residualItemInputSchema).min(1).max(100)
+});
+export const residualItemPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  residualItemId: identifierSchema
+});
+export const residualItemCommandBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const verifyResidualItemBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  decision: z.enum(["VERIFY", "RETURN"]),
+  reason: reasonSchema
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema

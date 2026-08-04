@@ -21,11 +21,21 @@ import {
   submitGateSubmission,
   withdrawGateSubmission
 } from "../application/gate-submission-service";
+import {
+  conditionallyReleaseGate,
+  startResidualItem,
+  submitResidualItemVerification,
+  verifyResidualItem
+} from "../application/gate-conditional-release-service";
 import { GET as listProjectGatesRoute } from "../../../app/api/projects/[projectId]/gates/route";
 import { POST as createGateInstanceRoute } from "../../../app/api/projects/[projectId]/gate-instances/route";
 import { POST as runGateChecksRoute } from "../../../app/api/projects/[projectId]/gate-instances/[instanceId]/checks/route";
 import { POST as submitGateSubmissionRoute } from "../../../app/api/projects/[projectId]/gate-instances/[instanceId]/submissions/route";
 import { POST as approveGateSubmissionRoute } from "../../../app/api/projects/[projectId]/gate-submissions/[submissionId]/approve/route";
+import { POST as conditionalReleaseRoute } from "../../../app/api/projects/[projectId]/gate-submissions/[submissionId]/conditional-release/route";
+import { POST as startResidualItemRoute } from "../../../app/api/projects/[projectId]/residual-items/[residualItemId]/start/route";
+import { POST as submitResidualItemVerificationRoute } from "../../../app/api/projects/[projectId]/residual-items/[residualItemId]/submit-verification/route";
+import { POST as verifyResidualItemRoute } from "../../../app/api/projects/[projectId]/residual-items/[residualItemId]/verify/route";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
@@ -1184,5 +1194,316 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
         where: { gateSubmissionId: submittedBody.submission.gateSubmissionId }
       })
     ).resolves.toBe(1);
+  });
+
+  it("conditionally releases an approved Gate and completes its stage only after verifier closure", async () => {
+    const facts = await seedProject("CONDITIONAL-RELEASE");
+    await db.projectMember.createMany({
+      data: [
+        {
+          projectId: facts.project.id,
+          userId: ids.quality,
+          projectRole: "QUALITY",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        },
+        {
+          projectId: facts.project.id,
+          userId: ids.departmentLead,
+          projectRole: "DEPARTMENT_LEAD",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        }
+      ]
+    });
+    await db.projectStage.updateMany({
+      where: { id: facts.stage.id, projectId: facts.project.id },
+      data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
+    });
+    const instance = await db.projectGateInstance.findFirstOrThrow({
+      where: { projectId: facts.project.id, gateDefinition: { code: "G.ANY" } }
+    });
+    const checked = await runGateChecks({
+      projectId: facts.project.id,
+      gateInstanceId: instance.id,
+      version: instance.version,
+      reason: "Prepare conditional release",
+      actorId: ids.projectManager,
+      auditContext: auditContext("conditional-release-check", facts.project.id)
+    });
+    const submitted = await submitGateSubmission({
+      projectId: facts.project.id,
+      gateInstanceId: instance.id,
+      version: checked.resourceVersion,
+      reason: "Submit conditional Gate",
+      actorId: ids.projectManager,
+      auditContext: auditContext("conditional-release-submit", facts.project.id)
+    });
+    const approved = await decideGateSubmission({
+      projectId: facts.project.id,
+      submissionId: submitted.submission.gateSubmissionId,
+      version: submitted.resourceVersion,
+      decision: "APPROVED",
+      reason: "Quality approves conditional release",
+      actorId: ids.quality,
+      auditContext: auditContext("conditional-release-approve", facts.project.id)
+    });
+    const [ownerMembership, verifierMembership] = await Promise.all([
+      db.projectMember.findFirstOrThrow({
+        where: { projectId: facts.project.id, userId: ids.projectManager, leftAt: null }
+      }),
+      db.projectMember.findFirstOrThrow({
+        where: { projectId: facts.project.id, userId: ids.quality, leftAt: null }
+      })
+    ]);
+    const released = await conditionallyReleaseGate({
+      projectId: facts.project.id,
+      submissionId: submitted.submission.gateSubmissionId,
+      version: approved.resourceVersion,
+      reason: "客户现场确认后补齐照片",
+      residualItems: [
+        {
+          title: "补充安全防护照片",
+          ownerMembershipId: ownerMembership.id,
+          verifierMembershipId: verifierMembership.id,
+          dueAt: new Date("2030-01-10T00:00:00.000Z"),
+          evidence: "FAT 检查记录 12",
+          escalationRule: "逾期后升级给项目经理"
+        },
+        {
+          title: "补充线缆标识照片",
+          ownerMembershipId: ownerMembership.id,
+          verifierMembershipId: verifierMembership.id,
+          dueAt: new Date("2030-01-11T00:00:00.000Z"),
+          evidence: "FAT 检查记录 13",
+          escalationRule: "逾期后升级给项目经理"
+        }
+      ],
+      actorId: ids.quality,
+      auditContext: auditContext("conditional-release", facts.project.id)
+    });
+    expect(released.stage.status).toBe("CONDITIONALLY_RELEASED");
+    expect(released.residualItems).toHaveLength(2);
+    const [firstResidual, secondResidual] = released.residualItems;
+    if (!firstResidual || !secondResidual) throw new Error("Expected two residual items.");
+    await expect(
+      db.$executeRaw`
+        UPDATE "residual_items" SET "title" = ${"tampered title"}
+        WHERE "id" = ${firstResidual.residualItemId}
+      `
+    ).rejects.toThrow();
+    await expect(
+      db.$executeRaw`
+        UPDATE "residual_item_events" SET "reason" = ${"tampered event"}
+        WHERE "residual_item_id" = ${firstResidual.residualItemId}
+      `
+    ).rejects.toThrow();
+    await expect(
+      db.$executeRaw`
+        UPDATE "project_stages"
+        SET "status" = 'COMPLETED'::"ProjectStageExecutionStatus"
+        WHERE "id" = ${facts.stage.id}
+      `
+    ).rejects.toThrow();
+    const [firstStarted, secondStarted] = await Promise.all(
+      [firstResidual, secondResidual].map((residualItem, index) =>
+        startResidualItem({
+          projectId: facts.project.id,
+          residualItemId: residualItem.residualItemId,
+          version: residualItem.version,
+          reason: `Owner starts evidence collection ${index + 1}`,
+          actorId: ids.projectManager,
+          auditContext: auditContext(`residual-start-${index + 1}`, facts.project.id)
+        })
+      )
+    );
+    const [firstSubmitted, secondSubmitted] = await Promise.all(
+      [firstStarted, secondStarted].map((started, index) =>
+        submitResidualItemVerification({
+          projectId: facts.project.id,
+          residualItemId: [firstResidual, secondResidual][index].residualItemId,
+          version: started.resourceVersion,
+          reason: `Owner submits evidence for verification ${index + 1}`,
+          actorId: ids.projectManager,
+          auditContext: auditContext(`residual-submit-verification-${index + 1}`, facts.project.id)
+        })
+      )
+    );
+    const verified = await Promise.all(
+      [firstSubmitted, secondSubmitted].map((submittedForVerification, index) =>
+        verifyResidualItem({
+          projectId: facts.project.id,
+          residualItemId: [firstResidual, secondResidual][index].residualItemId,
+          version: submittedForVerification.resourceVersion,
+          decision: "VERIFY",
+          reason: `Verifier confirms supplied evidence ${index + 1}`,
+          actorId: ids.quality,
+          auditContext: auditContext(`residual-verify-${index + 1}`, facts.project.id)
+        })
+      )
+    );
+    expect(verified.map((result) => result.residualItem.status)).toEqual(["CLOSED", "CLOSED"]);
+    expect(verified.map((result) => result.stage?.status)).toContain("COMPLETED");
+    await expect(
+      db.projectStage.findUniqueOrThrow({ where: { id: facts.stage.id } })
+    ).resolves.toMatchObject({
+      status: "COMPLETED"
+    });
+    await expect(
+      db.residualItemEvent.count({
+        where: {
+          residualItemId: { in: [firstResidual.residualItemId, secondResidual.residualItemId] }
+        }
+      })
+    ).resolves.toBe(8);
+  });
+
+  it("enforces conditional release API authorization and idempotent residual closure", async () => {
+    const facts = await seedProject("CONDITIONAL-API");
+    await db.projectMember.createMany({
+      data: [
+        {
+          projectId: facts.project.id,
+          userId: ids.quality,
+          projectRole: "QUALITY",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        },
+        {
+          projectId: facts.project.id,
+          userId: ids.departmentLead,
+          projectRole: "DEPARTMENT_LEAD",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        }
+      ]
+    });
+    await db.projectStage.updateMany({
+      where: { id: facts.stage.id, projectId: facts.project.id },
+      data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
+    });
+    const instance = await db.projectGateInstance.findFirstOrThrow({
+      where: { projectId: facts.project.id, gateDefinition: { code: "G.ANY" } }
+    });
+    const checked = await runGateChecks({
+      projectId: facts.project.id,
+      gateInstanceId: instance.id,
+      version: instance.version,
+      reason: "Prepare conditional API release",
+      actorId: ids.projectManager,
+      auditContext: auditContext("conditional-api-check", facts.project.id)
+    });
+    const submitted = await submitGateSubmission({
+      projectId: facts.project.id,
+      gateInstanceId: instance.id,
+      version: checked.resourceVersion,
+      reason: "Submit conditional API Gate",
+      actorId: ids.projectManager,
+      auditContext: auditContext("conditional-api-submit", facts.project.id)
+    });
+    const approved = await decideGateSubmission({
+      projectId: facts.project.id,
+      submissionId: submitted.submission.gateSubmissionId,
+      version: submitted.resourceVersion,
+      decision: "APPROVED",
+      reason: "Quality approves conditional API Gate",
+      actorId: ids.quality,
+      auditContext: auditContext("conditional-api-approve", facts.project.id)
+    });
+    const [ownerMembership, verifierMembership] = await Promise.all([
+      db.projectMember.findFirstOrThrow({
+        where: { projectId: facts.project.id, userId: ids.projectManager, leftAt: null }
+      }),
+      db.projectMember.findFirstOrThrow({
+        where: { projectId: facts.project.id, userId: ids.quality, leftAt: null }
+      })
+    ]);
+    const releaseUrl = `http://localhost/api/projects/${facts.project.id}/gate-submissions/${submitted.submission.gateSubmissionId}/conditional-release`;
+    const releaseContext = {
+      params: Promise.resolve({
+        projectId: facts.project.id,
+        submissionId: submitted.submission.gateSubmissionId
+      })
+    };
+    const releaseBody = {
+      version: approved.resourceVersion,
+      reason: "客户确认后补齐照片",
+      residualItems: [
+        {
+          title: "补充照片",
+          ownerMembershipId: ownerMembership.id,
+          verifierMembershipId: verifierMembership.id,
+          dueAt: "2030-01-10T00:00:00.000Z",
+          evidence: "FAT 记录 12",
+          escalationRule: "逾期升级给项目经理"
+        }
+      ]
+    };
+    expect(
+      (
+        await conditionalReleaseRoute(
+          commandRequest(releaseUrl, releaseBody, `conditional-api-unauth-${suffix}`),
+          releaseContext
+        )
+      ).status
+    ).toBe(401);
+    const releaseKey = `conditional-api-release-${suffix}`;
+    const released = await conditionalReleaseRoute(
+      commandRequest(releaseUrl, releaseBody, releaseKey, ids.quality),
+      releaseContext
+    );
+    const releaseReplay = await conditionalReleaseRoute(
+      commandRequest(releaseUrl, releaseBody, releaseKey, ids.quality),
+      releaseContext
+    );
+    expect(released.status).toBe(200);
+    expect(releaseReplay.headers.get("idempotency-replayed")).toBe("true");
+    const releasedBody = (await released.json()) as {
+      residualItems: Array<{ residualItemId: string; version: number }>;
+    };
+    const residual = releasedBody.residualItems[0];
+    if (!residual) throw new Error("Expected API residual item.");
+    const residualUrl = `http://localhost/api/projects/${facts.project.id}/residual-items/${residual.residualItemId}`;
+    const residualContext = {
+      params: Promise.resolve({
+        projectId: facts.project.id,
+        residualItemId: residual.residualItemId
+      })
+    };
+    const started = await startResidualItemRoute(
+      commandRequest(
+        `${residualUrl}/start`,
+        { version: residual.version, reason: "开始处理" },
+        `conditional-api-start-${suffix}`,
+        ids.projectManager
+      ),
+      residualContext
+    );
+    expect(started.status).toBe(200);
+    const startedBody = (await started.json()) as { resourceVersion: number };
+    const submittedForVerification = await submitResidualItemVerificationRoute(
+      commandRequest(
+        `${residualUrl}/submit-verification`,
+        { version: startedBody.resourceVersion, reason: "提交验证" },
+        `conditional-api-submit-verification-${suffix}`,
+        ids.projectManager
+      ),
+      residualContext
+    );
+    expect(submittedForVerification.status).toBe(200);
+    const submittedBody = (await submittedForVerification.json()) as { resourceVersion: number };
+    const verified = await verifyResidualItemRoute(
+      commandRequest(
+        `${residualUrl}/verify`,
+        { version: submittedBody.resourceVersion, decision: "VERIFY", reason: "验证通过" },
+        `conditional-api-verify-${suffix}`,
+        ids.quality
+      ),
+      residualContext
+    );
+    expect(verified.status).toBe(200);
+    await expect(
+      db.projectStage.findUniqueOrThrow({ where: { id: facts.stage.id } })
+    ).resolves.toMatchObject({ status: "COMPLETED" });
   });
 });
