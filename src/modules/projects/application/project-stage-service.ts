@@ -316,7 +316,7 @@ export async function transitionProjectStage(
       }
       const fromStatus = current.status as ProjectStageExecutionStatus;
       validateStageTransition(fromStatus, input.toStatus, reason);
-      if (input.toStatus === "AUTHORIZED") {
+      if (input.toStatus === "AUTHORIZED" || input.toStatus === "IN_PROGRESS") {
         const deliveryUnitId = input.deliveryUnitStageId
           ? (current as Prisma.DeliveryUnitStageGetPayload<Record<never, never>>).deliveryUnitId
           : undefined;

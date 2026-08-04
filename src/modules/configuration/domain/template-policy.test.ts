@@ -41,7 +41,7 @@ describe("APM-010 template policy", () => {
   it("normalizes a cropped merged stage component before calculating its checksum", () => {
     const content = validateTemplateComponentContent("STAGE", {
       stages: [
-        { code: " S4 ", name: " 装配与联调 ", sequence: 2 },
+        { code: " S4 ", name: " 装配与联调 ", sequence: 4 },
         { code: " S0 ", name: " 项目启动 ", sequence: 0 },
         {
           code: " S1 ",
@@ -60,7 +60,7 @@ describe("APM-010 template policy", () => {
           description: "标准机合并方案和设计评审",
           sequence: 1
         },
-        { code: "S4", name: "装配与联调", sequence: 2 }
+        { code: "S4", name: "装配与联调", sequence: 4 }
       ]
     };
 
@@ -125,9 +125,12 @@ describe("APM-010 template policy", () => {
     ).toThrowError(TemplateValidationError);
   });
 
-  it("rejects invalid stage codes and sequence values", () => {
+  it("rejects stage codes outside S0-S8 and sequence values that do not match the stage ordinal", () => {
     for (const stage of [
       { code: "s0", name: "启动", sequence: 0 },
+      { code: "S9", name: "超出九阶段", sequence: 9 },
+      { code: "ALPHA", name: "自定义阶段", sequence: 0 },
+      { code: "S4", name: "错位阶段", sequence: 2 },
       { code: "S0", name: "启动", sequence: -1 },
       { code: "S0", name: "启动", sequence: 0.5 },
       { code: "S0", name: "启动", sequence: Number.MAX_SAFE_INTEGER + 1 }
@@ -138,8 +141,8 @@ describe("APM-010 template policy", () => {
     }
   });
 
-  it("accepts at most 100 stage definitions", () => {
-    const stages = Array.from({ length: 100 }, (_, sequence) => ({
+  it("accepts a cropped subset and rejects more than the nine canonical stage definitions", () => {
+    const stages = Array.from({ length: 9 }, (_, sequence) => ({
       code: `S${sequence}`,
       name: `阶段 ${sequence}`,
       sequence
@@ -148,7 +151,7 @@ describe("APM-010 template policy", () => {
     expect(validateTemplateComponentContent("STAGE", { stages })).toMatchObject({ stages });
     expect(() =>
       validateTemplateComponentContent("STAGE", {
-        stages: [...stages, { code: "S100", name: "阶段 100", sequence: 100 }]
+        stages: [...stages, { code: "S9", name: "阶段 9", sequence: 9 }]
       })
     ).toThrowError(TemplateValidationError);
   });

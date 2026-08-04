@@ -103,12 +103,19 @@ export function validateTemplateComponentContent(
     case TEMPLATE_COMPONENT_TYPES.STAGE: {
       rejectUnknownKeys(content, ["stages"], "阶段组件");
       const items = array(content.stages, "stages");
-      if (items.length > 100) {
-        throw new TemplateValidationError("INVALID_COMPONENT_RULES", "阶段最多包含 100 项。");
+      if (items.length > 9) {
+        throw new TemplateValidationError(
+          "INVALID_COMPONENT_RULES",
+          "阶段最多包含 S0 至 S8 九项。"
+        );
       }
       const stages = items.map((item) => {
         rejectUnknownKeys(item, ["code", "name", "description", "sequence"], "阶段");
         const code = trimmedStableCode(item.code, "stages.code");
+        const stageCode = /^S([0-8])$/u.exec(code);
+        if (!stageCode) {
+          throw new TemplateValidationError("INVALID_COMPONENT_RULES", "阶段代码必须是 S0 至 S8。");
+        }
         const name = trimmedText(item.name, "阶段名称", 1, 200);
         const description =
           item.description === undefined
@@ -119,6 +126,12 @@ export function validateTemplateComponentContent(
           throw new TemplateValidationError(
             "INVALID_COMPONENT_RULES",
             "阶段顺序必须是非负安全整数。"
+          );
+        }
+        if (sequence !== Number(stageCode[1])) {
+          throw new TemplateValidationError(
+            "INVALID_COMPONENT_RULES",
+            "阶段顺序必须与阶段代码中的序号一致。"
           );
         }
         return description === undefined

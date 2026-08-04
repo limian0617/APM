@@ -77,18 +77,7 @@ async function seedStageFacts(label: string) {
       updatedById: ids.admin
     }
   });
-  const releaseAuthorization = await db.stageReleaseAuthorization.create({
-    data: {
-      projectId: project.id,
-      scope: "PROJECT",
-      fromProjectStageId: firstStage.id,
-      toProjectStageId: secondStage.id,
-      reason: "Authorize the adjacent stage for test coverage",
-      authorizedById: ids.admin
-    }
-  });
-
-  return { project, firstStage, deliveryUnitStage, releaseAuthorization };
+  return { project, firstStage, secondStage, deliveryUnitStage };
 }
 
 describeDatabase("APM-030 PostgreSQL project stage persistence", () => {
@@ -131,6 +120,16 @@ describeDatabase("APM-030 PostgreSQL project stage persistence", () => {
 
   it("rejects raw primary-key mutations for persisted stage facts", async () => {
     const facts = await seedStageFacts("IDENTITY");
+    const releaseAuthorization = await db.stageReleaseAuthorization.create({
+      data: {
+        projectId: facts.project.id,
+        scope: "PROJECT",
+        fromProjectStageId: facts.firstStage.id,
+        toProjectStageId: facts.secondStage.id,
+        reason: "Authorize the adjacent stage for identity coverage",
+        authorizedById: ids.admin
+      }
+    });
 
     await expect(
       db.$executeRaw`UPDATE "project_stages" SET "id" = ${`mutated-project-stage-${suffix}`} WHERE "id" = ${facts.firstStage.id}`
@@ -139,11 +138,11 @@ describeDatabase("APM-030 PostgreSQL project stage persistence", () => {
       db.$executeRaw`UPDATE "delivery_unit_stages" SET "id" = ${`mutated-delivery-unit-stage-${suffix}`} WHERE "id" = ${facts.deliveryUnitStage.id}`
     ).rejects.toThrow(/delivery unit stage stable identity is immutable/u);
     await expect(
-      db.$executeRaw`UPDATE "stage_release_authorizations" SET "id" = ${`mutated-stage-release-${suffix}`} WHERE "id" = ${facts.releaseAuthorization.id}`
+      db.$executeRaw`UPDATE "stage_release_authorizations" SET "id" = ${`mutated-stage-release-${suffix}`} WHERE "id" = ${releaseAuthorization.id}`
     ).rejects.toThrow(/stage release authorization stable identity is immutable/u);
   });
 
-  it("requires an adjacent release before authorizing an unfinished next project stage", async () => {
+  it("requires an active adjacent release before authorizing an unfinished next project stage", async () => {
     const facts = await seedStageFacts("COMMAND");
     const auditContext = {
       actorId: ids.admin,
@@ -157,9 +156,7 @@ describeDatabase("APM-030 PostgreSQL project stage persistence", () => {
       departmentId: "engineering",
       operationId: null
     };
-    const nextStage = await db.projectStage.findFirstOrThrow({
-      where: { projectId: facts.project.id, sequence: 1 }
-    });
+    const nextStage = facts.secondStage;
 
     await expect(
       transitionProjectStage({
@@ -202,6 +199,17 @@ describeDatabase("APM-030 PostgreSQL project stage persistence", () => {
 
     expect(transitioned.stage).toMatchObject({ status: "AUTHORIZED", resourceVersion: 2 });
     expect(revoked.release).toMatchObject({ status: "REVOKED", version: 2 });
+    await expect(
+      transitionProjectStage({
+        projectId: facts.project.id,
+        stageId: nextStage.id,
+        toStatus: "IN_PROGRESS",
+        version: transitioned.resourceVersion,
+        reason: "Do not start a stage after its release has been revoked",
+        actorId: ids.admin,
+        auditContext
+      })
+    ).rejects.toMatchObject({ code: "STAGE_RELEASE_REQUIRED" });
     await expect(
       db.auditLog.count({ where: { projectId: facts.project.id, action: "PROJECT_STAGE_UPDATED" } })
     ).resolves.toBe(1);
