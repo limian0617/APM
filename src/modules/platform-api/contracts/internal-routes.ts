@@ -91,19 +91,63 @@ const stageContentSchema = z
       sequences.add(stage.sequence);
     }
   });
-const gateContentSchema = z.strictObject({
-  gates: z
-    .array(
-      z.strictObject({
-        code: stableCodeSchema,
-        name: templateNameSchema,
-        stageCode: stableCodeSchema,
-        requiredCheckerCodes: z.array(stableCodeSchema).min(1).max(100)
-      })
-    )
-    .min(1)
-    .max(100)
+const gateStableCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_.-]{1,99}$/u);
+const gateNameSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((value) => value.trim().length > 0);
+const gateCheckerBindingSchema = z.strictObject({
+  code: gateStableCodeSchema,
+  version: z.number().int().positive().refine(Number.isSafeInteger)
 });
+const legacyGateDefinitionSchema = z.strictObject({
+  code: gateStableCodeSchema,
+  name: gateNameSchema,
+  stageCode: gateStableCodeSchema,
+  requiredCheckerCodes: z.array(gateStableCodeSchema).min(1).max(100)
+});
+const explicitGateDefinitionSchema = z.strictObject({
+  code: gateStableCodeSchema,
+  name: gateNameSchema,
+  stageCode: gateStableCodeSchema,
+  scope: z.enum(["PROJECT", "DELIVERY_UNIT", "MODULE"]).optional(),
+  checkers: z.array(gateCheckerBindingSchema).min(1).max(100)
+});
+const gateContentSchema = z
+  .strictObject({
+    gates: z
+      .array(z.union([legacyGateDefinitionSchema, explicitGateDefinitionSchema]))
+      .min(1)
+      .max(100)
+  })
+  .superRefine(({ gates }, context) => {
+    const gateCodes = new Set<string>();
+    for (const [gateIndex, gate] of gates.entries()) {
+      if (gateCodes.has(gate.code)) {
+        context.addIssue({
+          code: "custom",
+          message: "Gate 代码不能重复。",
+          path: ["gates", gateIndex, "code"]
+        });
+      }
+      gateCodes.add(gate.code);
+      if (!("checkers" in gate)) continue;
+
+      const checkerBindings = new Set<string>();
+      for (const [checkerIndex, checker] of gate.checkers.entries()) {
+        const bindingKey = `${checker.code}@${checker.version}`;
+        if (checkerBindings.has(bindingKey)) {
+          context.addIssue({
+            code: "custom",
+            message: "Gate 检查器绑定不能重复。",
+            path: ["gates", gateIndex, "checkers", checkerIndex]
+          });
+        }
+        checkerBindings.add(bindingKey);
+      }
+    }
+  });
 const roleContentSchema = z.strictObject({
   roles: z
     .array(
