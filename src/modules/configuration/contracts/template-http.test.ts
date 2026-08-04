@@ -54,6 +54,43 @@ describe("APM-010 template HTTP contracts", () => {
     });
   });
 
+  it("normalizes explicit Gate fields before calculating a template checksum", () => {
+    expect(
+      parseDto(
+        saveTemplateComponentDraftBodySchema,
+        {
+          version: 0,
+          componentType: "GATE",
+          name: "Gate",
+          content: {
+            gates: [
+              {
+                code: " G1 ",
+                name: " 执行基线批准 ",
+                stageCode: " S0 ",
+                scope: "PROJECT",
+                checkers: [{ code: " STAGE.AWAITING_GATE ", version: 1 }]
+              }
+            ]
+          },
+          reason: "创建 Gate 组件"
+        },
+        "body"
+      )
+    ).toMatchObject({
+      content: {
+        gates: [
+          {
+            code: "G1",
+            name: "执行基线批准",
+            stageCode: "S0",
+            checkers: [{ code: "STAGE.AWAITING_GATE", version: 1 }]
+          }
+        ]
+      }
+    });
+  });
+
   it("rejects duplicate stage codes and sequences", () => {
     const base = {
       version: 0,
