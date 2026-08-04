@@ -62,7 +62,12 @@ export const AUDIT_ACTIONS = {
   STAGE_RELEASE_REVOKED: "STAGE_RELEASE_REVOKED",
   GATE_DEFINITION_MATERIALIZED: "GATE_DEFINITION_MATERIALIZED",
   GATE_INSTANCE_CREATED: "GATE_INSTANCE_CREATED",
-  GATE_CHECK_RUN_COMPLETED: "GATE_CHECK_RUN_COMPLETED"
+  GATE_CHECK_RUN_COMPLETED: "GATE_CHECK_RUN_COMPLETED",
+  GATE_SUBMISSION_SUBMITTED: "GATE_SUBMISSION_SUBMITTED",
+  GATE_APPROVAL_RECORDED: "GATE_APPROVAL_RECORDED",
+  GATE_SUBMISSION_WITHDRAWN: "GATE_SUBMISSION_WITHDRAWN",
+  GATE_SUBMISSION_APPROVED: "GATE_SUBMISSION_APPROVED",
+  GATE_SUBMISSION_REJECTED: "GATE_SUBMISSION_REJECTED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -95,7 +100,9 @@ export const AUDIT_OBJECT_TYPES = {
   STAGE_RELEASE_AUTHORIZATION: "STAGE_RELEASE_AUTHORIZATION",
   PROJECT_GATE_DEFINITION: "PROJECT_GATE_DEFINITION",
   PROJECT_GATE_INSTANCE: "PROJECT_GATE_INSTANCE",
-  GATE_CHECK_SNAPSHOT: "GATE_CHECK_SNAPSHOT"
+  GATE_CHECK_SNAPSHOT: "GATE_CHECK_SNAPSHOT",
+  GATE_SUBMISSION: "GATE_SUBMISSION",
+  GATE_APPROVAL: "GATE_APPROVAL"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -417,6 +424,38 @@ export const GATE_CHECK_SNAPSHOT_AUDIT_FIELDS = [
   "status",
   "inputChecksum",
   "resultChecksum"
+] as const;
+
+export const GATE_SUBMISSION_AUDIT_FIELDS = [
+  "projectId",
+  "gateSubmissionId",
+  "gateInstanceId",
+  "gateCheckSnapshotId",
+  "previousSubmissionId",
+  "sequence",
+  "status",
+  "approvalMode",
+  "approverProjectRoles",
+  "approverUserIds",
+  "submittedById",
+  "submittedAt",
+  "withdrawnById",
+  "withdrawnAt",
+  "withdrawalReason",
+  "decidedAt",
+  "version"
+] as const;
+
+export const GATE_APPROVAL_AUDIT_FIELDS = [
+  "projectId",
+  "gateSubmissionId",
+  "gateApprovalId",
+  "gateSubmissionApproverId",
+  "decision",
+  "decidedById",
+  "decidedAt",
+  "status",
+  "version"
 ] as const;
 
 export const AUDIT_QUERY_FIELDS = [

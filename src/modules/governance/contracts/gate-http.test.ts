@@ -5,7 +5,8 @@ import { GateServiceError } from "../application/gate-service";
 import {
   gateServiceErrorResponse,
   parseGateCheckPayload,
-  parseGateInstancePayload
+  parseGateInstancePayload,
+  parseGateSubmissionCommandPayload
 } from "./gate-http";
 
 describe("APM-031 Gate HTTP contracts", () => {
@@ -65,6 +66,19 @@ describe("APM-031 Gate HTTP contracts", () => {
     expect(() => parseGateCheckPayload({ version: 1, reason: "", unexpected: true })).toThrow(
       expect.objectContaining({ code: "VALIDATION_FAILED", status: 422 })
     );
+  });
+
+  it("requires a version and reason for every Gate submission lifecycle command", () => {
+    expect(parseGateSubmissionCommandPayload({ version: 2, reason: "提交当前检查结果" })).toEqual({
+      version: 2,
+      reason: "提交当前检查结果"
+    });
+    expect(() => parseGateSubmissionCommandPayload({ version: 0, reason: "提交" })).toThrow(
+      expect.objectContaining({ code: "VALIDATION_FAILED", status: 422 })
+    );
+    expect(() =>
+      parseGateSubmissionCommandPayload({ version: 2, reason: "", extra: true })
+    ).toThrow(expect.objectContaining({ code: "VALIDATION_FAILED", status: 422 }));
   });
 
   it("maps typed Gate service failures without leaking implementation details", async () => {

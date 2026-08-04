@@ -251,6 +251,32 @@ describe("APM-010 template policy", () => {
     ]);
   });
 
+  it("preserves an approval mode and configured project roles in the Gate definition snapshot", () => {
+    const content = {
+      gates: [
+        {
+          code: "G3",
+          name: "质量批准",
+          stageCode: "S5",
+          scope: "PROJECT",
+          checkers: [{ code: "STAGE.AWAITING_GATE", version: 1 }],
+          approval: {
+            mode: "ALL",
+            projectRoles: ["QUALITY", "DEPARTMENT_LEAD"]
+          }
+        }
+      ]
+    };
+
+    expect(validateTemplateComponentContent("GATE", content)).toEqual(content);
+    expect(parseGateDefinitionRules(content)).toMatchObject([
+      {
+        code: "G3",
+        approval: { mode: "ALL", projectRoles: ["QUALITY", "DEPARTMENT_LEAD"] }
+      }
+    ]);
+  });
+
   it("rejects invalid, duplicate, and mixed Gate checker forms", () => {
     const invalidContents = [
       {

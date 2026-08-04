@@ -712,6 +712,30 @@ enum GateCheckStatus {
   HARD_FAILED
 }
 
+enum GateApprovalMode {
+  ALL
+  ANY
+}
+
+enum GateSubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum GateApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum GateSubmissionEventType {
+  SUBMITTED
+  WITHDRAWN
+  APPROVED
+  REJECTED
+}
+
 enum StageReleaseAuthorizationScope {
   PROJECT
   DELIVERY_UNIT
@@ -832,6 +856,11 @@ enum AuditAction {
   GATE_DEFINITION_MATERIALIZED
   GATE_INSTANCE_CREATED
   GATE_CHECK_RUN_COMPLETED
+  GATE_SUBMISSION_SUBMITTED
+  GATE_APPROVAL_RECORDED
+  GATE_SUBMISSION_WITHDRAWN
+  GATE_SUBMISSION_APPROVED
+  GATE_SUBMISSION_REJECTED
 }
 
 enum AuditObjectType {
@@ -865,6 +894,8 @@ enum AuditObjectType {
   PROJECT_GATE_DEFINITION
   PROJECT_GATE_INSTANCE
   GATE_CHECK_SNAPSHOT
+  GATE_SUBMISSION
+  GATE_APPROVAL
 }
 
 enum AuditSource {
@@ -946,6 +977,11 @@ model User {
   taskDependenciesCreated               TaskDependency[]              @relation("TaskDependencyCreatedBy")
   taskDependenciesUpdated               TaskDependency[]              @relation("TaskDependencyUpdatedBy")
   scheduleRecalculationsRequested       ScheduleRecalculation[]       @relation("ScheduleRecalculationRequestedBy")
+  gateSubmissionsSubmitted              GateSubmission[]              @relation("GateSubmissionSubmittedBy")
+  gateSubmissionsWithdrawn              GateSubmission[]              @relation("GateSubmissionWithdrawnBy")
+  gateSubmissionApprovers               GateSubmissionApprover[]      @relation("GateSubmissionApproverUser")
+  gateApprovals                         GateApproval[]                @relation("GateApprovalDecidedBy")
+  gateSubmissionEvents                  GateSubmissionEvent[]         @relation("GateSubmissionEventActor")
 
   @@index([departmentId])
   @@map("users")
@@ -1051,6 +1087,10 @@ model Project {
   gateInstances                 ProjectGateInstance[]
   gateCheckSnapshots            GateCheckSnapshot[]
   gateCheckResults              GateCheckResult[]
+  gateSubmissions               GateSubmission[]
+  gateSubmissionApprovers       GateSubmissionApprover[]
+  gateApprovals                 GateApproval[]
+  gateSubmissionEvents          GateSubmissionEvent[]
   wbsNodes                      WbsNode[]
   planningTasks                 PlanningTask[]
   planningCalendar              ProjectCalendar?
@@ -1527,6 +1567,7 @@ model ProjectGateInstance {
   deliveryUnit     DeliveryUnit?         @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
   module           ProjectModule?        @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
   checkSnapshots   GateCheckSnapshot[]
+  submissions      GateSubmission[]
 
   @@unique([id, projectId])
   @@index([projectId, projectStageId, scope])
@@ -1553,6 +1594,7 @@ model GateCheckSnapshot {
   project             Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
   gateInstance        ProjectGateInstance  @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
   results             GateCheckResult[]
+  submissions         GateSubmission[]
 
   @@unique([id, projectId])
   @@unique([gateInstanceId, sequence])
@@ -1579,6 +1621,104 @@ model GateCheckResult {
   @@unique([gateCheckSnapshotId, position])
   @@index([projectId, checkerCode, createdAt])
   @@map("gate_check_results")
+}
+
+model GateSubmission {
+  id                   String                   @id @default(cuid())
+  projectId            String                   @map("project_id")
+  gateInstanceId       String                   @map("gate_instance_id")
+  gateCheckSnapshotId  String                   @map("gate_check_snapshot_id")
+  previousSubmissionId String?                  @map("previous_submission_id")
+  sequence             Int
+  status               GateSubmissionStatus     @default(PENDING)
+  approvalMode         GateApprovalMode         @map("approval_mode")
+  approverRolesJson    Json                     @map("approver_roles_json")
+  submittedReason      String                   @map("submitted_reason")
+  submittedById        String                   @map("submitted_by_id")
+  submittedAt          DateTime                 @default(now()) @map("submitted_at")
+  withdrawnById        String?                  @map("withdrawn_by_id")
+  withdrawnAt          DateTime?                @map("withdrawn_at")
+  withdrawalReason     String?                  @map("withdrawal_reason")
+  decidedAt            DateTime?                @map("decided_at")
+  version              Int                      @default(1)
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+  project              Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateInstance         ProjectGateInstance      @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateCheckSnapshot    GateCheckSnapshot        @relation(fields: [gateCheckSnapshotId, projectId], references: [id, projectId], onDelete: Restrict)
+  previousSubmission   GateSubmission?          @relation("GateSubmissionResubmission", fields: [previousSubmissionId], references: [id], onDelete: Restrict)
+  resubmissions        GateSubmission[]         @relation("GateSubmissionResubmission")
+  submittedBy          User                     @relation("GateSubmissionSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  withdrawnBy          User?                    @relation("GateSubmissionWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict)
+  approvers            GateSubmissionApprover[]
+  approvals            GateApproval[]
+  events               GateSubmissionEvent[]
+
+  @@unique([id, projectId])
+  @@unique([gateInstanceId, sequence])
+  @@index([projectId, status, submittedAt])
+  @@index([gateCheckSnapshotId])
+  @@index([previousSubmissionId])
+  @@map("gate_submissions")
+}
+
+model GateSubmissionApprover {
+  id                String         @id @default(cuid())
+  projectId         String         @map("project_id")
+  gateSubmissionId  String         @map("gate_submission_id")
+  userId            String         @map("user_id")
+  membershipIdsJson Json           @map("membership_ids_json")
+  projectRolesJson  Json           @map("project_roles_json")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  project           Project        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateSubmission    GateSubmission @relation(fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  user              User           @relation("GateSubmissionApproverUser", fields: [userId], references: [id], onDelete: Restrict)
+  approvals         GateApproval[]
+
+  @@unique([id, projectId])
+  @@unique([gateSubmissionId, userId])
+  @@index([projectId, userId])
+  @@map("gate_submission_approvers")
+}
+
+model GateApproval {
+  id                       String                 @id @default(cuid())
+  projectId                String                 @map("project_id")
+  gateSubmissionId         String                 @map("gate_submission_id")
+  gateSubmissionApproverId String                 @map("gate_submission_approver_id")
+  decision                 GateApprovalDecision
+  reason                   String
+  decidedById              String                 @map("decided_by_id")
+  decidedAt                DateTime               @default(now()) @map("decided_at")
+  project                  Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateSubmission           GateSubmission         @relation(fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateSubmissionApprover   GateSubmissionApprover @relation(fields: [gateSubmissionApproverId, projectId], references: [id, projectId], onDelete: Restrict)
+  decidedBy                User                   @relation("GateApprovalDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@unique([gateSubmissionId, gateSubmissionApproverId])
+  @@index([projectId, gateSubmissionId, decidedAt])
+  @@index([decidedById, decidedAt])
+  @@map("gate_approvals")
+}
+
+model GateSubmissionEvent {
+  id               String                  @id @default(cuid())
+  projectId        String                  @map("project_id")
+  gateSubmissionId String                  @map("gate_submission_id")
+  sequence         Int
+  eventType        GateSubmissionEventType @map("event_type")
+  reason           String
+  snapshotJson     Json                    @map("snapshot_json")
+  actorId          String                  @map("actor_id")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  project          Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateSubmission   GateSubmission          @relation(fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor            User                    @relation("GateSubmissionEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([gateSubmissionId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("gate_submission_events")
 }
 
 model WbsNode {
