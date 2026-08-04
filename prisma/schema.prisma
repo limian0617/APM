@@ -795,6 +795,27 @@ enum ProjectAlertScanStatus {
   FAILED
 }
 
+enum CockpitHealthStatus {
+  UNKNOWN
+  HEALTHY
+  ATTENTION
+  CRITICAL
+}
+
+enum CockpitExceptionKind {
+  SCHEDULE_FAILED
+  SCHEDULE_STALE
+  CRITICAL_PATH_DELAY
+  MILESTONE_OVERDUE
+  GATE_HARD_FAILURE
+  HIGH_RISK_ALERT
+}
+
+enum CockpitExceptionSeverity {
+  ATTENTION
+  CRITICAL
+}
+
 enum StageReleaseAuthorizationScope {
   PROJECT
   DELIVERY_UNIT
@@ -937,6 +958,7 @@ enum AuditAction {
   ALERT_RESOLVED
   ALERT_CLOSED
   ALERT_ESCALATED
+  COCKPIT_PROJECTION_REFRESHED
 }
 
 enum AuditObjectType {
@@ -978,6 +1000,7 @@ enum AuditObjectType {
   ALERT_RULE
   PROJECT_ALERT
   PROJECT_ALERT_SCAN
+  COCKPIT_PROJECTION
 }
 
 enum AuditSource {
@@ -1194,6 +1217,8 @@ model Project {
   scheduleRecalculations        ScheduleRecalculation[]
   scheduleTaskForecasts         ScheduleTaskForecast[]
   planningBaselines             PlanningBaseline[]
+  cockpitProjections            CockpitProjection[]
+  cockpitExceptionProjections   CockpitExceptionProjection[]
 
   @@index([departmentId])
   @@index([sourceTemplateVersionId])
@@ -2267,6 +2292,43 @@ model PlanningBaselineCalendarSnapshot {
   @@unique([baselineId, projectId])
   @@index([projectId, baselineId])
   @@map("planning_baseline_calendar_snapshots")
+}
+
+model CockpitProjection {
+  id                 String              @id @default(cuid())
+  projectId          String              @map("project_id")
+  sourceChecksum     String              @map("source_checksum")
+  sourceVersionsJson Json                @map("source_versions_json")
+  health             CockpitHealthStatus
+  calculatedAt       DateTime            @map("calculated_at")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  project            Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  exceptions         CockpitExceptionProjection[]
+
+  @@unique([projectId, sourceChecksum])
+  @@unique([id, projectId])
+  @@index([projectId, calculatedAt])
+  @@map("cockpit_projections")
+}
+
+model CockpitExceptionProjection {
+  id            String                   @id @default(cuid())
+  projectionId  String                   @map("projection_id")
+  projectId     String                   @map("project_id")
+  kind          CockpitExceptionKind
+  sourceKey     String                   @map("source_key")
+  severity      CockpitExceptionSeverity
+  summary       String
+  occurredAt    DateTime?                @map("occurred_at")
+  drilldownPath String                   @map("drilldown_path")
+  position      Int
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  projection    CockpitProjection        @relation(fields: [projectionId, projectId], references: [id, projectId], onDelete: Restrict)
+  project       Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([projectionId, kind, sourceKey])
+  @@index([projectId, severity, occurredAt])
+  @@map("cockpit_exception_projections")
 }
 
 model ProjectScheduleState {

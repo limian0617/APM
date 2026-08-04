@@ -84,7 +84,8 @@ export const AUDIT_ACTIONS = {
   ALERT_STARTED: "ALERT_STARTED",
   ALERT_RESOLVED: "ALERT_RESOLVED",
   ALERT_CLOSED: "ALERT_CLOSED",
-  ALERT_ESCALATED: "ALERT_ESCALATED"
+  ALERT_ESCALATED: "ALERT_ESCALATED",
+  COCKPIT_PROJECTION_REFRESHED: "COCKPIT_PROJECTION_REFRESHED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -125,7 +126,8 @@ export const AUDIT_OBJECT_TYPES = {
   RESIDUAL_ITEM: "RESIDUAL_ITEM",
   ALERT_RULE: "ALERT_RULE",
   PROJECT_ALERT: "PROJECT_ALERT",
-  PROJECT_ALERT_SCAN: "PROJECT_ALERT_SCAN"
+  PROJECT_ALERT_SCAN: "PROJECT_ALERT_SCAN",
+  COCKPIT_PROJECTION: "COCKPIT_PROJECTION"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -229,6 +231,16 @@ export const ALERT_AUDIT_FIELDS = [
   "permission",
   "method",
   "path"
+] as const;
+
+export const COCKPIT_AUDIT_FIELDS = [
+  "projectId",
+  "projectionId",
+  "sourceChecksum",
+  "health",
+  "calculatedAt",
+  "exceptionCount",
+  "reused"
 ] as const;
 
 export const TEMPLATE_AUDIT_FIELDS = [
