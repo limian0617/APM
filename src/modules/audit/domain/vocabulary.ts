@@ -48,6 +48,7 @@ export const AUDIT_ACTIONS = {
   TASK_DEPENDENCY_CREATED: "TASK_DEPENDENCY_CREATED",
   TASK_DEPENDENCY_UPDATED: "TASK_DEPENDENCY_UPDATED",
   TASK_DEPENDENCY_CLOSED: "TASK_DEPENDENCY_CLOSED",
+  PLANNING_BASELINE_FROZEN: "PLANNING_BASELINE_FROZEN",
   PROJECT_MILESTONE_CREATED: "PROJECT_MILESTONE_CREATED",
   PROJECT_MILESTONE_UPDATED: "PROJECT_MILESTONE_UPDATED",
   PROJECT_MILESTONE_TASK_LINKED: "PROJECT_MILESTONE_TASK_LINKED",
@@ -110,6 +111,7 @@ export const AUDIT_OBJECT_TYPES = {
   PLANNING_TASK: "PLANNING_TASK",
   PROJECT_CALENDAR: "PROJECT_CALENDAR",
   TASK_DEPENDENCY: "TASK_DEPENDENCY",
+  PLANNING_BASELINE: "PLANNING_BASELINE",
   PROJECT_MILESTONE: "PROJECT_MILESTONE",
   PROJECT_STAGE: "PROJECT_STAGE",
   DELIVERY_UNIT_STAGE: "DELIVERY_UNIT_STAGE",
@@ -374,6 +376,23 @@ export const TASK_DEPENDENCY_AUDIT_FIELDS = [
   "lagMinutes",
   "status",
   "version"
+] as const;
+
+export const PLANNING_BASELINE_AUDIT_FIELDS = [
+  "projectId",
+  "planningBaselineId",
+  "sourceGateSubmissionId",
+  "version",
+  "planningInputVersion",
+  "reason",
+  "checksum",
+  "wbsSnapshotCount",
+  "taskSnapshotCount",
+  "dependencySnapshotCount",
+  "milestoneSnapshotCount",
+  "milestoneTaskLinkSnapshotCount",
+  "calendarSourceCalendarId",
+  "calendarSourceCalendarRevisionId"
 ] as const;
 
 export const PROJECT_MILESTONE_AUDIT_FIELDS = [
