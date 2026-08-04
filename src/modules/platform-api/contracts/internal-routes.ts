@@ -95,18 +95,24 @@ const gateCheckerBindingSchema = z.strictObject({
   code: stableCodeSchema,
   version: z.number().int().positive().refine(Number.isSafeInteger)
 });
+const gateApprovalSchema = z.strictObject({
+  mode: z.enum(["ALL", "ANY"]),
+  projectRoles: z.array(z.enum(PROJECT_ROLE_VALUES)).min(1).max(PROJECT_ROLE_VALUES.length)
+});
 const legacyGateDefinitionSchema = z.strictObject({
   code: stableCodeSchema,
   name: templateNameSchema,
   stageCode: stableCodeSchema,
-  requiredCheckerCodes: z.array(stableCodeSchema).min(1).max(100)
+  requiredCheckerCodes: z.array(stableCodeSchema).min(1).max(100),
+  approval: gateApprovalSchema.optional()
 });
 const explicitGateDefinitionSchema = z.strictObject({
   code: stableCodeSchema,
   name: templateNameSchema,
   stageCode: stableCodeSchema,
   scope: z.enum(["PROJECT", "DELIVERY_UNIT", "MODULE"]).optional(),
-  checkers: z.array(gateCheckerBindingSchema).min(1).max(100)
+  checkers: z.array(gateCheckerBindingSchema).min(1).max(100),
+  approval: gateApprovalSchema.optional()
 });
 const gateContentSchema = z
   .strictObject({
@@ -642,6 +648,14 @@ export const createGateInstanceBodySchema = z
     }
   });
 export const runGateChecksBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const gateSubmissionPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  submissionId: identifierSchema
+});
+export const gateSubmissionCommandBodySchema = z.strictObject({
   version: positiveVersionSchema,
   reason: reasonSchema
 });

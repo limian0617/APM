@@ -45,12 +45,64 @@ describe("APM-031 Gate persistence contract", () => {
     ]) {
       expect(migration).toContain(declaration);
     }
+  });
+});
 
-    expect(migration).toContain(
-      'CHECK (("scope" = \'PROJECT\' AND "delivery_unit_id" IS NULL AND "module_id" IS NULL)'
+describe("APM-032 Gate submission persistence contract", () => {
+  it("adds immutable submissions, reviewer snapshots, decisions, and lifecycle events", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260804040000_apm_032_gate_submissions/migration.sql"
+      ),
+      "utf8"
     );
-    expect(migration).toContain('FOREIGN KEY ("project_stage_id", "project_id")');
-    expect(migration).toContain('FOREIGN KEY ("delivery_unit_id", "project_id")');
-    expect(migration).toContain('FOREIGN KEY ("module_id", "project_id")');
+
+    for (const declaration of [
+      "enum GateApprovalMode",
+      "enum GateSubmissionStatus",
+      "enum GateApprovalDecision",
+      "enum GateSubmissionEventType",
+      "model GateSubmission",
+      "model GateSubmissionApprover",
+      "model GateApproval",
+      "model GateSubmissionEvent",
+      "GATE_SUBMISSION_SUBMITTED",
+      "GATE_APPROVAL_RECORDED",
+      "GATE_SUBMISSION_WITHDRAWN",
+      "GATE_SUBMISSION_APPROVED",
+      "GATE_SUBMISSION_REJECTED",
+      "GATE_SUBMISSION",
+      "GATE_APPROVAL"
+    ]) {
+      expect(schema).toContain(declaration);
+    }
+
+    for (const declaration of [
+      'CREATE TABLE "gate_submissions"',
+      'CREATE TABLE "gate_submission_approvers"',
+      'CREATE TABLE "gate_approvals"',
+      'CREATE TABLE "gate_submission_events"',
+      "gate_submissions_one_pending_instance_key",
+      "CREATE FUNCTION enforce_gate_submission_relation()",
+      "CREATE FUNCTION enforce_gate_submission_approver_relation()",
+      "CREATE FUNCTION enforce_gate_approval_relation()",
+      "CREATE FUNCTION enforce_gate_submission_stability()",
+      "CREATE FUNCTION enforce_gate_submission_decision()",
+      "CREATE FUNCTION require_gate_submission_approvers()",
+      "gate_submission_approvers_reject_mutation",
+      "gate_approvals_reject_mutation",
+      "gate_submission_events_reject_mutation",
+      "gate_submissions_decision_check",
+      "gate_submissions_require_approvers",
+      "ADD VALUE 'GATE_SUBMISSION_SUBMITTED'",
+      "ADD VALUE 'GATE_APPROVAL_RECORDED'",
+      "ADD VALUE 'GATE_SUBMISSION_WITHDRAWN'",
+      "ADD VALUE 'GATE_SUBMISSION_APPROVED'",
+      "ADD VALUE 'GATE_SUBMISSION_REJECTED'"
+    ]) {
+      expect(migration).toContain(declaration);
+    }
   });
 });

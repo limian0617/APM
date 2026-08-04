@@ -1,3 +1,4 @@
+import { PROJECT_ROLE_VALUES, type ProjectRoleCode } from "@/lib/auth/permissions";
 import { payloadHash, type JsonValue } from "@/modules/governance/domain/idempotency";
 
 export const TEMPLATE_COMPONENT_TYPES = {
@@ -37,6 +38,11 @@ export type GateCheckerBinding = {
   version: number;
 };
 
+export type GateApprovalRule = {
+  mode: "ALL" | "ANY";
+  projectRoles: ProjectRoleCode[];
+};
+
 export type GateDefinitionRule = {
   code: string;
   name: string;
@@ -44,6 +50,7 @@ export type GateDefinitionRule = {
   scope: GateScope;
   definitionJson: JsonValue;
   checkerBindings: GateCheckerBinding[];
+  approval?: GateApprovalRule;
   bindingFormat: "LEGACY" | "EXPLICIT";
 };
 
@@ -150,6 +157,48 @@ function checkerBindings(value: unknown, field: string): GateCheckerBinding[] {
   return bindings;
 }
 
+function gateApproval(value: unknown, field: string): GateApprovalRule {
+  const approval = record(value);
+  rejectUnknownKeys(approval, ["mode", "projectRoles"], field);
+  if (approval.mode !== "ALL" && approval.mode !== "ANY") {
+    throw new TemplateValidationError(
+      "INVALID_COMPONENT_RULES",
+      `${field}.mode 必须是 ALL 或 ANY。`
+    );
+  }
+  if (!Array.isArray(approval.projectRoles) || approval.projectRoles.length === 0) {
+    throw new TemplateValidationError(
+      "INCOMPLETE_COMPONENT_RULES",
+      `${field}.projectRoles 必须至少包含一个项目角色。`
+    );
+  }
+  if (approval.projectRoles.length > PROJECT_ROLE_VALUES.length) {
+    throw new TemplateValidationError(
+      "INVALID_COMPONENT_RULES",
+      `${field}.projectRoles 超过项目角色上限。`
+    );
+  }
+  const projectRoles = approval.projectRoles.map((projectRole, index) => {
+    if (
+      typeof projectRole !== "string" ||
+      !PROJECT_ROLE_VALUES.includes(projectRole as ProjectRoleCode)
+    ) {
+      throw new TemplateValidationError(
+        "INVALID_COMPONENT_RULES",
+        `${field}.projectRoles.${index} 不是有效项目角色。`
+      );
+    }
+    return projectRole as ProjectRoleCode;
+  });
+  if (new Set(projectRoles).size !== projectRoles.length) {
+    throw new TemplateValidationError(
+      "DUPLICATE_RULE_CODE",
+      `${field}.projectRoles 包含重复项目角色。`
+    );
+  }
+  return { mode: approval.mode, projectRoles };
+}
+
 function legacyCheckerBindings(value: unknown): string[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new TemplateValidationError(
@@ -174,7 +223,7 @@ function validateGateRules(content: Record<string, unknown>) {
   for (const item of items) {
     rejectUnknownKeys(
       item,
-      ["code", "name", "stageCode", "scope", "requiredCheckerCodes", "checkers"],
+      ["code", "name", "stageCode", "scope", "requiredCheckerCodes", "checkers", "approval"],
       "Gate"
     );
     stableCode(item.code, "gates.code");
@@ -196,12 +245,17 @@ function validateGateRules(content: Record<string, unknown>) {
       );
     }
     if (hasLegacyBindings) {
-      rejectUnknownKeys(item, ["code", "name", "stageCode", "requiredCheckerCodes"], "Gate");
+      rejectUnknownKeys(
+        item,
+        ["code", "name", "stageCode", "requiredCheckerCodes", "approval"],
+        "Gate"
+      );
       legacyCheckerBindings(item.requiredCheckerCodes);
+      if (item.approval !== undefined) gateApproval(item.approval, "Gate.approval");
       continue;
     }
 
-    rejectUnknownKeys(item, ["code", "name", "stageCode", "scope", "checkers"], "Gate");
+    rejectUnknownKeys(item, ["code", "name", "stageCode", "scope", "checkers", "approval"], "Gate");
     if (
       item.scope !== undefined &&
       (typeof item.scope !== "string" || !GATE_SCOPES.includes(item.scope as GateScope))
@@ -209,6 +263,7 @@ function validateGateRules(content: Record<string, unknown>) {
       throw new TemplateValidationError("INVALID_COMPONENT_RULES", "Gate 范围无效。");
     }
     checkerBindings(item.checkers, "gates.checkers");
+    if (item.approval !== undefined) gateApproval(item.approval, "Gate.approval");
   }
 }
 
@@ -359,6 +414,7 @@ export function parseGateDefinitionRules(value: unknown): GateDefinitionRule[] {
       scope?: GateScope;
       requiredCheckerCodes?: string[];
       checkers?: GateCheckerBinding[];
+      approval?: GateApprovalRule;
     }>;
   };
   return validated.gates.map((gate) => {
@@ -370,6 +426,7 @@ export function parseGateDefinitionRules(value: unknown): GateDefinitionRule[] {
         scope: "PROJECT",
         definitionJson: gate as JsonValue,
         checkerBindings: gate.requiredCheckerCodes.map((code) => ({ code, version: 1 })),
+        ...(gate.approval === undefined ? {} : { approval: gate.approval }),
         bindingFormat: "LEGACY"
       };
     }
@@ -380,6 +437,7 @@ export function parseGateDefinitionRules(value: unknown): GateDefinitionRule[] {
       scope: gate.scope ?? "PROJECT",
       definitionJson: gate as JsonValue,
       checkerBindings: gate.checkers ?? [],
+      ...(gate.approval === undefined ? {} : { approval: gate.approval }),
       bindingFormat: "EXPLICIT"
     };
   });

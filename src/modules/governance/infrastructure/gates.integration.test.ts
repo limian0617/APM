@@ -15,15 +15,25 @@ import { initializeProjectStructure } from "@/modules/projects/application/proje
 import { executeIdempotentCommand } from "@/modules/platform-api/application/idempotent-command";
 
 import { createGateInstance, runGateChecks } from "../application/gate-service";
+import {
+  decideGateSubmission,
+  resubmitGateSubmission,
+  submitGateSubmission,
+  withdrawGateSubmission
+} from "../application/gate-submission-service";
 import { GET as listProjectGatesRoute } from "../../../app/api/projects/[projectId]/gates/route";
 import { POST as createGateInstanceRoute } from "../../../app/api/projects/[projectId]/gate-instances/route";
 import { POST as runGateChecksRoute } from "../../../app/api/projects/[projectId]/gate-instances/[instanceId]/checks/route";
+import { POST as submitGateSubmissionRoute } from "../../../app/api/projects/[projectId]/gate-instances/[instanceId]/submissions/route";
+import { POST as approveGateSubmissionRoute } from "../../../app/api/projects/[projectId]/gate-submissions/[submissionId]/approve/route";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
 const ids = {
   admin: `gate-admin-${suffix}`,
   projectManager: `gate-project-manager-${suffix}`,
+  quality: `gate-quality-${suffix}`,
+  departmentLead: `gate-department-lead-${suffix}`,
   outsider: `gate-outsider-${suffix}`
 };
 
@@ -74,7 +84,15 @@ function componentDefinition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
             code: "G.PROJECT",
             name: "Project baseline",
             stageCode: "S0",
-            requiredCheckerCodes: ["STAGE.AWAITING_GATE"]
+            requiredCheckerCodes: ["STAGE.AWAITING_GATE"],
+            approval: { mode: "ALL", projectRoles: ["QUALITY", "DEPARTMENT_LEAD"] }
+          },
+          {
+            code: "G.ANY",
+            name: "Project fast approval",
+            stageCode: "S0",
+            requiredCheckerCodes: ["STAGE.AWAITING_GATE"],
+            approval: { mode: "ANY", projectRoles: ["QUALITY", "DEPARTMENT_LEAD"] }
           },
           {
             code: "G.DU",
@@ -235,6 +253,18 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
           departmentId: "engineering"
         },
         {
+          id: ids.quality,
+          employeeNo: `GATE-QUALITY-${suffix}`,
+          name: "Gate integration quality reviewer",
+          departmentId: "engineering"
+        },
+        {
+          id: ids.departmentLead,
+          employeeNo: `GATE-LEAD-${suffix}`,
+          name: "Gate integration department reviewer",
+          departmentId: "engineering"
+        },
+        {
           id: ids.outsider,
           employeeNo: `GATE-OUTSIDER-${suffix}`,
           name: "Gate integration outsider",
@@ -249,6 +279,12 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
           id: `gate-role-project-manager-${suffix}`,
           userId: ids.projectManager,
           roleId: "role-project-manager"
+        },
+        { id: `gate-role-quality-${suffix}`, userId: ids.quality, roleId: "role-quality" },
+        {
+          id: `gate-role-department-lead-${suffix}`,
+          userId: ids.departmentLead,
+          roleId: "role-department-lead"
         },
         { id: `gate-role-outsider-${suffix}`, userId: ids.outsider, roleId: "role-engineer" }
       ]
@@ -697,7 +733,7 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
     });
     const listResponse = await listProjectGatesRoute(readRequest(url, ids.admin), context);
     const body = (await listResponse.json()) as { definitions: Array<{ projectId: string }> };
-    expect(body.definitions).toHaveLength(4);
+    expect(body.definitions).toHaveLength(5);
     expect(body.definitions).toEqual(
       expect.not.arrayContaining([expect.objectContaining({ projectId: foreign.project.id })])
     );
@@ -811,6 +847,341 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
     await expect(
       db.auditLog.count({
         where: { projectId: facts.project.id, action: "GATE_CHECK_RUN_COMPLETED" }
+      })
+    ).resolves.toBe(1);
+  });
+
+  it("freezes configured active project roles and supports ALL approval decisions", async () => {
+    const facts = await seedProject("SUBMISSION-ALL");
+    await db.projectMember.createMany({
+      data: [
+        {
+          projectId: facts.project.id,
+          userId: ids.quality,
+          projectRole: "QUALITY",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        },
+        {
+          projectId: facts.project.id,
+          userId: ids.departmentLead,
+          projectRole: "DEPARTMENT_LEAD",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        }
+      ]
+    });
+    await db.projectStage.updateMany({
+      where: { id: facts.stage.id, projectId: facts.project.id },
+      data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
+    });
+    const instance = await db.projectGateInstance.findFirstOrThrow({
+      where: { projectId: facts.project.id, gateDefinition: { code: "G.PROJECT" } }
+    });
+    const checked = await runGateChecks({
+      projectId: facts.project.id,
+      gateInstanceId: instance.id,
+      version: instance.version,
+      reason: "Run ALL Gate checks",
+      actorId: ids.projectManager,
+      auditContext: auditContext("submission-all-check", facts.project.id)
+    });
+    const submitted = await submitGateSubmission({
+      projectId: facts.project.id,
+      gateInstanceId: instance.id,
+      version: checked.resourceVersion,
+      reason: "Submit ALL Gate application",
+      actorId: ids.projectManager,
+      auditContext: auditContext("submission-all-submit", facts.project.id)
+    });
+    expect(submitted.submission).toMatchObject({
+      approvalMode: "ALL",
+      approverProjectRoles: ["QUALITY", "DEPARTMENT_LEAD"],
+      approvers: expect.arrayContaining([
+        expect.objectContaining({ userId: ids.quality, projectRoles: ["QUALITY"] }),
+        expect.objectContaining({ userId: ids.departmentLead, projectRoles: ["DEPARTMENT_LEAD"] })
+      ])
+    });
+    await expect(
+      db.$transaction(async (transaction) => {
+        await transaction.$executeRaw`
+          UPDATE "gate_submissions"
+          SET "status" = 'APPROVED'::"GateSubmissionStatus",
+              "decided_at" = CURRENT_TIMESTAMP,
+              "version" = "version" + 1
+          WHERE "id" = ${submitted.submission.gateSubmissionId}
+        `;
+        throw new Error("roll back direct Gate submission update");
+      })
+    ).rejects.toThrow(/Gate submission approval state does not match frozen decisions/u);
+    const firstDecision = await decideGateSubmission({
+      projectId: facts.project.id,
+      submissionId: submitted.submission.gateSubmissionId,
+      version: submitted.resourceVersion,
+      decision: "APPROVED",
+      reason: "Quality approval",
+      actorId: ids.quality,
+      auditContext: auditContext("submission-all-quality", facts.project.id)
+    });
+    expect(firstDecision.submission.status).toBe("PENDING");
+    await expect(
+      decideGateSubmission({
+        projectId: facts.project.id,
+        submissionId: submitted.submission.gateSubmissionId,
+        version: firstDecision.resourceVersion,
+        decision: "APPROVED",
+        reason: "Attempt duplicate quality approval",
+        actorId: ids.quality,
+        auditContext: auditContext("submission-all-quality-duplicate", facts.project.id)
+      })
+    ).rejects.toMatchObject({ code: "GATE_APPROVAL_ALREADY_RECORDED", status: 409 });
+    const finalDecision = await decideGateSubmission({
+      projectId: facts.project.id,
+      submissionId: submitted.submission.gateSubmissionId,
+      version: firstDecision.resourceVersion,
+      decision: "APPROVED",
+      reason: "Department approval",
+      actorId: ids.departmentLead,
+      auditContext: auditContext("submission-all-lead", facts.project.id)
+    });
+    expect(finalDecision.submission).toMatchObject({ status: "APPROVED", version: 3 });
+    await expect(
+      db.gateSubmissionApprover.findMany({
+        where: { gateSubmissionId: submitted.submission.gateSubmissionId },
+        orderBy: { userId: "asc" }
+      })
+    ).resolves.toHaveLength(2);
+    await expect(
+      db.gateSubmission.update({
+        where: { id: submitted.submission.gateSubmissionId },
+        data: { approverRolesJson: ["ENGINEER"] }
+      })
+    ).rejects.toThrow(/immutable|transition/u);
+  });
+
+  it("approves ANY on one reviewer and appends a new fact after rejection or withdrawal", async () => {
+    const facts = await seedProject("SUBMISSION-ANY");
+    await db.projectMember.createMany({
+      data: [
+        {
+          projectId: facts.project.id,
+          userId: ids.quality,
+          projectRole: "QUALITY",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        },
+        {
+          projectId: facts.project.id,
+          userId: ids.departmentLead,
+          projectRole: "DEPARTMENT_LEAD",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        }
+      ]
+    });
+    await db.projectStage.updateMany({
+      where: { id: facts.stage.id, projectId: facts.project.id },
+      data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
+    });
+    const instance = await db.projectGateInstance.findFirstOrThrow({
+      where: { projectId: facts.project.id, gateDefinition: { code: "G.ANY" } }
+    });
+    const checked = await runGateChecks({
+      projectId: facts.project.id,
+      gateInstanceId: instance.id,
+      version: instance.version,
+      reason: "Run ANY Gate checks",
+      actorId: ids.projectManager,
+      auditContext: auditContext("submission-any-check", facts.project.id)
+    });
+    const submitted = await submitGateSubmission({
+      projectId: facts.project.id,
+      gateInstanceId: instance.id,
+      version: checked.resourceVersion,
+      reason: "Submit ANY Gate application",
+      actorId: ids.projectManager,
+      auditContext: auditContext("submission-any-submit", facts.project.id)
+    });
+    const rejected = await decideGateSubmission({
+      projectId: facts.project.id,
+      submissionId: submitted.submission.gateSubmissionId,
+      version: submitted.resourceVersion,
+      decision: "REJECTED",
+      reason: "Reject the first submission",
+      actorId: ids.quality,
+      auditContext: auditContext("submission-any-reject", facts.project.id)
+    });
+    expect(rejected.submission.status).toBe("REJECTED");
+    const resubmitted = await resubmitGateSubmission({
+      projectId: facts.project.id,
+      submissionId: submitted.submission.gateSubmissionId,
+      version: rejected.resourceVersion,
+      reason: "Submit corrected Gate evidence",
+      actorId: ids.projectManager,
+      auditContext: auditContext("submission-any-resubmit", facts.project.id)
+    });
+    expect(resubmitted.submission).toMatchObject({
+      previousSubmissionId: submitted.submission.gateSubmissionId,
+      sequence: 2,
+      status: "PENDING"
+    });
+    const withdrawn = await withdrawGateSubmission({
+      projectId: facts.project.id,
+      submissionId: resubmitted.submission.gateSubmissionId,
+      version: resubmitted.resourceVersion,
+      reason: "Withdraw corrected submission",
+      actorId: ids.projectManager,
+      auditContext: {
+        ...auditContext("submission-any-withdraw", facts.project.id),
+        departmentId: "spoofed-department"
+      }
+    });
+    expect(withdrawn.submission.status).toBe("WITHDRAWN");
+    await expect(
+      db.auditLog.findFirstOrThrow({
+        where: {
+          projectId: facts.project.id,
+          action: "GATE_SUBMISSION_WITHDRAWN",
+          objectId: withdrawn.submission.gateSubmissionId
+        }
+      })
+    ).resolves.toMatchObject({ departmentId: facts.project.departmentId });
+    await expect(
+      db.gateSubmission.findUniqueOrThrow({ where: { id: submitted.submission.gateSubmissionId } })
+    ).resolves.toMatchObject({ status: "REJECTED", version: rejected.resourceVersion });
+    await expect(
+      db.auditLog.count({
+        where: {
+          projectId: facts.project.id,
+          action: {
+            in: [
+              "GATE_SUBMISSION_SUBMITTED",
+              "GATE_APPROVAL_RECORDED",
+              "GATE_SUBMISSION_REJECTED",
+              "GATE_SUBMISSION_WITHDRAWN"
+            ]
+          }
+        }
+      })
+    ).resolves.toBe(5);
+  });
+
+  it("enforces Gate submission API permissions, cross-project hiding, and idempotent approval replay", async () => {
+    const facts = await seedProject("SUBMISSION-API");
+    const foreign = await seedProject("SUBMISSION-API-FOREIGN");
+    await db.projectMember.createMany({
+      data: [
+        {
+          projectId: facts.project.id,
+          userId: ids.quality,
+          projectRole: "QUALITY",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        },
+        {
+          projectId: facts.project.id,
+          userId: ids.outsider,
+          projectRole: "ENGINEER",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        }
+      ]
+    });
+    await db.projectStage.updateMany({
+      where: { id: facts.stage.id, projectId: facts.project.id },
+      data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
+    });
+    const instance = await db.projectGateInstance.findFirstOrThrow({
+      where: { projectId: facts.project.id, gateDefinition: { code: "G.ANY" } }
+    });
+    const checked = await runGateChecks({
+      projectId: facts.project.id,
+      gateInstanceId: instance.id,
+      version: instance.version,
+      reason: "Prepare Gate submission API test",
+      actorId: ids.projectManager,
+      auditContext: auditContext("submission-api-check", facts.project.id)
+    });
+    const submissionUrl = `http://localhost/api/projects/${facts.project.id}/gate-instances/${instance.id}/submissions`;
+    const submissionContext = {
+      params: Promise.resolve({ projectId: facts.project.id, instanceId: instance.id })
+    };
+    const body = { version: checked.resourceVersion, reason: "Submit Gate through API" };
+    expect(
+      (
+        await submitGateSubmissionRoute(
+          commandRequest(submissionUrl, body, `gate-submission-unauth-${suffix}`),
+          submissionContext
+        )
+      ).status
+    ).toBe(401);
+    expect(
+      (
+        await submitGateSubmissionRoute(
+          commandRequest(submissionUrl, body, `gate-submission-admin-${suffix}`, ids.admin),
+          submissionContext
+        )
+      ).status
+    ).toBe(403);
+    const submitKey = `gate-submission-submit-${suffix}`;
+    const submitted = await submitGateSubmissionRoute(
+      commandRequest(submissionUrl, body, submitKey, ids.projectManager),
+      submissionContext
+    );
+    const submitReplay = await submitGateSubmissionRoute(
+      commandRequest(submissionUrl, body, submitKey, ids.projectManager),
+      submissionContext
+    );
+    expect(submitted.status).toBe(201);
+    expect(submitReplay.headers.get("idempotency-replayed")).toBe("true");
+    const submittedBody = (await submitted.json()) as {
+      submission: { gateSubmissionId: string; version: number };
+    };
+    const foreignResponse = await submitGateSubmissionRoute(
+      commandRequest(
+        `http://localhost/api/projects/${foreign.project.id}/gate-instances/${instance.id}/submissions`,
+        body,
+        `gate-submission-foreign-${suffix}`,
+        ids.projectManager
+      ),
+      { params: Promise.resolve({ projectId: foreign.project.id, instanceId: instance.id }) }
+    );
+    expect(foreignResponse.status).toBe(404);
+    const approvalUrl = `http://localhost/api/projects/${facts.project.id}/gate-submissions/${submittedBody.submission.gateSubmissionId}/approve`;
+    const approvalContext = {
+      params: Promise.resolve({
+        projectId: facts.project.id,
+        submissionId: submittedBody.submission.gateSubmissionId
+      })
+    };
+    const approvalBody = { version: submittedBody.submission.version, reason: "Quality approves" };
+    expect(
+      (
+        await approveGateSubmissionRoute(
+          commandRequest(
+            approvalUrl,
+            approvalBody,
+            `gate-approval-forbidden-${suffix}`,
+            ids.outsider
+          ),
+          approvalContext
+        )
+      ).status
+    ).toBe(403);
+    const approvalKey = `gate-approval-${suffix}`;
+    const approved = await approveGateSubmissionRoute(
+      commandRequest(approvalUrl, approvalBody, approvalKey, ids.quality),
+      approvalContext
+    );
+    const approvalReplay = await approveGateSubmissionRoute(
+      commandRequest(approvalUrl, approvalBody, approvalKey, ids.quality),
+      approvalContext
+    );
+    expect(approved.status).toBe(200);
+    expect(approvalReplay.headers.get("idempotency-replayed")).toBe("true");
+    await expect(
+      db.gateApproval.count({
+        where: { gateSubmissionId: submittedBody.submission.gateSubmissionId }
       })
     ).resolves.toBe(1);
   });
