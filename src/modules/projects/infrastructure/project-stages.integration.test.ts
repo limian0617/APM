@@ -3,6 +3,15 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/lib/db";
+import type { AuditContext } from "@/modules/audit/contracts/audit";
+import {
+  publishProjectTemplate,
+  publishTemplateComponent,
+  saveProjectTemplateDraft,
+  saveTemplateComponentDraft
+} from "@/modules/configuration/application/template-service";
+import { createProjectFromTemplate } from "@/modules/projects/application/create-project";
+import { initializeProjectStructure } from "@/modules/projects/application/project-structure";
 import {
   authorizeStageRelease,
   revokeStageRelease,
@@ -15,69 +24,161 @@ const ids = {
   admin: `stage-admin-${suffix}`
 };
 
+function auditContext(operationId: string, projectId: string | null = null): AuditContext {
+  return {
+    actorId: ids.admin,
+    requestId: `request-${operationId}`,
+    traceId: `trace-${operationId}`,
+    source: "API",
+    sourceIp: null,
+    userAgent: "Vitest",
+    reason: null,
+    projectId,
+    departmentId: "engineering",
+    operationId
+  };
+}
+
+function componentDefinition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
+  switch (type) {
+    case "STAGE":
+      return {
+        stages: [
+          { code: "S0", name: "Project kickoff", sequence: 0 },
+          { code: "S1", name: "Requirements freeze", sequence: 1 },
+          { code: "S2", name: "Detailed design", sequence: 2 },
+          { code: "S3", name: "Procurement and manufacture", sequence: 3 },
+          { code: "S4", name: "Assembly and commissioning", sequence: 4 },
+          { code: "S5", name: "System integration", sequence: 5 },
+          { code: "S6", name: "FAT and shipment", sequence: 6 },
+          { code: "S7", name: "Site acceptance", sequence: 7 },
+          { code: "S8", name: "Project handover", sequence: 8 }
+        ]
+      };
+    case "GATE":
+      return {
+        gates: [
+          {
+            code: "G1",
+            name: "Execution baseline approval",
+            stageCode: "S0",
+            requiredCheckerCodes: ["DOCUMENTS.COMPLETE"]
+          }
+        ]
+      };
+    case "ROLE":
+      return { roles: [{ code: "PROJECT_MANAGER", name: "Project manager", required: true }] };
+    case "WBS":
+      return {
+        packages: [{ code: "S0.KICKOFF", name: "Project kickoff", stageCode: "S0", weight: 10 }]
+      };
+  }
+}
+
+async function seedPublishedStageTemplate() {
+  const componentVersions = await Promise.all(
+    (["STAGE", "GATE", "ROLE", "WBS"] as const).map(async (componentType) => {
+      const code = `APM030.${componentType}.${suffix}`.toUpperCase();
+      const draft = await saveTemplateComponentDraft({
+        code,
+        componentType,
+        name: `${componentType} stage test`,
+        content: componentDefinition(componentType),
+        version: 0,
+        reason: "Create stage integration test component",
+        actorId: ids.admin,
+        auditContext: auditContext(`component-draft-${componentType}-${suffix}`)
+      });
+      return (
+        await publishTemplateComponent({
+          code,
+          version: draft.component.version,
+          reason: "Publish stage integration test component",
+          actorId: ids.admin,
+          auditContext: auditContext(`component-publish-${componentType}-${suffix}`)
+        })
+      ).publishedVersion;
+    })
+  );
+  const code = `APM030.TEMPLATE.${suffix}`.toUpperCase();
+  const draft = await saveProjectTemplateDraft({
+    code,
+    name: "APM-030 stage integration template",
+    components: componentVersions.map((component, position) => ({
+      componentVersionId: component.id,
+      componentType: component.componentType,
+      slot: `${component.componentType}.${position}`,
+      position
+    })),
+    version: 0,
+    reason: "Create stage integration test template",
+    actorId: ids.admin,
+    auditContext: auditContext(`template-draft-${suffix}`)
+  });
+  const published = await publishProjectTemplate({
+    code,
+    version: draft.template.version,
+    reason: "Publish stage integration test template",
+    actorId: ids.admin,
+    auditContext: auditContext(`template-publish-${suffix}`)
+  });
+  return { code, ...published };
+}
+
+let stageTemplate: Awaited<ReturnType<typeof seedPublishedStageTemplate>>;
+
 async function seedStageFacts(label: string) {
-  const project = await db.project.create({
+  const created = await createProjectFromTemplate({
+    code: `P30.${label}.${suffix}`.toUpperCase(),
+    name: `${label} stage persistence project`,
+    departmentId: "engineering",
+    templateCode: stageTemplate.code,
+    templateVersion: stageTemplate.publishedVersion.version,
+    templateChecksum: stageTemplate.publishedVersion.checksum,
+    reason: "Create stage persistence project",
+    actorId: ids.admin,
+    auditContext: auditContext(`project-create-${label}-${suffix}`)
+  });
+  const structure = await initializeProjectStructure({
+    projectId: created.project.id,
+    projectVersion: created.project.version,
+    projectType: "CUSTOMER_DELIVERY",
+    equipmentShape: "SINGLE_MACHINE",
+    deliveryUnits: [
+      {
+        code: `MACHINE.${label}`.toUpperCase(),
+        name: `${label} stage test machine`,
+        unitType: "MACHINE",
+        parentCode: null,
+        position: 0
+      }
+    ],
+    modules: [],
+    reason: "Initialize stage persistence delivery unit",
+    actorId: ids.admin,
+    auditContext: auditContext(`structure-init-${label}-${suffix}`, created.project.id)
+  });
+  const projectStages = await db.projectStage.findMany({
+    where: { projectId: created.project.id },
+    orderBy: { sequence: "asc" }
+  });
+  const firstStage = projectStages[0];
+  const secondStage = projectStages[1];
+  const deliveryUnit = structure.deliveryUnits[0];
+  if (!firstStage || !secondStage || !deliveryUnit) {
+    throw new Error("Stage persistence seed requires two project stages and one delivery unit.");
+  }
+  const project = await db.project.update({
+    where: { id: created.project.id },
     data: {
-      code: `P30.${label}.${suffix}`.toUpperCase(),
-      name: `${label} stage persistence project`,
-      departmentId: "engineering",
-      initializationStatus: "READY",
-      projectType: "CUSTOMER_DELIVERY",
-      equipmentShape: "SINGLE_MACHINE",
-      structureStatus: "READY",
-      createdById: ids.admin
+      status: "IN_PROGRESS"
     }
   });
-  const deliveryUnit = await db.deliveryUnit.create({
-    data: {
-      projectId: project.id,
-      unitType: "MACHINE",
-      code: `MACHINE.${label}`.toUpperCase(),
-      name: `${label} stage test machine`,
-      position: 0,
-      createdById: ids.admin,
-      updatedById: ids.admin
-    }
-  });
-  const firstStage = await db.projectStage.create({
-    data: {
-      projectId: project.id,
-      code: "S0",
-      name: "Project kickoff",
-      sequence: 0,
-      createdById: ids.admin,
-      updatedById: ids.admin
-    }
-  });
-  const secondStage = await db.projectStage.create({
-    data: {
-      projectId: project.id,
-      code: "S1",
-      name: "Requirements freeze",
-      sequence: 1,
-      createdById: ids.admin,
-      updatedById: ids.admin
-    }
-  });
-  await db.project.update({
-    where: { id: project.id },
-    data: {
-      status: "IN_PROGRESS",
-      mainControlStageId: firstStage.id,
-      mainControlStageProjectId: project.id,
-      mainControlStageCode: firstStage.code,
-      mainControlStageStatus: firstStage.status,
-      mainControlStageSequence: firstStage.sequence,
-      mainControlStageUpdatedAt: firstStage.statusChangedAt
-    }
-  });
-  const deliveryUnitStage = await db.deliveryUnitStage.create({
-    data: {
+  const deliveryUnitStage = await db.deliveryUnitStage.findFirstOrThrow({
+    where: {
       projectId: project.id,
       deliveryUnitId: deliveryUnit.id,
-      projectStageId: firstStage.id,
-      createdById: ids.admin,
-      updatedById: ids.admin
+      projectStageId: firstStage.id
     }
   });
   return { project, firstStage, secondStage, deliveryUnitStage };
@@ -93,6 +194,7 @@ describeDatabase("APM-030 PostgreSQL project stage persistence", () => {
         departmentId: "engineering"
       }
     });
+    stageTemplate = await seedPublishedStageTemplate();
   });
 
   it("synchronizes the selected project main-control summary after its stage status changes", async () => {
