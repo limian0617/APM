@@ -53,12 +53,26 @@ const stageContentSchema = z
         })
       )
       .min(1)
-      .max(100)
+      .max(9)
   })
   .superRefine(({ stages }, context) => {
     const codes = new Set<string>();
     const sequences = new Set<number>();
     for (const [index, stage] of stages.entries()) {
+      const stageCode = /^S([0-8])$/u.exec(stage.code);
+      if (!stageCode) {
+        context.addIssue({
+          code: "custom",
+          message: "阶段代码必须是 S0 至 S8。",
+          path: ["stages", index, "code"]
+        });
+      } else if (stage.sequence !== Number(stageCode[1])) {
+        context.addIssue({
+          code: "custom",
+          message: "阶段顺序必须与阶段代码中的序号一致。",
+          path: ["stages", index, "sequence"]
+        });
+      }
       if (codes.has(stage.code)) {
         context.addIssue({
           code: "custom",

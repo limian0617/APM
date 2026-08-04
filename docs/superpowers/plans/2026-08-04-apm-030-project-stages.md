@@ -13,6 +13,7 @@
 ### Task 1: Freeze And Validate Stage Definitions
 
 **Files:**
+
 - Modify: `src/modules/configuration/domain/template-policy.ts`
 - Modify: `src/modules/configuration/domain/template-policy.test.ts`
 - Modify: `src/modules/platform-api/contracts/internal-routes.ts`
@@ -40,6 +41,7 @@ return payloadHash({ stages: normalizedStages }).value as TemplateComponentConte
 ### Task 2: Add Project And Delivery-Unit Stage Persistence
 
 **Files:**
+
 - Modify: `prisma/schema.prisma`
 - Create: `prisma/migrations/<timestamp>_apm_030_project_stages/migration.sql`
 - Create: `src/modules/projects/domain/project-stage.ts`
@@ -69,6 +71,7 @@ Run: `npx vitest run src/modules/projects/domain/project-stage.test.ts`
 ### Task 3: Snapshot And Initialize Stage Facts
 
 **Files:**
+
 - Modify: `src/modules/projects/application/create-project.ts`
 - Modify: `src/modules/projects/application/project-structure.ts`
 - Modify: `src/modules/projects/domain/project-template-snapshot.ts`
@@ -78,7 +81,17 @@ Run: `npx vitest run src/modules/projects/domain/project-stage.test.ts`
 - [ ] **Step 1: Write an integration test that creates a project from the S0-S8 template and asserts project stage identities are copied from the frozen snapshot.**
 
 ```ts
-expect(projectStages.map(({ code }) => code)).toEqual(["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"]);
+expect(projectStages.map(({ code }) => code)).toEqual([
+  "S0",
+  "S1",
+  "S2",
+  "S3",
+  "S4",
+  "S5",
+  "S6",
+  "S7",
+  "S8"
+]);
 ```
 
 - [ ] **Step 2: Run the PostgreSQL-gated focused test and confirm it fails against the missing schema/service.**
@@ -94,6 +107,7 @@ await client.deliveryUnitStage.createMany({ data: stageRows });
 ### Task 4: Implement Stage And Release Commands
 
 **Files:**
+
 - Create: `src/modules/projects/application/project-stage-service.ts`
 - Create: `src/modules/projects/application/project-stage-service.test.ts`
 - Create: `src/modules/projects/infrastructure/project-stages.integration.test.ts`
@@ -103,7 +117,9 @@ await client.deliveryUnitStage.createMany({ data: stageRows });
 - [ ] **Step 1: Write failing service tests for an authorized next-stage start, an unauthorized non-adjacent start, stale-version rejection, and idempotent replay.**
 
 ```ts
-await expect(service.transitionStage({ expectedVersion: 1, toStatus: "IN_PROGRESS" })).rejects.toMatchObject({
+await expect(
+  service.transitionStage({ expectedVersion: 1, toStatus: "IN_PROGRESS" })
+).rejects.toMatchObject({
   code: "STAGE_RELEASE_REQUIRED"
 });
 ```
@@ -123,6 +139,7 @@ return inTransaction(transaction, async (client) => {
 ### Task 5: Expose Strict Internal APIs
 
 **Files:**
+
 - Create: `src/modules/projects/contracts/project-stage-http.ts`
 - Create: `src/modules/projects/contracts/project-stage-http.test.ts`
 - Create: `src/app/api/projects/[projectId]/stages/route.ts`
@@ -146,6 +163,7 @@ expect(() => parseStageTransitionPayload({ toStatus: "IN_PROGRESS" })).toThrow("
 ### Task 6: Verify, Publish, And Record Evidence
 
 **Files:**
+
 - Modify: `D:\GPT Prj\自动化设备项目管理\规划\APM-开发进度跟踪.html` only after CI succeeds
 
 - [ ] **Step 1: Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run test`, `npm run db:generate`, `npm run db:validate`, and `npm run build`.**

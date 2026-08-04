@@ -49,9 +49,7 @@ describe("APM-010 template HTTP contracts", () => {
       )
     ).toMatchObject({
       content: {
-        stages: [
-          { code: "S0", name: "项目启动", description: "客户项目启动", sequence: 0 }
-        ]
+        stages: [{ code: "S0", name: "项目启动", description: "客户项目启动", sequence: 0 }]
       }
     });
   });
@@ -95,8 +93,8 @@ describe("APM-010 template HTTP contracts", () => {
     ).toThrowError(ApiContractError);
   });
 
-  it("matches the domain stage cardinality boundary", () => {
-    const stages = Array.from({ length: 100 }, (_, sequence) => ({
+  it("matches the canonical S0-S8 stage boundaries", () => {
+    const stages = Array.from({ length: 9 }, (_, sequence) => ({
       code: `S${sequence}`,
       name: `阶段 ${sequence}`,
       sequence
@@ -117,7 +115,7 @@ describe("APM-010 template HTTP contracts", () => {
         {
           ...base,
           content: {
-            stages: [...stages, { code: "S100", name: "阶段 100", sequence: 100 }]
+            stages: [...stages, { code: "S9", name: "阶段 9", sequence: 9 }]
           }
         },
         "body"
