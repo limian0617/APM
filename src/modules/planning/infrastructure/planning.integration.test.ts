@@ -881,7 +881,7 @@ describeDatabase("APM-020 PostgreSQL WBS and planning tasks", () => {
     const tables = await db.$queryRaw<Array<{ table_name: string }>>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_name IN (
-        'planning_baselines', 'critical_paths', 'project_progress_projections'
+        'critical_paths', 'project_progress_projections'
       )
     `;
     expect(tables).toEqual([]);

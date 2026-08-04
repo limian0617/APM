@@ -115,7 +115,7 @@ function componentDefinition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
             name: "交付单元 Gate",
             stageCode: "S0",
             scope: "DELIVERY_UNIT",
-            requiredCheckerCodes: ["STAGE.AWAITING_GATE"],
+            checkers: [{ code: "STAGE.AWAITING_GATE", version: 1 }],
             approval: { mode: "ANY", projectRoles: ["QUALITY"] }
           }
         ]
