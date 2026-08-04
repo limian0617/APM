@@ -68,7 +68,12 @@ describe("APM-010 template policy", () => {
     expect(
       componentChecksum({ componentType: "STAGE", name: "阶段", description: null, content })
     ).toBe(
-      componentChecksum({ componentType: "STAGE", name: "阶段", description: null, content: expected })
+      componentChecksum({
+        componentType: "STAGE",
+        name: "阶段",
+        description: null,
+        content: expected
+      })
     );
   });
 
@@ -127,9 +132,9 @@ describe("APM-010 template policy", () => {
       { code: "S0", name: "启动", sequence: 0.5 },
       { code: "S0", name: "启动", sequence: Number.MAX_SAFE_INTEGER + 1 }
     ]) {
-      expect(() =>
-        validateTemplateComponentContent("STAGE", { stages: [stage] })
-      ).toThrowError(TemplateValidationError);
+      expect(() => validateTemplateComponentContent("STAGE", { stages: [stage] })).toThrowError(
+        TemplateValidationError
+      );
     }
   });
 

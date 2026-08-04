@@ -115,12 +115,11 @@ export function validateTemplateComponentContent(
             ? undefined
             : trimmedText(item.description, "阶段描述", 1, 2000);
         const sequence = item.sequence;
-        if (
-          typeof sequence !== "number" ||
-          !Number.isSafeInteger(sequence) ||
-          sequence < 0
-        ) {
-          throw new TemplateValidationError("INVALID_COMPONENT_RULES", "阶段顺序必须是非负安全整数。");
+        if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence < 0) {
+          throw new TemplateValidationError(
+            "INVALID_COMPONENT_RULES",
+            "阶段顺序必须是非负安全整数。"
+          );
         }
         return description === undefined
           ? { code, name, sequence }
