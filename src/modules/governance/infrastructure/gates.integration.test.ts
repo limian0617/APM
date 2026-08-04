@@ -15,6 +15,7 @@ import { initializeProjectStructure } from "@/modules/projects/application/proje
 import { executeIdempotentCommand } from "@/modules/platform-api/application/idempotent-command";
 
 import { createGateInstance, runGateChecks } from "../application/gate-service";
+import { GET as listProjectGatesRoute } from "../../../app/api/projects/[projectId]/gates/route";
 import { POST as createGateInstanceRoute } from "../../../app/api/projects/[projectId]/gate-instances/route";
 import { POST as runGateChecksRoute } from "../../../app/api/projects/[projectId]/gate-instances/[instanceId]/checks/route";
 
@@ -30,6 +31,12 @@ function commandRequest(url: string, body: unknown, key: string, actorId?: strin
   });
   if (actorId) headers.set("x-apm-user-id", actorId);
   return new Request(url, { method: "POST", headers, body: JSON.stringify(body) });
+}
+
+function readRequest(url: string, actorId?: string) {
+  const headers = new Headers({ "x-request-id": `request-gate-list-${suffix}` });
+  if (actorId) headers.set("x-apm-user-id", actorId);
+  return new Request(url, { method: "GET", headers });
 }
 
 function auditContext(operationId: string, projectId: string | null = null): AuditContext {
@@ -640,6 +647,32 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
       1,
       expect.objectContaining({ checkRunSequence: 1, version: instance.resourceVersion + 1 })
     ]);
+  });
+
+  it("enforces Gate list authorization and keeps returned definitions project-scoped", async () => {
+    const local = await seedProject("LIST");
+    const foreign = await seedProject("LIST-FOREIGN");
+    const url = `http://localhost/api/projects/${local.project.id}/gates`;
+    const context = { params: Promise.resolve({ projectId: local.project.id }) };
+
+    const unauthenticated = await listProjectGatesRoute(new Request(url), context);
+    const forbidden = await listProjectGatesRoute(readRequest(url, ids.outsider), context);
+    const authorized = await listProjectGatesRoute(readRequest(url, ids.admin), context);
+
+    expect(unauthenticated.status).toBe(401);
+    expect(forbidden.status).toBe(403);
+    expect(authorized.status).toBe(200);
+    await expect(authorized.json()).resolves.toMatchObject({
+      definitions: expect.arrayContaining([
+        expect.objectContaining({ projectId: local.project.id, code: "G.PROJECT" })
+      ])
+    });
+    const listResponse = await listProjectGatesRoute(readRequest(url, ids.admin), context);
+    const body = (await listResponse.json()) as { definitions: Array<{ projectId: string }> };
+    expect(body.definitions).toHaveLength(4);
+    expect(body.definitions).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ projectId: foreign.project.id })])
+    );
   });
 
   it("enforces internal Gate API authorization, hidden relations, conflicts, and replay", async () => {
