@@ -10,6 +10,7 @@ import {
   TemplateValidationError,
   parseGateDefinitionRules,
   validateTemplateComponentContent,
+  validateTemplateGateCodesUnique,
   validateTemplateMilestoneCodesUnique,
   validateTemplateReferences,
   type TemplateComponentContent
@@ -210,6 +211,7 @@ describe("APM-010 template policy", () => {
         name: "执行基线批准",
         stageCode: "S0",
         scope: "PROJECT",
+        definitionJson: legacyContent.gates[0],
         checkerBindings: [{ code: "DOCUMENTS.COMPLETE", version: 1 }],
         bindingFormat: "LEGACY"
       }
@@ -239,6 +241,7 @@ describe("APM-010 template policy", () => {
         name: "模块交付确认",
         stageCode: "S4",
         scope: "MODULE",
+        definitionJson: content.gates[0],
         checkerBindings: [
           { code: "STAGE.AWAITING_GATE", version: 1 },
           { code: "DOCUMENTS.COMPLETE", version: 2 }
@@ -318,6 +321,39 @@ describe("APM-010 template policy", () => {
         TemplateValidationError
       );
     }
+  });
+
+  it("rejects duplicate Gate codes across separate template components", () => {
+    expect(() =>
+      validateTemplateGateCodesUnique([
+        {
+          componentType: "GATE",
+          content: {
+            gates: [
+              {
+                code: "G1",
+                name: "执行基线批准",
+                stageCode: "S0",
+                requiredCheckerCodes: ["DOCUMENTS.COMPLETE"]
+              }
+            ]
+          }
+        },
+        {
+          componentType: "GATE",
+          content: {
+            gates: [
+              {
+                code: "G1",
+                name: "重复 Gate",
+                stageCode: "S1",
+                requiredCheckerCodes: ["DOCUMENTS.COMPLETE"]
+              }
+            ]
+          }
+        }
+      ])
+    ).toThrow(/重复/u);
   });
 
   it("validates a canonical milestone component payload", () => {

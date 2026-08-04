@@ -42,6 +42,7 @@ export type GateDefinitionRule = {
   name: string;
   stageCode: string;
   scope: GateScope;
+  definitionJson: JsonValue;
   checkerBindings: GateCheckerBinding[];
   bindingFormat: "LEGACY" | "EXPLICIT";
 };
@@ -367,6 +368,7 @@ export function parseGateDefinitionRules(value: unknown): GateDefinitionRule[] {
         name: gate.name,
         stageCode: gate.stageCode,
         scope: "PROJECT",
+        definitionJson: gate as JsonValue,
         checkerBindings: gate.requiredCheckerCodes.map((code) => ({ code, version: 1 })),
         bindingFormat: "LEGACY"
       };
@@ -376,6 +378,7 @@ export function parseGateDefinitionRules(value: unknown): GateDefinitionRule[] {
       name: gate.name,
       stageCode: gate.stageCode,
       scope: gate.scope ?? "PROJECT",
+      definitionJson: gate as JsonValue,
       checkerBindings: gate.checkers ?? [],
       bindingFormat: "EXPLICIT"
     };
@@ -394,6 +397,21 @@ export function validateTemplateMilestoneCodesUnique(
   });
   if (new Set(codes).size !== codes.length) {
     throw new TemplateValidationError("DUPLICATE_RULE_CODE", "模板包含重复里程碑代码。");
+  }
+}
+
+export function validateTemplateGateCodesUnique(
+  components: ReadonlyArray<{ componentType: TemplateComponentTypeCode; content: unknown }>
+) {
+  const codes = components.flatMap(({ componentType, content }) => {
+    if (componentType !== TEMPLATE_COMPONENT_TYPES.GATE) return [];
+    const validated = validateTemplateComponentContent(componentType, content) as {
+      gates: Array<{ code: string }>;
+    };
+    return validated.gates.map(({ code }) => code);
+  });
+  if (new Set(codes).size !== codes.length) {
+    throw new TemplateValidationError("DUPLICATE_RULE_CODE", "模板包含重复 Gate 代码。");
   }
 }
 
