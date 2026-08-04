@@ -59,7 +59,10 @@ export const AUDIT_ACTIONS = {
   PROJECT_STAGE_UPDATED: "PROJECT_STAGE_UPDATED",
   DELIVERY_UNIT_STAGE_UPDATED: "DELIVERY_UNIT_STAGE_UPDATED",
   STAGE_RELEASE_AUTHORIZED: "STAGE_RELEASE_AUTHORIZED",
-  STAGE_RELEASE_REVOKED: "STAGE_RELEASE_REVOKED"
+  STAGE_RELEASE_REVOKED: "STAGE_RELEASE_REVOKED",
+  GATE_DEFINITION_MATERIALIZED: "GATE_DEFINITION_MATERIALIZED",
+  GATE_INSTANCE_CREATED: "GATE_INSTANCE_CREATED",
+  GATE_CHECK_RUN_COMPLETED: "GATE_CHECK_RUN_COMPLETED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -89,7 +92,10 @@ export const AUDIT_OBJECT_TYPES = {
   PROJECT_MILESTONE: "PROJECT_MILESTONE",
   PROJECT_STAGE: "PROJECT_STAGE",
   DELIVERY_UNIT_STAGE: "DELIVERY_UNIT_STAGE",
-  STAGE_RELEASE_AUTHORIZATION: "STAGE_RELEASE_AUTHORIZATION"
+  STAGE_RELEASE_AUTHORIZATION: "STAGE_RELEASE_AUTHORIZATION",
+  PROJECT_GATE_DEFINITION: "PROJECT_GATE_DEFINITION",
+  PROJECT_GATE_INSTANCE: "PROJECT_GATE_INSTANCE",
+  GATE_CHECK_SNAPSHOT: "GATE_CHECK_SNAPSHOT"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -380,6 +386,37 @@ export const STAGE_RELEASE_AUTHORIZATION_AUDIT_FIELDS = [
   "revokedAt",
   "revocationReason",
   "version"
+] as const;
+
+export const PROJECT_GATE_DEFINITION_AUDIT_FIELDS = [
+  "projectId",
+  "gateDefinitionId",
+  "sourceSnapshotComponentId",
+  "projectStageId",
+  "code",
+  "scope",
+  "definitionChecksum"
+] as const;
+
+export const PROJECT_GATE_INSTANCE_AUDIT_FIELDS = [
+  "projectId",
+  "gateInstanceId",
+  "gateDefinitionId",
+  "projectStageId",
+  "scope",
+  "deliveryUnitId",
+  "moduleId",
+  "version"
+] as const;
+
+export const GATE_CHECK_SNAPSHOT_AUDIT_FIELDS = [
+  "projectId",
+  "gateInstanceId",
+  "gateCheckSnapshotId",
+  "sequence",
+  "status",
+  "inputChecksum",
+  "resultChecksum"
 ] as const;
 
 export const AUDIT_QUERY_FIELDS = [

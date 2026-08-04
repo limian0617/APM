@@ -87,3 +87,28 @@ describe("stage audit vocabulary", () => {
     }
   });
 });
+
+describe("Gate audit vocabulary", () => {
+  it("keeps APM-031 Gate facts aligned across Prisma and the foundation migration", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260804030000_apm_031_gate_foundation/migration.sql"
+      ),
+      "utf8"
+    );
+
+    for (const value of [
+      "GATE_DEFINITION_MATERIALIZED",
+      "GATE_INSTANCE_CREATED",
+      "GATE_CHECK_RUN_COMPLETED",
+      "PROJECT_GATE_DEFINITION",
+      "PROJECT_GATE_INSTANCE",
+      "GATE_CHECK_SNAPSHOT"
+    ]) {
+      expect(schema).toContain(value);
+      expect(migration).toContain(`ADD VALUE '${value}'`);
+    }
+  });
+});
