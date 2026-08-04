@@ -229,56 +229,59 @@ describeDatabase("APM-070 PostgreSQL unified issues", () => {
         actorId: ids.manager,
         auditContext: auditContext("issue-bad-close", project.id)
       })
-    ).rejects.toMatchObject({ code: "ISSUE_TRANSITION_INVALID", status: 409 });
+    ).rejects.toMatchObject({ code: "ISSUE_VERIFICATION_EVIDENCE_REQUIRED", status: 422 });
   });
 
-  it("rejects edits and lifecycle transitions after project closure", async () => {
-    const project = await seedProject("READONLY");
-    const created = await createProjectIssue({
-      projectId: project.id,
-      title: "关闭项目问题",
-      confirmedText: "项目关闭前已登记的问题。",
-      category: "DELIVERY_COMPLETENESS",
-      severity: "LOW",
-      phenomenonDescription: null,
-      rootCauseCategory: null,
-      rootCauseDescription: null,
-      tags: [],
-      actorId: ids.manager,
-      auditContext: auditContext("issue-create-readonly", project.id)
-    });
-    await db.project.update({ where: { id: project.id }, data: { status: "CLOSED" } });
-
-    await expect(
-      updateProjectIssue({
+  it.each(["CLOSED", "CANCELED"] as const)(
+    "rejects edits and lifecycle transitions for a %s project",
+    async (projectStatus) => {
+      const project = await seedProject("READONLY");
+      const created = await createProjectIssue({
         projectId: project.id,
-        issueId: created.issue.id,
-        version: created.issue.version,
-        title: "不应更新",
-        confirmedText: "关闭项目不得更新问题。",
+        title: "关闭项目问题",
+        confirmedText: "项目关闭前已登记的问题。",
         category: "DELIVERY_COMPLETENESS",
         severity: "LOW",
         phenomenonDescription: null,
         rootCauseCategory: null,
         rootCauseDescription: null,
         tags: [],
-        reason: "不应允许。",
         actorId: ids.manager,
-        auditContext: auditContext("issue-update-readonly", project.id)
-      })
-    ).rejects.toMatchObject({ code: "PROJECT_READ_ONLY", status: 409 });
+        auditContext: auditContext("issue-create-readonly", project.id)
+      });
+      await db.project.update({ where: { id: project.id }, data: { status: projectStatus } });
 
-    await expect(
-      transitionProjectIssue({
-        projectId: project.id,
-        issueId: created.issue.id,
-        version: created.issue.version,
-        action: "START_ANALYSIS",
-        reason: "不应允许。",
-        verificationEvidence: null,
-        actorId: ids.manager,
-        auditContext: auditContext("issue-transition-readonly", project.id)
-      })
-    ).rejects.toMatchObject({ code: "PROJECT_READ_ONLY", status: 409 });
-  });
+      await expect(
+        updateProjectIssue({
+          projectId: project.id,
+          issueId: created.issue.id,
+          version: created.issue.version,
+          title: "不应更新",
+          confirmedText: "关闭项目不得更新问题。",
+          category: "DELIVERY_COMPLETENESS",
+          severity: "LOW",
+          phenomenonDescription: null,
+          rootCauseCategory: null,
+          rootCauseDescription: null,
+          tags: [],
+          reason: "不应允许。",
+          actorId: ids.manager,
+          auditContext: auditContext("issue-update-readonly", project.id)
+        })
+      ).rejects.toMatchObject({ code: "PROJECT_READ_ONLY", status: 409 });
+
+      await expect(
+        transitionProjectIssue({
+          projectId: project.id,
+          issueId: created.issue.id,
+          version: created.issue.version,
+          action: "START_ANALYSIS",
+          reason: "不应允许。",
+          verificationEvidence: null,
+          actorId: ids.manager,
+          auditContext: auditContext("issue-transition-readonly", project.id)
+        })
+      ).rejects.toMatchObject({ code: "PROJECT_READ_ONLY", status: 409 });
+    }
+  );
 });
