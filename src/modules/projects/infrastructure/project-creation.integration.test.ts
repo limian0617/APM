@@ -39,7 +39,19 @@ function context(actorId: string, operationId: string): AuditContext {
 function definition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
   switch (type) {
     case "STAGE":
-      return { stages: [{ code: "S0", name: "项目启动", sequence: 0 }] };
+      return {
+        stages: [
+          { code: "S0", name: "项目启动", sequence: 0 },
+          { code: "S1", name: "需求澄清", sequence: 1 },
+          { code: "S2", name: "详细设计", sequence: 2 },
+          { code: "S3", name: "采购制造", sequence: 3 },
+          { code: "S4", name: "装配调试", sequence: 4 },
+          { code: "S5", name: "系统联调", sequence: 5 },
+          { code: "S6", name: "FAT发运", sequence: 6 },
+          { code: "S7", name: "现场SAT", sequence: 7 },
+          { code: "S8", name: "结项移交", sequence: 8 }
+        ]
+      };
     case "GATE":
       return {
         gates: [
@@ -223,6 +235,34 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
         contentJson
       }))
     ]);
+    const projectStages = await db.projectStage.findMany({
+      where: { projectId: firstBody.project.id },
+      orderBy: { sequence: "asc" }
+    });
+    expect(projectStages.map(({ code }) => code)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6",
+      "S7",
+      "S8"
+    ]);
+    expect(projectStages.every(({ status }) => status === "NOT_STARTED")).toBe(true);
+    await expect(
+      db.projectStageEvent.count({
+        where: { projectId: firstBody.project.id, eventType: "CREATED" }
+      })
+    ).resolves.toBe(9);
+    await expect(
+      db.project.findUniqueOrThrow({ where: { id: firstBody.project.id } })
+    ).resolves.toMatchObject({
+      mainControlStageCode: "S0",
+      mainControlStageStatus: "NOT_STARTED",
+      mainControlStageSequence: 0
+    });
     await expect(
       db.projectMember.count({
         where: { projectId: { in: [firstBody.project.id, second.project.id] }, userId: ids.admin }

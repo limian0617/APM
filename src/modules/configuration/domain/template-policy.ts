@@ -101,16 +101,56 @@ export function validateTemplateComponentContent(
   const content = record(value);
   switch (componentType) {
     case TEMPLATE_COMPONENT_TYPES.STAGE: {
+      rejectUnknownKeys(content, ["stages"], "阶段组件");
       const items = array(content.stages, "stages");
-      uniqueCodes(items, "stages");
-      const sequences = items.map((item) => item.sequence);
-      if (sequences.some((sequence) => !Number.isInteger(sequence) || (sequence as number) < 0)) {
-        throw new TemplateValidationError("INVALID_COMPONENT_RULES", "阶段顺序必须是非负整数。");
+      if (items.length > 9) {
+        throw new TemplateValidationError(
+          "INVALID_COMPONENT_RULES",
+          "阶段最多包含 S0 至 S8 九项。"
+        );
       }
+      const stages = items.map((item) => {
+        rejectUnknownKeys(item, ["code", "name", "description", "sequence"], "阶段");
+        const code = trimmedStableCode(item.code, "stages.code");
+        const stageCode = /^S([0-8])$/u.exec(code);
+        if (!stageCode) {
+          throw new TemplateValidationError("INVALID_COMPONENT_RULES", "阶段代码必须是 S0 至 S8。");
+        }
+        const name = trimmedText(item.name, "阶段名称", 1, 200);
+        const description =
+          item.description === undefined
+            ? undefined
+            : trimmedText(item.description, "阶段描述", 1, 2000);
+        const sequence = item.sequence;
+        if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence < 0) {
+          throw new TemplateValidationError(
+            "INVALID_COMPONENT_RULES",
+            "阶段顺序必须是非负安全整数。"
+          );
+        }
+        if (sequence !== Number(stageCode[1])) {
+          throw new TemplateValidationError(
+            "INVALID_COMPONENT_RULES",
+            "阶段顺序必须与阶段代码中的序号一致。"
+          );
+        }
+        return description === undefined
+          ? { code, name, sequence }
+          : { code, name, description, sequence };
+      });
+      const codes = stages.map(({ code }) => code);
+      if (new Set(codes).size !== codes.length) {
+        throw new TemplateValidationError("DUPLICATE_RULE_CODE", "stages 包含重复代码。");
+      }
+      const sequences = stages.map(({ sequence }) => sequence);
       if (new Set(sequences).size !== sequences.length) {
         throw new TemplateValidationError("DUPLICATE_RULE_POSITION", "阶段顺序不能重复。");
       }
-      break;
+      return payloadHash({
+        stages: [...stages].sort(
+          (left, right) => left.sequence - right.sequence || left.code.localeCompare(right.code)
+        )
+      }).value as TemplateComponentContent;
     }
     case TEMPLATE_COMPONENT_TYPES.GATE: {
       const items = array(content.gates, "gates");

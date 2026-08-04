@@ -41,18 +41,56 @@ const templateComponentTypeSchema = z.enum([
   "CAPABILITY_RULE",
   "MILESTONE"
 ]);
-const stageContentSchema = z.strictObject({
-  stages: z
-    .array(
-      z.strictObject({
-        code: stableCodeSchema,
-        name: templateNameSchema,
-        sequence: z.number().int().min(0)
-      })
-    )
-    .min(1)
-    .max(100)
-});
+const stageContentSchema = z
+  .strictObject({
+    stages: z
+      .array(
+        z.strictObject({
+          code: stableCodeSchema,
+          name: templateNameSchema,
+          description: z.string().trim().min(1).max(2000).optional(),
+          sequence: z.number().int().min(0).refine(Number.isSafeInteger)
+        })
+      )
+      .min(1)
+      .max(9)
+  })
+  .superRefine(({ stages }, context) => {
+    const codes = new Set<string>();
+    const sequences = new Set<number>();
+    for (const [index, stage] of stages.entries()) {
+      const stageCode = /^S([0-8])$/u.exec(stage.code);
+      if (!stageCode) {
+        context.addIssue({
+          code: "custom",
+          message: "阶段代码必须是 S0 至 S8。",
+          path: ["stages", index, "code"]
+        });
+      } else if (stage.sequence !== Number(stageCode[1])) {
+        context.addIssue({
+          code: "custom",
+          message: "阶段顺序必须与阶段代码中的序号一致。",
+          path: ["stages", index, "sequence"]
+        });
+      }
+      if (codes.has(stage.code)) {
+        context.addIssue({
+          code: "custom",
+          message: "阶段代码不能重复。",
+          path: ["stages", index, "code"]
+        });
+      }
+      codes.add(stage.code);
+      if (sequences.has(stage.sequence)) {
+        context.addIssue({
+          code: "custom",
+          message: "阶段顺序不能重复。",
+          path: ["stages", index, "sequence"]
+        });
+      }
+      sequences.add(stage.sequence);
+    }
+  });
 const gateContentSchema = z.strictObject({
   gates: z
     .array(
@@ -485,6 +523,57 @@ export const milestoneLinkTaskBodySchema = z.strictObject({
 export const milestoneVoidTaskLinkBodySchema = z.strictObject({
   version: positiveVersionSchema,
   linkId: identifierSchema,
+  reason: reasonSchema
+});
+
+const projectStageStatusSchema = z.enum([
+  "AUTHORIZED",
+  "IN_PROGRESS",
+  "AWAITING_GATE",
+  "COMPLETED",
+  "CONDITIONALLY_RELEASED",
+  "SKIPPED"
+]);
+export const projectStagePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  stageId: identifierSchema
+});
+export const projectStageTransitionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  deliveryUnitStageId: identifierSchema.optional(),
+  toStatus: projectStageStatusSchema,
+  reason: reasonSchema
+});
+export const stageReleasePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  releaseId: identifierSchema
+});
+export const createStageReleaseBodySchema = z
+  .strictObject({
+    scope: z.enum(["PROJECT", "DELIVERY_UNIT"]),
+    fromStageId: identifierSchema,
+    toStageId: identifierSchema,
+    deliveryUnitId: identifierSchema.optional(),
+    reason: reasonSchema
+  })
+  .superRefine((value, context) => {
+    if (value.scope === "PROJECT" && value.deliveryUnitId !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["deliveryUnitId"],
+        message: "项目范围不能指定交付单元。"
+      });
+    }
+    if (value.scope === "DELIVERY_UNIT" && value.deliveryUnitId === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["deliveryUnitId"],
+        message: "交付单元范围必须指定交付单元。"
+      });
+    }
+  });
+export const revokeStageReleaseBodySchema = z.strictObject({
+  version: positiveVersionSchema,
   reason: reasonSchema
 });
 export const projectMembershipPathSchema = z.strictObject({

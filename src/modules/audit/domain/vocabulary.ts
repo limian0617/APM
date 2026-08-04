@@ -54,7 +54,12 @@ export const AUDIT_ACTIONS = {
   PROJECT_MILESTONE_TASK_LINK_VOIDED: "PROJECT_MILESTONE_TASK_LINK_VOIDED",
   PROJECT_MILESTONE_ACHIEVED_MANUALLY: "PROJECT_MILESTONE_ACHIEVED_MANUALLY",
   PROJECT_MILESTONE_ACHIEVED_FROM_LINKED_TASKS: "PROJECT_MILESTONE_ACHIEVED_FROM_LINKED_TASKS",
-  PROJECT_MILESTONE_VOIDED: "PROJECT_MILESTONE_VOIDED"
+  PROJECT_MILESTONE_VOIDED: "PROJECT_MILESTONE_VOIDED",
+  PROJECT_STAGE_CREATED: "PROJECT_STAGE_CREATED",
+  PROJECT_STAGE_UPDATED: "PROJECT_STAGE_UPDATED",
+  DELIVERY_UNIT_STAGE_UPDATED: "DELIVERY_UNIT_STAGE_UPDATED",
+  STAGE_RELEASE_AUTHORIZED: "STAGE_RELEASE_AUTHORIZED",
+  STAGE_RELEASE_REVOKED: "STAGE_RELEASE_REVOKED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -81,7 +86,10 @@ export const AUDIT_OBJECT_TYPES = {
   PLANNING_TASK: "PLANNING_TASK",
   PROJECT_CALENDAR: "PROJECT_CALENDAR",
   TASK_DEPENDENCY: "TASK_DEPENDENCY",
-  PROJECT_MILESTONE: "PROJECT_MILESTONE"
+  PROJECT_MILESTONE: "PROJECT_MILESTONE",
+  PROJECT_STAGE: "PROJECT_STAGE",
+  DELIVERY_UNIT_STAGE: "DELIVERY_UNIT_STAGE",
+  STAGE_RELEASE_AUTHORIZATION: "STAGE_RELEASE_AUTHORIZATION"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -329,6 +337,48 @@ export const PROJECT_MILESTONE_AUDIT_FIELDS = [
   "taskId",
   "taskLinkStatus",
   "voidReason",
+  "version"
+] as const;
+
+export const PROJECT_STAGE_AUDIT_FIELDS = [
+  "projectId",
+  "projectStageId",
+  "sourceSnapshotComponentId",
+  "code",
+  "name",
+  "description",
+  "sequence",
+  "status",
+  "exceptionalReason",
+  "statusChangedAt",
+  "version"
+] as const;
+
+export const DELIVERY_UNIT_STAGE_AUDIT_FIELDS = [
+  "projectId",
+  "deliveryUnitStageId",
+  "deliveryUnitId",
+  "projectStageId",
+  "status",
+  "exceptionalReason",
+  "statusChangedAt",
+  "version"
+] as const;
+
+export const STAGE_RELEASE_AUTHORIZATION_AUDIT_FIELDS = [
+  "projectId",
+  "stageReleaseAuthorizationId",
+  "scope",
+  "status",
+  "fromProjectStageId",
+  "toProjectStageId",
+  "deliveryUnitId",
+  "reason",
+  "authorizedById",
+  "authorizedAt",
+  "revokedById",
+  "revokedAt",
+  "revocationReason",
   "version"
 ] as const;
 

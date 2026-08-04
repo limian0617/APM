@@ -10,7 +10,8 @@ import {
   TemplateValidationError,
   validateTemplateComponentContent,
   validateTemplateMilestoneCodesUnique,
-  validateTemplateReferences
+  validateTemplateReferences,
+  type TemplateComponentContent
 } from "./template-policy";
 
 describe("APM-010 template policy", () => {
@@ -35,6 +36,124 @@ describe("APM-010 template policy", () => {
     });
     expect(first).toMatch(/^[0-9a-f]{64}$/u);
     expect(second).toBe(first);
+  });
+
+  it("normalizes a cropped merged stage component before calculating its checksum", () => {
+    const content = validateTemplateComponentContent("STAGE", {
+      stages: [
+        { code: " S4 ", name: " 装配与联调 ", sequence: 4 },
+        { code: " S0 ", name: " 项目启动 ", sequence: 0 },
+        {
+          code: " S1 ",
+          name: " 方案与详细设计 ",
+          description: " 标准机合并方案和设计评审 ",
+          sequence: 1
+        }
+      ]
+    });
+    const expected: TemplateComponentContent = {
+      stages: [
+        { code: "S0", name: "项目启动", sequence: 0 },
+        {
+          code: "S1",
+          name: "方案与详细设计",
+          description: "标准机合并方案和设计评审",
+          sequence: 1
+        },
+        { code: "S4", name: "装配与联调", sequence: 4 }
+      ]
+    };
+
+    expect(content).toEqual(expected);
+    expect(
+      componentChecksum({ componentType: "STAGE", name: "阶段", description: null, content })
+    ).toBe(
+      componentChecksum({
+        componentType: "STAGE",
+        name: "阶段",
+        description: null,
+        content: expected
+      })
+    );
+  });
+
+  it("rejects invalid stage labels and descriptions", () => {
+    expect(() =>
+      validateTemplateComponentContent("STAGE", {
+        stages: [{ code: "S0", name: " ", sequence: 0 }]
+      })
+    ).toThrowError(TemplateValidationError);
+    expect(() =>
+      validateTemplateComponentContent("STAGE", {
+        stages: [{ code: "S0", name: "名称", description: " ", sequence: 0 }]
+      })
+    ).toThrowError(TemplateValidationError);
+    expect(() =>
+      validateTemplateComponentContent("STAGE", {
+        stages: [{ code: "S0", name: "n".repeat(201), sequence: 0 }]
+      })
+    ).toThrowError(TemplateValidationError);
+    expect(() =>
+      validateTemplateComponentContent("STAGE", {
+        stages: [{ code: "S0", name: "名称", description: "d".repeat(2001), sequence: 0 }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects unknown stage component fields", () => {
+    expect(() =>
+      validateTemplateComponentContent("STAGE", {
+        stages: [{ code: "S0", name: "启动", sequence: 0 }],
+        unexpected: true
+      })
+    ).toThrowError(TemplateValidationError);
+    expect(() =>
+      validateTemplateComponentContent("STAGE", {
+        stages: [{ code: "S0", name: "启动", sequence: 0, unexpected: true }]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects duplicate stage sequences", () => {
+    expect(() =>
+      validateTemplateComponentContent("STAGE", {
+        stages: [
+          { code: "S0", name: "启动", sequence: 0 },
+          { code: "S1", name: "方案冻结", sequence: 0 }
+        ]
+      })
+    ).toThrowError(TemplateValidationError);
+  });
+
+  it("rejects stage codes outside S0-S8 and sequence values that do not match the stage ordinal", () => {
+    for (const stage of [
+      { code: "s0", name: "启动", sequence: 0 },
+      { code: "S9", name: "超出九阶段", sequence: 9 },
+      { code: "ALPHA", name: "自定义阶段", sequence: 0 },
+      { code: "S4", name: "错位阶段", sequence: 2 },
+      { code: "S0", name: "启动", sequence: -1 },
+      { code: "S0", name: "启动", sequence: 0.5 },
+      { code: "S0", name: "启动", sequence: Number.MAX_SAFE_INTEGER + 1 }
+    ]) {
+      expect(() => validateTemplateComponentContent("STAGE", { stages: [stage] })).toThrowError(
+        TemplateValidationError
+      );
+    }
+  });
+
+  it("accepts a cropped subset and rejects more than the nine canonical stage definitions", () => {
+    const stages = Array.from({ length: 9 }, (_, sequence) => ({
+      code: `S${sequence}`,
+      name: `阶段 ${sequence}`,
+      sequence
+    }));
+
+    expect(validateTemplateComponentContent("STAGE", { stages })).toMatchObject({ stages });
+    expect(() =>
+      validateTemplateComponentContent("STAGE", {
+        stages: [...stages, { code: "S9", name: "阶段 9", sequence: 9 }]
+      })
+    ).toThrowError(TemplateValidationError);
   });
 
   it("rejects duplicate and incomplete component rules", () => {

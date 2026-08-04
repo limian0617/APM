@@ -18,6 +18,7 @@ import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 
 import {
   buildProjectTemplateSnapshot,
+  extractProjectStageDefinitions,
   ProjectCreationError,
   validateProjectIdentity
 } from "../domain/project-template-snapshot";
@@ -131,7 +132,7 @@ export async function createProjectFromTemplate(
         }))
       });
       const initializedAt = await databaseNow(client);
-      let project;
+      let project: Prisma.ProjectGetPayload<{}>;
       try {
         project = await client.project.create({
           data: {
@@ -186,6 +187,74 @@ export async function createProjectFromTemplate(
           }
         },
         include: { components: { orderBy: [{ position: "asc" }, { slot: "asc" }] } }
+      });
+      const stageComponent = storedSnapshot.components.find(
+        ({ componentType }) => componentType === "STAGE"
+      );
+      if (!stageComponent) {
+        throw new ProjectCreationError(
+          "STAGE_COMPONENT_NOT_FOUND",
+          "项目模板快照必须包含阶段组件。",
+          409
+        );
+      }
+      const stageDefinitions = extractProjectStageDefinitions({
+        id: stageComponent.id,
+        componentType: stageComponent.componentType,
+        contentJson: stageComponent.contentJson
+      });
+      await client.projectStage.createMany({
+        data: stageDefinitions.map((stage) => ({
+          projectId: project.id,
+          sourceSnapshotComponentId: stage.sourceSnapshotComponentId,
+          code: stage.code,
+          name: stage.name,
+          description: stage.description,
+          sequence: stage.sequence,
+          createdById: input.actorId,
+          updatedById: input.actorId
+        }))
+      });
+      const projectStages = await client.projectStage.findMany({
+        where: { projectId: project.id },
+        orderBy: { sequence: "asc" }
+      });
+      const mainControlStage = projectStages[0];
+      if (!mainControlStage) {
+        throw new ProjectCreationError("STAGE_COMPONENT_EMPTY", "阶段组件不能为空。", 409);
+      }
+      await client.projectStageEvent.createMany({
+        data: projectStages.map((stage) => ({
+          projectId: project.id,
+          projectStageId: stage.id,
+          sequence: 1,
+          eventType: "CREATED" as const,
+          fromStatus: null,
+          toStatus: "NOT_STARTED" as const,
+          reason: creationReason,
+          snapshotJson: {
+            projectId: project.id,
+            projectStageId: stage.id,
+            code: stage.code,
+            name: stage.name,
+            description: stage.description,
+            sequence: stage.sequence,
+            status: stage.status,
+            version: stage.version
+          },
+          actorId: input.actorId
+        }))
+      });
+      project = await client.project.update({
+        where: { id: project.id },
+        data: {
+          mainControlStageId: mainControlStage.id,
+          mainControlStageProjectId: project.id,
+          mainControlStageCode: mainControlStage.code,
+          mainControlStageStatus: mainControlStage.status,
+          mainControlStageSequence: mainControlStage.sequence,
+          mainControlStageUpdatedAt: mainControlStage.statusChangedAt
+        }
       });
       const projectMilestones = await instantiateProjectMilestones(client, {
         projectId: project.id,
