@@ -15,6 +15,7 @@ import {
   type TemplateComponentTypeCode
 } from "@/modules/configuration/domain/template-policy";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+import { instantiateProjectGateDefinitions } from "@/modules/governance/application/project-gate-definition-service";
 
 import {
   buildProjectTemplateSnapshot,
@@ -276,6 +277,13 @@ export async function createProjectFromTemplate(
         projectId: project.id,
         departmentId: identity.departmentId
       };
+      const projectGates = await instantiateProjectGateDefinitions(client, {
+        projectId: project.id,
+        actorId: input.actorId,
+        auditContext,
+        components: storedSnapshot.components,
+        stages: projectStages
+      });
       const membershipAudit = await writeAudit(client, {
         action: AUDIT_ACTIONS.PROJECT_MEMBER_ADDED,
         objectType: AUDIT_OBJECT_TYPES.PROJECT_MEMBER,
@@ -311,6 +319,7 @@ export async function createProjectFromTemplate(
             snapshotChecksum: storedSnapshot.snapshotChecksum,
             referenceCount: storedSnapshot.components.length,
             milestoneCount: projectMilestones.length,
+            gateDefinitionCount: projectGates.length,
             version: project.version
           },
           allowedFields: PROJECT_CREATION_AUDIT_FIELDS

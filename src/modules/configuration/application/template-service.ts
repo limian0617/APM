@@ -20,6 +20,7 @@ import {
   type TemplateComponentTypeCode,
   type TemplateReference,
   validateTemplateComponentContent,
+  validateTemplateGateCodesUnique,
   validateTemplateMilestoneCodesUnique,
   validateTemplateReferences
 } from "../domain/template-policy";
@@ -551,6 +552,12 @@ export async function publishProjectTemplate(
       current.draftComponents.map((reference) => ({
         componentType: reference.componentType,
         version: reference.componentVersion
+      }))
+    );
+    validateTemplateGateCodesUnique(
+      current.draftComponents.map((reference) => ({
+        componentType: reference.componentType as TemplateComponentTypeCode,
+        content: reference.componentVersion.contentJson
       }))
     );
     validateTemplateMilestoneCodesUnique(

@@ -36,7 +36,34 @@ function context(actorId: string, operationId: string): AuditContext {
   };
 }
 
-function definition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
+type GateContent = {
+  gates: Array<{
+    code: string;
+    name: string;
+    stageCode: string;
+    scope?: "PROJECT" | "DELIVERY_UNIT" | "MODULE";
+    requiredCheckerCodes?: string[];
+    checkers?: Array<{ code: string; version: number }>;
+  }>;
+};
+
+function defaultGateContent() {
+  return {
+    gates: [
+      {
+        code: "G1",
+        name: "执行基线批准",
+        stageCode: "S0",
+        requiredCheckerCodes: ["DOCUMENTS.COMPLETE"]
+      }
+    ]
+  };
+}
+
+function definition(
+  type: "STAGE" | "GATE" | "ROLE" | "WBS",
+  gateContent: GateContent = defaultGateContent()
+) {
   switch (type) {
     case "STAGE":
       return {
@@ -53,16 +80,7 @@ function definition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
         ]
       };
     case "GATE":
-      return {
-        gates: [
-          {
-            code: "G1",
-            name: "执行基线批准",
-            stageCode: "S0",
-            requiredCheckerCodes: ["DOCUMENTS.COMPLETE"]
-          }
-        ]
-      };
+      return gateContent;
     case "ROLE":
       return { roles: [{ code: "PROJECT_MANAGER", name: "项目经理", required: true }] };
     case "WBS":
@@ -72,7 +90,10 @@ function definition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
   }
 }
 
-async function seedPublishedTemplate(label: string) {
+async function seedPublishedTemplate(
+  label: string,
+  gateContent: GateContent = defaultGateContent()
+) {
   const componentVersions = await Promise.all(
     (["STAGE", "GATE", "ROLE", "WBS"] as const).map(async (componentType) => {
       const code = `PROJECT.${label}.${componentType}.${suffix}`.toUpperCase();
@@ -80,7 +101,7 @@ async function seedPublishedTemplate(label: string) {
         code,
         componentType,
         name: `${componentType} ${label}`,
-        content: definition(componentType),
+        content: definition(componentType, gateContent),
         version: 0,
         reason: "创建项目测试组件",
         actorId: ids.admin,
@@ -251,6 +272,38 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
       "S8"
     ]);
     expect(projectStages.every(({ status }) => status === "NOT_STARTED")).toBe(true);
+    const projectSnapshot = await db.projectTemplateSnapshot.findUniqueOrThrow({
+      where: { projectId: firstBody.project.id },
+      include: { components: true }
+    });
+    const gateSnapshotComponent = projectSnapshot.components.find(
+      ({ componentType }) => componentType === "GATE"
+    );
+    expect(gateSnapshotComponent?.contentJson).toEqual(definition("GATE"));
+    const expectedGateDefinition = defaultGateContent().gates[0];
+    if (!expectedGateDefinition) throw new Error("Gate 测试定义缺失。");
+    const gateDefinition = await db.projectGateDefinition.findUniqueOrThrow({
+      where: { projectId_code: { projectId: firstBody.project.id, code: "G1" } },
+      include: { instances: true }
+    });
+    expect(gateDefinition).toMatchObject({
+      projectId: firstBody.project.id,
+      sourceSnapshotComponentId: gateSnapshotComponent?.id,
+      code: "G1",
+      scope: "PROJECT",
+      definitionJson: expectedGateDefinition,
+      checkerBindingsJson: [{ code: "DOCUMENTS.COMPLETE", version: 1 }]
+    });
+    expect(gateDefinition.instances).toHaveLength(1);
+    expect(gateDefinition.instances[0]).toMatchObject({
+      projectId: firstBody.project.id,
+      projectStageId: projectStages[0]!.id,
+      scope: "PROJECT",
+      deliveryUnitId: null,
+      moduleId: null,
+      checkRunSequence: 0,
+      version: 1
+    });
     await expect(
       db.projectStageEvent.count({
         where: { projectId: firstBody.project.id, eventType: "CREATED" }
@@ -274,6 +327,19 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
     await expect(
       db.outboxEvent.count({ where: { eventType: "project.created" } })
     ).resolves.toBeGreaterThanOrEqual(2);
+    await expect(
+      db.auditLog.count({
+        where: {
+          projectId: firstBody.project.id,
+          action: { in: ["GATE_DEFINITION_MATERIALIZED", "GATE_INSTANCE_CREATED"] }
+        }
+      })
+    ).resolves.toBe(2);
+    await expect(
+      db.outboxEvent.count({
+        where: { aggregateId: gateDefinition.id, eventType: "gate.definition.materialized" }
+      })
+    ).resolves.toBe(1);
   });
 
   it("rejects unauthenticated, unauthorized, missing, unpublished, and stale template inputs", async () => {
@@ -342,6 +408,85 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
     ).rejects.toMatchObject({ code: "TEMPLATE_NOT_PUBLISHED", status: 409 });
   });
 
+  it("persists explicit scoped Gate definitions without creating target instances", async () => {
+    const template = await seedPublishedTemplate("SCOPED", {
+      gates: [
+        {
+          code: "G2",
+          name: "单机检查",
+          stageCode: "S1",
+          scope: "DELIVERY_UNIT",
+          checkers: [{ code: "STAGE.AWAITING_GATE", version: 1 }]
+        },
+        {
+          code: "G3",
+          name: "模块检查",
+          stageCode: "S2",
+          scope: "MODULE",
+          checkers: [{ code: "STAGE.AWAITING_GATE", version: 1 }]
+        }
+      ]
+    });
+    const created = await createProjectFromTemplate({
+      ...projectBody(template, `PRJ-SCOPED-GATES-${suffix}`.toUpperCase()),
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `scoped-gates-${suffix}`)
+    });
+    const definitions = await db.projectGateDefinition.findMany({
+      where: { projectId: created.project.id },
+      include: { instances: true },
+      orderBy: { code: "asc" }
+    });
+    expect(definitions).toMatchObject([
+      {
+        code: "G2",
+        scope: "DELIVERY_UNIT",
+        checkerBindingsJson: [{ code: "STAGE.AWAITING_GATE", version: 1 }],
+        instances: []
+      },
+      {
+        code: "G3",
+        scope: "MODULE",
+        checkerBindingsJson: [{ code: "STAGE.AWAITING_GATE", version: 1 }],
+        instances: []
+      }
+    ]);
+  });
+
+  it("rolls back Gate facts, audits, and Outbox events when an outer project transaction aborts", async () => {
+    const code = `PRJ-GATE-ROLLBACK-${suffix}`.toUpperCase();
+    const beforeGateAudits = await db.auditLog.count({
+      where: { action: { in: ["GATE_DEFINITION_MATERIALIZED", "GATE_INSTANCE_CREATED"] } }
+    });
+    const beforeGateOutbox = await db.outboxEvent.count({
+      where: { eventType: "gate.definition.materialized" }
+    });
+
+    await expect(
+      db.$transaction(async (transaction) => {
+        await createProjectFromTemplate(
+          {
+            ...projectBody(baseTemplate, code),
+            actorId: ids.admin,
+            auditContext: context(ids.admin, `gate-rollback-${suffix}`)
+          },
+          transaction
+        );
+        throw new Error("force project creation rollback");
+      })
+    ).rejects.toThrow("force project creation rollback");
+
+    await expect(db.project.count({ where: { code } })).resolves.toBe(0);
+    await expect(
+      db.auditLog.count({
+        where: { action: { in: ["GATE_DEFINITION_MATERIALIZED", "GATE_INSTANCE_CREATED"] } }
+      })
+    ).resolves.toBe(beforeGateAudits);
+    await expect(
+      db.outboxEvent.count({ where: { eventType: "gate.definition.materialized" } })
+    ).resolves.toBe(beforeGateOutbox);
+  });
+
   it("does not change an existing snapshot after template republish and disable", async () => {
     const template = await seedPublishedTemplate("DRIFT");
     const created = await createProjectFromTemplate({
@@ -353,10 +498,44 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
       where: { projectId: created.project.id },
       include: { components: { orderBy: { position: "asc" } } }
     });
+    const beforeGateDefinition = await db.projectGateDefinition.findUniqueOrThrow({
+      where: { projectId_code: { projectId: created.project.id, code: "G1" } }
+    });
+    const gateComponentCode = `PROJECT.DRIFT.GATE.${suffix}`.toUpperCase();
+    const updatedGateDraft = await saveTemplateComponentDraft({
+      code: gateComponentCode,
+      componentType: "GATE",
+      name: "GATE DRIFT v2",
+      content: {
+        gates: [
+          {
+            code: "G1",
+            name: "执行基线批准 v2",
+            stageCode: "S1",
+            requiredCheckerCodes: ["STAGE.AWAITING_GATE"]
+          }
+        ]
+      },
+      version: 2,
+      reason: "发布更新的 Gate 组件",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `drift-gate-draft-${suffix}`)
+    });
+    const updatedGate = await publishTemplateComponent({
+      code: gateComponentCode,
+      version: updatedGateDraft.component.version,
+      reason: "发布更新的 Gate 组件",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `drift-gate-publish-${suffix}`)
+    });
     const nextDraft = await saveProjectTemplateDraft({
       code: template.code,
       name: "Changed template name",
-      components: template.components,
+      components: template.components.map((component) =>
+        component.componentType === "GATE"
+          ? { ...component, componentVersionId: updatedGate.publishedVersion.id }
+          : component
+      ),
       version: template.template.version,
       reason: "发布新模板版本",
       actorId: ids.admin,
@@ -383,6 +562,16 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
         include: { components: { orderBy: { position: "asc" } } }
       })
     ).resolves.toEqual(before);
+    await expect(
+      db.projectGateDefinition.findUniqueOrThrow({
+        where: { projectId_code: { projectId: created.project.id, code: "G1" } }
+      })
+    ).resolves.toMatchObject({
+      definitionJson: beforeGateDefinition.definitionJson,
+      definitionChecksum: beforeGateDefinition.definitionChecksum,
+      checkerBindingsJson: beforeGateDefinition.checkerBindingsJson,
+      projectStageId: beforeGateDefinition.projectStageId
+    });
     await expect(
       createProjectFromTemplate({
         ...projectBody(template, `PRJ-DISABLED-${suffix}`.toUpperCase()),
