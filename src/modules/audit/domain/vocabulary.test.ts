@@ -7,6 +7,8 @@ import {
   AUDIT_ACTIONS,
   AUDIT_OBJECT_TYPES,
   DELIVERY_UNIT_STAGE_AUDIT_FIELDS,
+  GATE_APPROVAL_AUDIT_FIELDS,
+  GATE_SUBMISSION_AUDIT_FIELDS,
   PROJECT_STAGE_AUDIT_FIELDS,
   STAGE_RELEASE_AUTHORIZATION_AUDIT_FIELDS
 } from "./vocabulary";
@@ -106,6 +108,55 @@ describe("Gate audit vocabulary", () => {
       "PROJECT_GATE_DEFINITION",
       "PROJECT_GATE_INSTANCE",
       "GATE_CHECK_SNAPSHOT"
+    ]) {
+      expect(schema).toContain(value);
+      expect(migration).toContain(`ADD VALUE '${value}'`);
+    }
+  });
+
+  it("keeps APM-032 submission and approval facts aligned across Prisma, migration, and allowlists", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260804040000_apm_032_gate_submissions/migration.sql"
+      ),
+      "utf8"
+    );
+
+    expect(AUDIT_ACTIONS).toMatchObject({
+      GATE_SUBMISSION_SUBMITTED: "GATE_SUBMISSION_SUBMITTED",
+      GATE_APPROVAL_RECORDED: "GATE_APPROVAL_RECORDED",
+      GATE_SUBMISSION_WITHDRAWN: "GATE_SUBMISSION_WITHDRAWN",
+      GATE_SUBMISSION_APPROVED: "GATE_SUBMISSION_APPROVED",
+      GATE_SUBMISSION_REJECTED: "GATE_SUBMISSION_REJECTED"
+    });
+    expect(AUDIT_OBJECT_TYPES).toMatchObject({
+      GATE_SUBMISSION: "GATE_SUBMISSION",
+      GATE_APPROVAL: "GATE_APPROVAL"
+    });
+    expect(GATE_SUBMISSION_AUDIT_FIELDS).toContain("approverUserIds");
+    expect(GATE_SUBMISSION_AUDIT_FIELDS).toContain("gateCheckSnapshotId");
+    expect(GATE_APPROVAL_AUDIT_FIELDS).toEqual([
+      "projectId",
+      "gateSubmissionId",
+      "gateApprovalId",
+      "gateSubmissionApproverId",
+      "decision",
+      "decidedById",
+      "decidedAt",
+      "status",
+      "version"
+    ]);
+
+    for (const value of [
+      "GATE_SUBMISSION_SUBMITTED",
+      "GATE_APPROVAL_RECORDED",
+      "GATE_SUBMISSION_WITHDRAWN",
+      "GATE_SUBMISSION_APPROVED",
+      "GATE_SUBMISSION_REJECTED",
+      "GATE_SUBMISSION",
+      "GATE_APPROVAL"
     ]) {
       expect(schema).toContain(value);
       expect(migration).toContain(`ADD VALUE '${value}'`);
