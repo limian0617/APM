@@ -27,13 +27,17 @@ Three alternatives were considered:
 ## Data Model
 
 - A published `GATE` component contains stable gate code, name, stage code,
-  `scope` (`PROJECT`, `DELIVERY_UNIT`, or `MODULE`, defaulting to `PROJECT` for
-  existing templates), and one or more required checker codes.
+  optional `scope` (`PROJECT`, `DELIVERY_UNIT`, or `MODULE`), and either the
+  legacy `requiredCheckerCodes` array or a new explicit `{ code, version }`
+  checker array. The project materializer treats a legacy definition as
+  project-scope and resolves its registered v1 checker bindings without
+  rewriting the published JSON or its checksum.
 - `ProjectGateDefinition` is the project-owned immutable definition fact. It
   references the exact project template snapshot component and the exact
-  `ProjectStage`, and stores the normalized definition content and required
-  checker codes. A registered checker version is frozen only when it executes
-  in a check snapshot.
+  `ProjectStage`, and stores the normalized definition content and resolved
+  checker bindings. Explicit template bindings remain exact; legacy bindings
+  are resolved once during materialization. Every check snapshot repeats the
+  exact binding that it executed.
 - `ProjectGateInstance` binds one definition to exactly its allowed scope. A
   project instance has no delivery-unit or module target; a delivery-unit
   instance has exactly one same-project delivery unit; a module instance has
@@ -56,22 +60,25 @@ boundary for HTTP commands.
 
 The registry is TypeScript code, not database configuration. Each checker has a
 stable `CODE` and `VERSION`, an allowed scope set, and an `evaluate` function.
-The APM-031 registry provides only the technical `STAGE.AWAITING_GATE` checker.
-The initial business hard-rule catalogue belongs to PMO, quality, and the
-technical owner, so document, issue, drawing, acceptance, and UPH checkers are
-not invented in this package. A template code that is not registered returns a
-structured `HARD_FAILED` result named `CHECKER_NOT_REGISTERED`; it can never
-incorrectly pass a Gate before its owning domain and business rule are ready. A
-later checker version does not rewrite historical snapshots.
+The APM-031 registry provides the technical `STAGE.AWAITING_GATE` checker and a
+safe `DOCUMENTS.COMPLETE@1` compatibility registration for the existing
+published template fixtures. The document registration deterministically emits
+`HARD_FAILED/CHECKER_DEPENDENCY_UNAVAILABLE` until the Documents domain owns
+the underlying fact; it never fabricates a passing result. The initial business
+hard-rule catalogue for document, issue, drawing, acceptance, and UPH Gate
+policies remains owned by PMO, quality, and the technical owner. A template
+binding that is not registered produces a structured hard failure, and a later
+checker version never rewrites historical snapshots.
 
 ## APIs And Authorization
 
 - `GET /api/projects/{projectId}/gates` requires `PROJECT_READ` and exposes
   definitions, instances, and frozen checks for one authorized project.
-- `POST /api/projects/{projectId}/gate-instances` requires
-  `PROJECT_PLAN_UPDATE`, an idempotency key, a definition ID, and the required
-  same-project scope target. It creates only the requested instance; it does
-  not submit or approve a Gate.
+- `POST /api/projects/{projectId}/gate-instances` requires `GATE_SUBMIT`, an
+  idempotency key, a definition ID, and the required same-project scope target.
+  Project-scope instances are materialized with the project. Delivery-unit and
+  module targets are always explicit in this request; the package does not
+  assume which delivery-unit types a template should enumerate.
 - `POST /api/projects/{projectId}/gate-instances/{instanceId}/checks` requires
   `GATE_SUBMIT`, an idempotency key, and a reason. It records a pre-submission
   check snapshot only. It creates no application, approver, approval, release,

@@ -4,7 +4,7 @@
 
 **Goal:** Add project-owned Gate definition facts, scope-valid instances, registered deterministic checkers, and immutable check-result snapshots.
 
-**Architecture:** Configuration owns the published `GATE` component; the project-creation transaction deep-snapshots it into Governance-owned project Gate definitions. Governance creates scope-bound instances and runs a TypeScript checker registry, recording immutable snapshots, audit facts, and Outbox events in the same transaction.
+**Architecture:** Configuration owns the published `GATE` component; the project-creation transaction deep-snapshots it into Governance-owned project Gate definitions. Governance accepts legacy code-only or explicit versioned checker bindings, creates only explicit non-project scope instances, and runs a TypeScript checker registry while recording immutable snapshots, audit facts, and Outbox events in the same transaction.
 
 **Tech Stack:** Next.js Route Handlers, TypeScript, Prisma/PostgreSQL, Zod, Vitest.
 
@@ -20,7 +20,7 @@
 - Create: `src/modules/governance/domain/gate-checker-registry.ts`
 - Create: `src/modules/governance/domain/gate-checker-registry.test.ts`
 
-- [ ] **Step 1: Write failing tests for normalized `scope`, duplicate checker rejection, a registry lookup, a versioned snapshot binding, and an unregistered-checker hard failure.**
+- [ ] **Step 1: Write failing tests for legacy Gate JSON preservation, explicit `scope`/checker-version parsing, duplicate checker rejection, a registry lookup, and an unavailable-dependency hard failure.**
 
 ```ts
 expect(resolveGateChecker("STAGE.AWAITING_GATE")).toMatchObject({
@@ -34,7 +34,7 @@ expect(result.status).toBe("HARD_FAILED");
 
 Run: `npx vitest run src/modules/configuration/domain/template-policy.test.ts src/modules/governance/domain/gate-checker-registry.test.ts`
 
-- [ ] **Step 3: Implement strict Gate `scope` parsing with a `PROJECT` default and a TypeScript-only registered-checker registry.**
+- [ ] **Step 3: Accept either legacy `requiredCheckerCodes` or explicit versioned `checkers` without rewriting legacy JSON, and implement a TypeScript-only registered-checker registry.**
 
 ```ts
 export const GATE_SCOPES = ["PROJECT", "DELIVERY_UNIT", "MODULE"] as const;
@@ -57,7 +57,7 @@ export const GATE_CHECKER_REGISTRY = new Map([["STAGE.AWAITING_GATE", checker]])
 
 ```ts
 expect(migration).toContain('CHECK ("scope" = \'PROJECT\' AND "delivery_unit_id" IS NULL');
-expect(migration).toContain('gate_check_snapshots is append-only');
+expect(migration).toContain("gate_check_snapshots is append-only");
 ```
 
 - [ ] **Step 2: Run the focused migration-contract test and confirm it fails because the Gate schema does not exist.**
@@ -93,7 +93,7 @@ expect(definition.requiredCheckerCodesJson).toEqual(["DOCUMENTS.COMPLETE"]);
 
 - [ ] **Step 2: Run the focused unit and PostgreSQL-gated tests and confirm the Gate facts are not yet created.**
 
-- [ ] **Step 3: Instantiate definitions and default project instances inside the existing creation transaction, writing creation audit/Outbox facts with the project audit context.**
+- [ ] **Step 3: Materialize immutable definitions and default project instances inside the existing creation transaction, preserving the source JSON checksum while freezing resolved checker bindings in the project fact.**
 
 ```ts
 await instantiateProjectGateDefinitions(client, {
@@ -118,7 +118,9 @@ await instantiateProjectGateDefinitions(client, {
 - [ ] **Step 1: Write failing tests for same-project delivery-unit/module scopes, invalid target shapes, registry-version freezing, stage readiness failure, unavailable dependency failure, checksum stability, idempotent replay, and transaction rollback.**
 
 ```ts
-await expect(createGateInstance({ scope: "MODULE", moduleId: foreignModuleId })).rejects.toMatchObject({
+await expect(
+  createGateInstance({ scope: "MODULE", moduleId: foreignModuleId })
+).rejects.toMatchObject({
   code: "GATE_SCOPE_TARGET_INVALID"
 });
 expect(snapshot.overallStatus).toBe("HARD_FAILED");
@@ -149,8 +151,9 @@ await client.gateCheckResult.createMany({ data: results });
 - [ ] **Step 1: Write failing parser tests for strict scope target fields, reason/version checks, and unknown properties.**
 
 ```ts
-expect(() => parseGateInstancePayload({ definitionId: "g1", scope: "PROJECT", extra: true }))
-  .toThrow("INVALID_REQUEST");
+expect(() =>
+  parseGateInstancePayload({ definitionId: "g1", scope: "PROJECT", extra: true })
+).toThrow("INVALID_REQUEST");
 ```
 
 - [ ] **Step 2: Run the focused contract test and confirm the parsers do not yet exist.**
