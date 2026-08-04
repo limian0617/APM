@@ -556,8 +556,12 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
       actorId: ids.admin,
       auditContext: auditContext("check-transaction-instance", facts.project.id)
     });
-    await db.projectStage.update({
-      where: { id: facts.stage.id },
+    await db.deliveryUnitStage.updateMany({
+      where: {
+        projectId: facts.project.id,
+        deliveryUnitId: facts.deliveryUnit.id,
+        projectStageId: facts.stage.id
+      },
       data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
     });
 
@@ -747,8 +751,12 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
     );
     expect(crossProject.status).toBe(404);
 
-    await db.projectStage.update({
-      where: { id: facts.stage.id },
+    await db.deliveryUnitStage.updateMany({
+      where: {
+        projectId: facts.project.id,
+        deliveryUnitId: facts.deliveryUnit.id,
+        projectStageId: facts.stage.id
+      },
       data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
     });
     const checkUrl = `http://localhost/api/projects/${facts.project.id}/gate-instances/${created.gateInstance.id}/checks`;
