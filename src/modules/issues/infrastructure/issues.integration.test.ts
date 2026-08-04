@@ -235,7 +235,7 @@ describeDatabase("APM-070 PostgreSQL unified issues", () => {
   it.each(["CLOSED", "CANCELED"] as const)(
     "rejects edits and lifecycle transitions for a %s project",
     async (projectStatus) => {
-      const project = await seedProject("READONLY");
+      const project = await seedProject(`READONLY-${projectStatus}`);
       const created = await createProjectIssue({
         projectId: project.id,
         title: "关闭项目问题",
