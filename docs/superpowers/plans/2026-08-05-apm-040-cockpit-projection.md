@@ -13,6 +13,7 @@
 ### Task 1: Projection persistence
 
 **Files:**
+
 - Create: `prisma/migrations/20260805050000_apm_040_cockpit_projection/migration.sql`
 - Modify: `prisma/schema.prisma`
 - Test: `src/modules/cockpit/domain/cockpit-persistence.test.ts`
@@ -40,6 +41,7 @@ Expected: PASS.
 ### Task 2: Deterministic health policy
 
 **Files:**
+
 - Create: `src/modules/cockpit/domain/cockpit-health.ts`
 - Create: `src/modules/cockpit/domain/cockpit-health.test.ts`
 
@@ -66,6 +68,7 @@ Expected: PASS.
 ### Task 3: Source adapter and projection application service
 
 **Files:**
+
 - Create: `src/modules/cockpit/infrastructure/prisma-cockpit-source.ts`
 - Create: `src/modules/cockpit/application/cockpit-projection-service.ts`
 - Create: `src/modules/cockpit/infrastructure/cockpit-projection.integration.test.ts`
@@ -94,6 +97,7 @@ Expected: unit tests PASS; integration tests PASS in CI or SKIP without local Po
 ### Task 4: API contract and authorization
 
 **Files:**
+
 - Create: `src/modules/cockpit/contracts/cockpit-http.ts`
 - Create: `src/modules/cockpit/contracts/cockpit-http.test.ts`
 - Create: `src/app/api/projects/[projectId]/cockpit/route.ts`
@@ -124,6 +128,7 @@ Expected: PASS.
 ### Task 5: Migration gate and package verification
 
 **Files:**
+
 - Modify: `.github/workflows/ci.yml`
 - Modify: `D:\GPT Prj\自动化设备项目管理\规划\APM-开发进度跟踪.html` only after CI passes
 
