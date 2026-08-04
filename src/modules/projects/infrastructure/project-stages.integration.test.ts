@@ -302,7 +302,7 @@ describeDatabase("APM-030 PostgreSQL project stage persistence", () => {
       auditContext
     });
 
-    expect(transitioned.stage).toMatchObject({ status: "AUTHORIZED", resourceVersion: 2 });
+    expect(transitioned).toMatchObject({ resourceVersion: 2, stage: { status: "AUTHORIZED" } });
     expect(revoked.release).toMatchObject({ status: "REVOKED", version: 2 });
     await expect(
       transitionProjectStage({
