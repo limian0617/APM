@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveIssueIndicators,
   ISSUE_CATEGORIES,
   ISSUE_SEVERITIES,
   IssueLifecycleError,
   nextIssueStatus,
-  normalizeIssueTags
+  normalizeIssueTags,
+  requiresIndependentVerification
 } from "./issue-lifecycle";
 
 describe("APM-070 issue lifecycle", () => {
@@ -37,5 +39,37 @@ describe("APM-070 issue lifecycle", () => {
   it("normalizes distinct phenomenon tags without accepting empty values", () => {
     expect(normalizeIssueTags(["  缺料  ", "干涉", "缺料"])).toEqual(["缺料", "干涉"]);
     expect(() => normalizeIssueTags(["  "])).toThrow(IssueLifecycleError);
+  });
+});
+
+describe("APM-071 issue indicators and independent verification", () => {
+  it("requires an independent verifier for high-severity issues", () => {
+    expect(requiresIndependentVerification("LOW")).toBe(false);
+    expect(requiresIndependentVerification("MEDIUM")).toBe(false);
+    expect(requiresIndependentVerification("HIGH")).toBe(true);
+    expect(requiresIndependentVerification("CRITICAL")).toBe(true);
+  });
+
+  it("derives overdue and blocked flags without changing the lifecycle status", () => {
+    expect(
+      deriveIssueIndicators(
+        {
+          status: "PROCESSING",
+          dueDate: "2026-08-04",
+          hasOpenBlocker: true
+        },
+        new Date("2026-08-05T08:00:00.000Z")
+      )
+    ).toEqual({ isOverdue: true, isBlocked: true });
+    expect(
+      deriveIssueIndicators(
+        {
+          status: "CLOSED",
+          dueDate: "2026-08-04",
+          hasOpenBlocker: true
+        },
+        new Date("2026-08-05T08:00:00.000Z")
+      )
+    ).toEqual({ isOverdue: false, isBlocked: false });
   });
 });

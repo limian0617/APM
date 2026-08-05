@@ -88,7 +88,10 @@ export const AUDIT_ACTIONS = {
   ISSUE_CREATED: "ISSUE_CREATED",
   ISSUE_UPDATED: "ISSUE_UPDATED",
   ISSUE_STATUS_CHANGED: "ISSUE_STATUS_CHANGED",
-  ISSUE_REOPENED: "ISSUE_REOPENED"
+  ISSUE_REOPENED: "ISSUE_REOPENED",
+  ISSUE_RESPONSIBILITY_ASSIGNED: "ISSUE_RESPONSIBILITY_ASSIGNED",
+  ISSUE_RELATION_ADDED: "ISSUE_RELATION_ADDED",
+  ISSUE_RELATION_CLOSED: "ISSUE_RELATION_CLOSED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -130,7 +133,8 @@ export const AUDIT_OBJECT_TYPES = {
   ALERT_RULE: "ALERT_RULE",
   PROJECT_ALERT: "PROJECT_ALERT",
   PROJECT_ALERT_SCAN: "PROJECT_ALERT_SCAN",
-  ISSUE: "ISSUE"
+  ISSUE: "ISSUE",
+  ISSUE_RELATION: "ISSUE_RELATION"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -246,6 +250,15 @@ export const ISSUE_AUDIT_FIELDS = [
   "status",
   "rootCauseCategory",
   "tagCount",
+  "ownerMembershipId",
+  "verifierMembershipId",
+  "dueDate",
+  "relationId",
+  "relationType",
+  "targetId",
+  "relationStatus",
+  "isBlocked",
+  "isOverdue",
   "eventType",
   "reason",
   "version"
