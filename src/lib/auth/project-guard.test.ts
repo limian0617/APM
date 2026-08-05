@@ -151,4 +151,51 @@ describe("authorizeProjectRequest", () => {
 
     expect(result.authorized).toBe(true);
   });
+
+  it("resolves assignment context only after verifying the actor and project", async () => {
+    const deps = dependencies();
+    deps.loadActor = vi.fn(async (): Promise<AuthorizationActor> => ({
+      id: "quality-1",
+      name: "质量工程师",
+      status: "ACTIVE",
+      departmentId: "quality",
+      systemRoles: [SYSTEM_ROLES.QUALITY],
+      grants: [
+        {
+          permission: PERMISSIONS.GATE_APPROVE,
+          scope: PERMISSION_SCOPES.ASSIGNED,
+          systemRole: SYSTEM_ROLES.QUALITY
+        }
+      ]
+    }));
+    deps.loadProject = vi.fn(async () => ({
+      id: "project-1",
+      code: "APM-TEST-001",
+      name: "测试项目",
+      status: "IN_PROGRESS",
+      version: 3,
+      departmentId: "mechanical",
+      memberRoles: [PROJECT_ROLES.QUALITY]
+    }));
+    const resolveContext = vi.fn(async ({ actor, project }) => {
+      expect(actor.id).toBe("quality-1");
+      expect(project.id).toBe("project-1");
+      return { assignedUserIds: [actor.id] };
+    });
+
+    const result = await authorizeProjectRequest(
+      new Request("http://localhost/api/projects/project-1/gate-submissions/submission-1/approve", {
+        method: "POST",
+        headers: { "x-apm-user-id": "quality-1" }
+      }),
+      "project-1",
+      PERMISSIONS.GATE_APPROVE,
+      resolveContext,
+      deps
+    );
+
+    expect(result.authorized).toBe(true);
+    expect(resolveContext).toHaveBeenCalledOnce();
+    expect(deps.recordDenial).not.toHaveBeenCalled();
+  });
 });
