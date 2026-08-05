@@ -975,6 +975,22 @@ enum IssueHistoryEventType {
   VERIFICATION_SUBMITTED
   CLOSED
   REOPENED
+  RESPONSIBILITY_ASSIGNED
+  RELATION_ADDED
+  RELATION_CLOSED
+}
+
+enum IssueRelationType {
+  TASK
+  GATE_INSTANCE
+  DRAWING_VERSION
+  TEST_RESULT
+  BLOCKED_BY_ISSUE
+}
+
+enum IssueRelationStatus {
+  ACTIVE
+  CLOSED
 }
 
 enum CockpitHealthStatus {
@@ -1171,6 +1187,9 @@ enum AuditAction {
   ISSUE_UPDATED
   ISSUE_STATUS_CHANGED
   ISSUE_REOPENED
+  ISSUE_RESPONSIBILITY_ASSIGNED
+  ISSUE_RELATION_ADDED
+  ISSUE_RELATION_CLOSED
   COCKPIT_PROJECTION_REFRESHED
   COCKPIT_RESOURCE_LOAD_REFRESHED
   COCKPIT_RESOURCE_LOAD_PERSON_READ
@@ -1234,6 +1253,7 @@ enum AuditObjectType {
   TECHNICAL_ASSET_EVENT
   TECHNICAL_ASSET_VALIDATION
   ISSUE
+  ISSUE_RELATION
   COCKPIT_PROJECTION
   COCKPIT_RESOURCE_LOAD
 }
@@ -1352,6 +1372,8 @@ model User {
   issuesUpdated                         Issue[]                           @relation("IssueUpdatedBy")
   issuesClosed                          Issue[]                           @relation("IssueClosedBy")
   issueHistoriesActed                   IssueHistory[]                    @relation("IssueHistoryActor")
+  issueRelationsCreated                 IssueRelation[]                   @relation("IssueRelationCreatedBy")
+  issueRelationsClosed                  IssueRelation[]                   @relation("IssueRelationClosedBy")
   documentReviewsRequested              DocumentReview[]                  @relation("DocumentReviewRequestedBy")
   documentReviewsAssigned               DocumentReview[]                  @relation("DocumentReviewReviewer")
   documentReviewsDecided                DocumentReview[]                  @relation("DocumentReviewDecidedBy")
@@ -1505,6 +1527,7 @@ model Project {
   publicLibraryReferences       ProjectPublicLibraryReference[]
   issues                        Issue[]
   issueHistories                IssueHistory[]
+  issueRelations                IssueRelation[]
 
   @@unique([mainControlStageId, mainControlStageProjectId])
   @@index([departmentId])
@@ -2836,6 +2859,9 @@ model Issue {
   closedAt              DateTime?               @map("closed_at")
   closedById            String?                 @map("closed_by_id")
   verificationEvidence  String?                 @map("verification_evidence")
+  ownerMembershipId     String?                 @map("owner_membership_id")
+  verifierMembershipId  String?                 @map("verifier_membership_id")
+  dueDate               DateTime?               @map("due_date") @db.Date
   version               Int                     @default(1)
   createdById           String                  @map("created_by_id")
   updatedById           String                  @map("updated_by_id")
@@ -2845,14 +2871,46 @@ model Issue {
   createdBy             User                    @relation("IssueCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy             User                    @relation("IssueUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   closedBy              User?                   @relation("IssueClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  ownerMembership       ProjectMember?          @relation("IssueOwnerMembership", fields: [ownerMembershipId], references: [id], onDelete: Restrict)
+  verifierMembership    ProjectMember?          @relation("IssueVerifierMembership", fields: [verifierMembershipId], references: [id], onDelete: Restrict)
   tags                  IssueTag[]
   history               IssueHistory[]
+  relations             IssueRelation[]         @relation("IssueSourceRelations")
+  blockerRelations      IssueRelation[]         @relation("IssueBlockerRelations")
 
   @@unique([id, projectId])
   @@index([projectId, status, severity, updatedAt])
   @@index([projectId, category, status])
   @@index([closedById, closedAt])
+  @@index([projectId, ownerMembershipId, dueDate])
+  @@index([projectId, verifierMembershipId, status])
   @@map("issues")
+}
+
+model IssueRelation {
+  id             String              @id @default(cuid())
+  projectId      String              @map("project_id")
+  issueId        String              @map("issue_id")
+  relationType   IssueRelationType   @map("relation_type")
+  targetId       String              @map("target_id")
+  blockerIssueId String?             @map("blocker_issue_id")
+  status         IssueRelationStatus @default(ACTIVE)
+  reason         String
+  closedReason   String?             @map("closed_reason")
+  createdById    String              @map("created_by_id")
+  closedById     String?             @map("closed_by_id")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  closedAt       DateTime?           @map("closed_at")
+  issue          Issue               @relation("IssueSourceRelations", fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+  blockerIssue   Issue?              @relation("IssueBlockerRelations", fields: [blockerIssueId, projectId], references: [id, projectId], onDelete: Restrict)
+  project        Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy      User                @relation("IssueRelationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  closedBy       User?               @relation("IssueRelationClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+
+  @@index([projectId, issueId, status])
+  @@index([projectId, relationType, targetId])
+  @@index([blockerIssueId, status])
+  @@map("issue_relations")
 }
 
 model IssueTag {
@@ -3336,6 +3394,8 @@ model ProjectMember {
   ownedResponsibilityPackages ResponsibilityPackage[]
   assignedPlanningTasks       PlanningTask[]
   resourceLoadPersonProjections ResourceLoadPersonProjection[]
+  ownedIssues                 Issue[]                 @relation("IssueOwnerMembership")
+  verifiedIssues              Issue[]                 @relation("IssueVerifierMembership")
   ownedResidualItems          ResidualItem[]             @relation("ResidualItemOwnerMembership")
   verifiedResidualItems       ResidualItem[]             @relation("ResidualItemVerifierMembership")
 

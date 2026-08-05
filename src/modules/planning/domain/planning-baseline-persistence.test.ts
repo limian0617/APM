@@ -7,7 +7,7 @@ describe("APM-023 planning baseline persistence contract", () => {
   it("keeps CI upgrade coverage from the APM-023 baseline", () => {
     const workflow = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8");
 
-    expect(workflow).toContain("Validate APM-023 to APM-070 upgrade migration");
+    expect(workflow).toContain("Validate APM-070 to APM-071 upgrade migration");
     expect(workflow).toContain("20260804060000_apm_034_alert_governance");
   });
 });

@@ -15,6 +15,12 @@ export type IssueStatus =
 export type IssueAction =
   "START_ANALYSIS" | "START_PROCESSING" | "SUBMIT_VERIFICATION" | "VERIFY_CLOSE" | "REOPEN";
 
+export type IssueIndicatorInput = {
+  status: IssueStatus;
+  dueDate: string | null;
+  hasOpenBlocker: boolean;
+};
+
 export class IssueLifecycleError extends Error {}
 
 const transitions: Readonly<Record<IssueStatus, Partial<Record<IssueAction, IssueStatus>>>> = {
@@ -29,6 +35,19 @@ export function nextIssueStatus(status: IssueStatus, action: IssueAction): Issue
   const next = transitions[status]?.[action];
   if (!next) throw new IssueLifecycleError(`问题状态 ${status} 不能执行 ${action}。`);
   return next;
+}
+
+export function requiresIndependentVerification(severity: IssueSeverity): boolean {
+  return severity === "HIGH" || severity === "CRITICAL";
+}
+
+export function deriveIssueIndicators(input: IssueIndicatorInput, now: Date) {
+  const currentDay = now.toISOString().slice(0, 10);
+  const isOpen = input.status !== "CLOSED";
+  return {
+    isOverdue: isOpen && input.dueDate !== null && input.dueDate < currentDay,
+    isBlocked: isOpen && input.hasOpenBlocker
+  };
 }
 
 export function normalizeIssueTags(tags: readonly unknown[]): string[] {

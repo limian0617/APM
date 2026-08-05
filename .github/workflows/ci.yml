@@ -37,6 +37,22 @@ jobs:
       - run: npm run db:generate
       - run: npm run db:validate
       - run: npm run db:migrate:deploy
+      - name: Validate APM-004 to UI baseline upgrade migration
+        shell: bash
+        run: |
+          export PGPASSWORD=apm
+          createdb -h localhost -U apm apm_upgrade_apm004
+          upgrade_root="$RUNNER_TEMP/apm-upgrade-apm004-$GITHUB_RUN_ID"
+          mkdir -p "$upgrade_root/prisma/migrations"
+          cp prisma/schema.prisma "$upgrade_root/prisma/schema.prisma"
+          cp -R prisma/migrations/20260802000000_init "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802010000_apm_002_authorization "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802020000_apm_003_audit_service "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802030000_apm_004_configuration_jobs "$upgrade_root/prisma/migrations/"
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm004?schema=public" \
+            npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm004?schema=public" \
+            npm run db:migrate:deploy
       - name: Validate APM-050 to APM-061 upgrade migration (includes APM-050 to APM-060)
         shell: bash
         run: |
@@ -111,6 +127,44 @@ jobs:
           DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm023?schema=public" \
             npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
           DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm023?schema=public" \
+            npm run db:migrate:deploy
+      - name: Validate APM-070 to APM-071 upgrade migration
+        shell: bash
+        run: |
+          export PGPASSWORD=apm
+          createdb -h localhost -U apm apm_upgrade_apm070
+          upgrade_root="$RUNNER_TEMP/apm-upgrade-apm070-$GITHUB_RUN_ID"
+          mkdir -p "$upgrade_root/prisma/migrations"
+          cp prisma/schema.prisma "$upgrade_root/prisma/schema.prisma"
+          cp -R prisma/migrations/20260802000000_init "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802010000_apm_002_authorization "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802020000_apm_003_audit_service "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802030000_apm_004_configuration_jobs "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802040000_apm_005_file_objects "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802050000_apm_006_notifications "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260802060000_apm_007_observability "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803000000_apm_009_api_contracts "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803010000_apm_010_template_versions "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803020000_apm_011_project_snapshot "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803030000_apm_012_project_structure "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803040000_apm_013_project_capabilities "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803050000_apm_014_responsibility_packages "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803060000_apm_020_planning_tasks "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803070000_apm_021_calendars_dependencies "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803080000_apm_022_schedule_forecasts "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803090000_apm_025_milestone_component "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260803091000_apm_025_project_milestones "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804010000_apm_030_project_stages "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804020000_apm_030_stage_invariants "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804030000_apm_031_gate_foundation "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804040000_apm_032_gate_submissions "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804050000_apm_033_gate_conditional_releases "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260804060000_apm_034_alert_governance "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260805010000_apm_023_planning_baselines "$upgrade_root/prisma/migrations/"
+          cp -R prisma/migrations/20260805040000_apm_070_unified_issues "$upgrade_root/prisma/migrations/"
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm070?schema=public" \
+            npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm070?schema=public" \
             npm run db:migrate:deploy
       - name: Validate APM-040 to APM-042 upgrade migration
         shell: bash

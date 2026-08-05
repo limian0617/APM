@@ -901,6 +901,41 @@ export const issueTransitionBodySchema = z
       });
     }
   });
+const issueDueDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/u)
+  .refine((value) => new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value, {
+    message: "dueDate 必须是有效的 YYYY-MM-DD 日期。"
+  });
+export const issueResponsibilityBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  ownerMembershipId: identifierSchema,
+  verifierMembershipId: identifierSchema.nullable(),
+  dueDate: issueDueDateSchema.nullable(),
+  reason: reasonSchema
+});
+export const issueRelationTypeSchema = z.enum([
+  "TASK",
+  "GATE_INSTANCE",
+  "DRAWING_VERSION",
+  "TEST_RESULT",
+  "BLOCKED_BY_ISSUE"
+]);
+export const issueRelationBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  relationType: issueRelationTypeSchema,
+  targetId: identifierSchema,
+  reason: reasonSchema
+});
+export const issueRelationCloseBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const projectIssueRelationPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  issueId: identifierSchema,
+  relationId: identifierSchema
+});
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema
