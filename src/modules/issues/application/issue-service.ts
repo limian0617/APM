@@ -131,13 +131,13 @@ function version(value: unknown): number {
   return value as number;
 }
 
-function dueDate(value: unknown): string | null {
+function dueDate(value: unknown): Date | null {
   if (value === null || value === undefined) return null;
   const date = requiredText(value, "dueDate", 10);
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00.000Z`))) {
     throw new IssueServiceError("ISSUE_INVALID_INPUT", "dueDate 必须是 YYYY-MM-DD 格式。", 422);
   }
-  return date;
+  return new Date(`${date}T00:00:00.000Z`);
 }
 
 function action(value: unknown): IssueAction {
