@@ -27,6 +27,7 @@ export type AuthorizationContext = {
   projectId?: string;
   resourceDepartmentId?: string | null;
   resourceOwnerId?: string | null;
+  requireProjectMembership?: boolean;
   memberRoles?: string[];
   assignedUserIds?: string[];
   assignedSystemRoles?: string[];
@@ -97,6 +98,10 @@ function decideForGrant(
   context: AuthorizationContext
 ): AuthorizationDecision {
   const memberRoles = context.memberRoles ?? [];
+
+  if (context.requireProjectMembership && memberRoles.length === 0) {
+    return { allowed: false, reason: "PROJECT_MEMBERSHIP_REQUIRED" };
+  }
 
   if (grant.scope === PERMISSION_SCOPES.ALL) {
     return { allowed: true, scope: grant.scope, systemRole: grant.systemRole };
