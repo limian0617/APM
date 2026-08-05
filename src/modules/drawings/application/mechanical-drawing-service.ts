@@ -753,7 +753,6 @@ export async function createMechanicalDrawingImportBatch(
                 pairingStatus: pair.pairingStatus,
                 files: {
                   create: files.map((file) => ({
-                    projectId: input.projectId,
                     fileId: file.id,
                     inferredRole: inferDrawingFileRole(file.originalName)
                   }))
