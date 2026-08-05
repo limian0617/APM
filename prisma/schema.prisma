@@ -616,6 +616,44 @@ enum ProjectStatus {
   CANCELED
 }
 
+enum RndProjectStatus {
+  PROPOSED
+  IN_DEVELOPMENT
+  VALIDATION
+  RELEASE_REVIEW
+  COMPLETED
+  CANCELED
+}
+
+enum RndProjectEventType {
+  CREATED
+  STATUS_CHANGED
+}
+
+enum TechnicalAssetType {
+  MECHANICAL
+  ELECTRICAL
+  SOFTWARE
+}
+
+enum TechnicalAssetStatus {
+  DRAFT
+  VALIDATION_PENDING
+  VALIDATED
+  CANCELED
+}
+
+enum TechnicalAssetEventType {
+  CREATED
+  STATUS_CHANGED
+  VALIDATED
+}
+
+enum TechnicalAssetValidationDecision {
+  PASSED
+  FAILED
+}
+
 enum ProjectInitializationStatus {
   LEGACY
   READY
@@ -956,6 +994,11 @@ enum AuditAction {
   ALERT_RESOLVED
   ALERT_CLOSED
   ALERT_ESCALATED
+  RND_PROJECT_CREATED
+  RND_PROJECT_STATUS_CHANGED
+  TECHNICAL_ASSET_CREATED
+  TECHNICAL_ASSET_STATUS_CHANGED
+  TECHNICAL_ASSET_VALIDATED
 }
 
 enum AuditObjectType {
@@ -999,6 +1042,11 @@ enum AuditObjectType {
   ALERT_RULE
   PROJECT_ALERT
   PROJECT_ALERT_SCAN
+  RND_PROJECT
+  RND_PROJECT_EVENT
+  TECHNICAL_ASSET
+  TECHNICAL_ASSET_EVENT
+  TECHNICAL_ASSET_VALIDATION
 }
 
 enum AuditSource {
@@ -1095,6 +1143,13 @@ model User {
   residualItemEvents                    ResidualItemEvent[]           @relation("ResidualItemEventActor")
   projectAlertEvents                    ProjectAlertEvent[]           @relation("ProjectAlertEventActor")
   projectAlertScansRequested            ProjectAlertScan[]            @relation("ProjectAlertScanRequestedBy")
+  rndProjectsOwned                      RndProject[]                  @relation("RndProjectOwner")
+  rndProjectsCreated                    RndProject[]                  @relation("RndProjectCreatedBy")
+  rndProjectEventsActed                 RndProjectEvent[]             @relation("RndProjectEventActor")
+  technicalAssetsOwned                  TechnicalAsset[]              @relation("TechnicalAssetOwner")
+  technicalAssetsCreated                TechnicalAsset[]              @relation("TechnicalAssetCreatedBy")
+  technicalAssetEventsActed             TechnicalAssetEvent[]         @relation("TechnicalAssetEventActor")
+  technicalAssetValidationsActed        TechnicalAssetValidation[]    @relation("TechnicalAssetValidationValidator")
 
   @@index([departmentId])
   @@map("users")
@@ -1230,6 +1285,113 @@ model Project {
   @@index([capabilityConfigurationStatus, createdAt])
   @@unique([mainControlStageId, mainControlStageProjectId])
   @@map("projects")
+}
+
+model RndProject {
+  id          String           @id @default(cuid())
+  code        String           @unique
+  name        String
+  description String?
+  departmentId String?         @map("department_id")
+  ownerId     String           @map("owner_id")
+  status      RndProjectStatus @default(PROPOSED)
+  version     Int              @default(1)
+  createdById String           @map("created_by_id")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  owner       User             @relation("RndProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdBy   User             @relation("RndProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  assets      TechnicalAsset[] @relation("TechnicalAssetRndProject")
+  events      RndProjectEvent[]
+
+  @@index([departmentId, status, createdAt])
+  @@index([ownerId, status, createdAt])
+  @@map("rnd_projects")
+}
+
+model RndProjectEvent {
+  id           String              @id @default(cuid())
+  rndProjectId String              @map("rnd_project_id")
+  sequence     Int
+  eventType    RndProjectEventType @map("event_type")
+  fromStatus   RndProjectStatus?   @map("from_status")
+  toStatus     RndProjectStatus    @map("to_status")
+  reason       String
+  snapshotJson Json                @map("snapshot_json")
+  actorId      String              @map("actor_id")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  rndProject   RndProject          @relation(fields: [rndProjectId], references: [id], onDelete: Restrict)
+  actor        User                @relation("RndProjectEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([rndProjectId, sequence])
+  @@index([actorId, createdAt])
+  @@index([rndProjectId, createdAt])
+  @@map("rnd_project_events")
+}
+
+model TechnicalAsset {
+  id           String               @id @default(cuid())
+  rndProjectId String               @map("rnd_project_id")
+  assetNumber  String               @unique @map("asset_number")
+  assetType    TechnicalAssetType   @map("asset_type")
+  name         String
+  description  String?
+  ownerId      String               @map("owner_id")
+  status       TechnicalAssetStatus @default(DRAFT)
+  version      Int                  @default(1)
+  createdById  String               @map("created_by_id")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+  rndProject   RndProject           @relation("TechnicalAssetRndProject", fields: [rndProjectId], references: [id], onDelete: Restrict)
+  owner        User                 @relation("TechnicalAssetOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdBy    User                 @relation("TechnicalAssetCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  events       TechnicalAssetEvent[]
+  validations  TechnicalAssetValidation[]
+
+  @@unique([id, rndProjectId])
+  @@index([rndProjectId, status, assetNumber])
+  @@index([ownerId, status, createdAt])
+  @@map("technical_assets")
+}
+
+model TechnicalAssetEvent {
+  id               String                   @id @default(cuid())
+  rndProjectId     String                   @map("rnd_project_id")
+  technicalAssetId String                   @map("technical_asset_id")
+  sequence         Int
+  eventType        TechnicalAssetEventType  @map("event_type")
+  fromStatus       TechnicalAssetStatus?    @map("from_status")
+  toStatus         TechnicalAssetStatus     @map("to_status")
+  reason           String
+  snapshotJson     Json                     @map("snapshot_json")
+  actorId          String                   @map("actor_id")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  technicalAsset   TechnicalAsset           @relation(fields: [technicalAssetId, rndProjectId], references: [id, rndProjectId], onDelete: Restrict)
+  actor            User                     @relation("TechnicalAssetEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([technicalAssetId, sequence])
+  @@index([rndProjectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("technical_asset_events")
+}
+
+model TechnicalAssetValidation {
+  id               String                          @id @default(cuid())
+  rndProjectId     String                          @map("rnd_project_id")
+  technicalAssetId String                          @map("technical_asset_id")
+  assetVersion     Int                             @map("asset_version")
+  decision         TechnicalAssetValidationDecision
+  evidence         String
+  reason           String
+  validatorId      String                          @map("validator_id")
+  validatedAt      DateTime                        @default(now()) @map("validated_at")
+  technicalAsset   TechnicalAsset                  @relation(fields: [technicalAssetId, rndProjectId], references: [id, rndProjectId], onDelete: Restrict)
+  validator        User                            @relation("TechnicalAssetValidationValidator", fields: [validatorId], references: [id], onDelete: Restrict)
+
+  @@unique([technicalAssetId, assetVersion])
+  @@index([rndProjectId, validatedAt])
+  @@index([validatorId, validatedAt])
+  @@map("technical_asset_validations")
 }
 
 model ControlledDocument {

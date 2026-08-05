@@ -936,3 +936,79 @@ export const controlledDocumentQuerySchema = z.strictObject({
     .transform((value) => (value === undefined ? 50 : Number(value)))
     .pipe(z.number().int().min(1).max(100))
 });
+
+const rndProjectCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z][A-Z0-9_.-]{2,100}$/u);
+const technicalAssetNumberSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z][A-Z0-9_.-]{2,100}$/u);
+const technicalAssetNameSchema = z.string().trim().min(1).max(200);
+const technicalAssetDescriptionSchema = z.string().trim().max(2000).nullable().optional();
+
+export const rndProjectPathSchema = z.strictObject({ rndProjectId: identifierSchema });
+export const createRndProjectBodySchema = z.strictObject({
+  code: rndProjectCodeSchema,
+  name: technicalAssetNameSchema,
+  description: technicalAssetDescriptionSchema,
+  departmentId: identifierSchema.nullable().optional(),
+  ownerId: identifierSchema,
+  reason: reasonSchema
+});
+export const rndProjectCommandPathSchema = z.strictObject({
+  rndProjectId: identifierSchema,
+  command: z.enum([
+    "start-development",
+    "submit-validation",
+    "return-development",
+    "submit-release-review",
+    "complete",
+    "cancel"
+  ])
+});
+export const rndProjectCommandBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+
+export const technicalAssetPathSchema = z.strictObject({
+  rndProjectId: identifierSchema,
+  assetId: identifierSchema
+});
+export const createTechnicalAssetBodySchema = z.strictObject({
+  assetNumber: technicalAssetNumberSchema,
+  assetType: z.enum(["MECHANICAL", "ELECTRICAL", "SOFTWARE"]),
+  name: technicalAssetNameSchema,
+  description: technicalAssetDescriptionSchema,
+  ownerId: identifierSchema,
+  reason: reasonSchema
+});
+export const technicalAssetQuerySchema = z.strictObject({
+  status: z.enum(["DRAFT", "VALIDATION_PENDING", "VALIDATED", "CANCELED"]).optional(),
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
+export const technicalAssetCommandPathSchema = z.strictObject({
+  rndProjectId: identifierSchema,
+  assetId: identifierSchema,
+  command: z.enum(["submit-validation", "cancel", "record-validation"])
+});
+export const technicalAssetCommandBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const technicalAssetValidationBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  decision: z.enum(["PASSED", "FAILED"]),
+  evidence: z.string().trim().min(1).max(4096),
+  reason: reasonSchema
+});

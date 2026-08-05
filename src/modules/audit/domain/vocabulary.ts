@@ -89,7 +89,12 @@ export const AUDIT_ACTIONS = {
   ALERT_STARTED: "ALERT_STARTED",
   ALERT_RESOLVED: "ALERT_RESOLVED",
   ALERT_CLOSED: "ALERT_CLOSED",
-  ALERT_ESCALATED: "ALERT_ESCALATED"
+  ALERT_ESCALATED: "ALERT_ESCALATED",
+  RND_PROJECT_CREATED: "RND_PROJECT_CREATED",
+  RND_PROJECT_STATUS_CHANGED: "RND_PROJECT_STATUS_CHANGED",
+  TECHNICAL_ASSET_CREATED: "TECHNICAL_ASSET_CREATED",
+  TECHNICAL_ASSET_STATUS_CHANGED: "TECHNICAL_ASSET_STATUS_CHANGED",
+  TECHNICAL_ASSET_VALIDATED: "TECHNICAL_ASSET_VALIDATED"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -132,7 +137,12 @@ export const AUDIT_OBJECT_TYPES = {
   RESIDUAL_ITEM: "RESIDUAL_ITEM",
   ALERT_RULE: "ALERT_RULE",
   PROJECT_ALERT: "PROJECT_ALERT",
-  PROJECT_ALERT_SCAN: "PROJECT_ALERT_SCAN"
+  PROJECT_ALERT_SCAN: "PROJECT_ALERT_SCAN",
+  RND_PROJECT: "RND_PROJECT",
+  RND_PROJECT_EVENT: "RND_PROJECT_EVENT",
+  TECHNICAL_ASSET: "TECHNICAL_ASSET",
+  TECHNICAL_ASSET_EVENT: "TECHNICAL_ASSET_EVENT",
+  TECHNICAL_ASSET_VALIDATION: "TECHNICAL_ASSET_VALIDATION"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -254,6 +264,44 @@ export const ALERT_AUDIT_FIELDS = [
   "permission",
   "method",
   "path"
+] as const;
+
+export const RND_PROJECT_AUDIT_FIELDS = [
+  "rndProjectId",
+  "rndProjectCode",
+  "name",
+  "description",
+  "departmentId",
+  "ownerId",
+  "status",
+  "fromStatus",
+  "toStatus",
+  "eventId",
+  "eventSequence",
+  "version",
+  "reason"
+] as const;
+
+export const TECHNICAL_ASSET_AUDIT_FIELDS = [
+  "rndProjectId",
+  "technicalAssetId",
+  "assetNumber",
+  "assetType",
+  "name",
+  "description",
+  "ownerId",
+  "status",
+  "fromStatus",
+  "toStatus",
+  "eventId",
+  "eventSequence",
+  "validationId",
+  "validationDecision",
+  "validatorId",
+  "evidence",
+  "assetVersion",
+  "version",
+  "reason"
 ] as const;
 
 export const TEMPLATE_AUDIT_FIELDS = [
