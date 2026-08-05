@@ -959,6 +959,8 @@ enum AuditAction {
   ALERT_CLOSED
   ALERT_ESCALATED
   COCKPIT_PROJECTION_REFRESHED
+  COCKPIT_RESOURCE_LOAD_REFRESHED
+  COCKPIT_RESOURCE_LOAD_PERSON_READ
 }
 
 enum AuditObjectType {
@@ -1001,6 +1003,7 @@ enum AuditObjectType {
   PROJECT_ALERT
   PROJECT_ALERT_SCAN
   COCKPIT_PROJECTION
+  COCKPIT_RESOURCE_LOAD
 }
 
 enum AuditSource {
@@ -1219,6 +1222,8 @@ model Project {
   planningBaselines             PlanningBaseline[]
   cockpitProjections            CockpitProjection[]
   cockpitExceptionProjections   CockpitExceptionProjection[]
+  resourceLoadProjections       ResourceLoadProjection[]
+  resourceLoadPersonProjections ResourceLoadPersonProjection[]
 
   @@index([departmentId])
   @@index([sourceTemplateVersionId])
@@ -2331,6 +2336,64 @@ model CockpitExceptionProjection {
   @@map("cockpit_exception_projections")
 }
 
+model ResourceLoadProjection {
+  id                 String                         @id @default(cuid())
+  projectId          String                         @map("project_id")
+  sourceChecksum     String                         @map("source_checksum")
+  sourceVersionsJson Json                           @map("source_versions_json")
+  calculatedAt       DateTime                       @map("calculated_at")
+  createdAt          DateTime                       @default(now()) @map("created_at")
+  project            Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  people             ResourceLoadPersonProjection[]
+
+  @@unique([projectId, sourceChecksum])
+  @@unique([id, projectId])
+  @@index([projectId, calculatedAt])
+  @@map("resource_load_projections")
+}
+
+model ResourceLoadPersonProjection {
+  id                String                 @id @default(cuid())
+  projectionId      String                 @map("projection_id")
+  projectId         String                 @map("project_id")
+  ownerMembershipId String                 @map("owner_membership_id")
+  personId          String                 @map("person_id")
+  personName        String                 @map("person_name")
+  departmentId      String                 @map("department_id")
+  discipline        ProjectRole
+  plannedDays       Int                    @map("planned_days")
+  activeTaskCount   Int                    @map("active_task_count")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  projection        ResourceLoadProjection @relation(fields: [projectionId, projectId], references: [id, projectId], onDelete: Restrict)
+  project           Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  ownerMembership   ProjectMember          @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  tasks             ResourceLoadTaskProjection[]
+
+  @@unique([projectionId, ownerMembershipId])
+  @@unique([id, projectionId, projectId])
+  @@index([projectId, departmentId, discipline])
+  @@map("resource_load_person_projections")
+}
+
+model ResourceLoadTaskProjection {
+  id                 String                       @id @default(cuid())
+  personProjectionId String                       @map("person_projection_id")
+  projectionId       String                       @map("projection_id")
+  projectId          String                       @map("project_id")
+  taskId             String                       @map("task_id")
+  taskCode           String                       @map("task_code")
+  taskName           String                       @map("task_name")
+  plannedStartAt     DateTime                     @map("planned_start_at")
+  plannedFinishAt    DateTime                     @map("planned_finish_at")
+  plannedDays        Int                          @map("planned_days")
+  createdAt          DateTime                     @default(now()) @map("created_at")
+  person             ResourceLoadPersonProjection @relation(fields: [personProjectionId, projectionId, projectId], references: [id, projectionId, projectId], onDelete: Restrict)
+
+  @@unique([personProjectionId, taskId])
+  @@index([projectId, taskId])
+  @@map("resource_load_task_projections")
+}
+
 model ProjectScheduleState {
   projectId                      String                 @id @map("project_id")
   inputVersion                   Int                    @default(0) @map("input_version")
@@ -2419,6 +2482,7 @@ model ProjectMember {
   leftBy                      User?                   @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
   ownedResponsibilityPackages ResponsibilityPackage[]
   assignedPlanningTasks       PlanningTask[]
+  resourceLoadPersonProjections ResourceLoadPersonProjection[]
   ownedResidualItems          ResidualItem[]             @relation("ResidualItemOwnerMembership")
   verifiedResidualItems       ResidualItem[]             @relation("ResidualItemVerifierMembership")
 
