@@ -40,7 +40,17 @@ async function listDrawings(request: Request, context: RouteContext) {
       await listMechanicalDrawings({
         projectId: path.projectId,
         ...query,
-        sourceFileAccess: { actor: guard.actor, project: guard.project }
+        sourceFileAccess: {
+          actor: guard.actor,
+          project: guard.project,
+          auditContext: auditContextFromRequest(request, {
+            actorId: guard.actor.id,
+            projectId: path.projectId,
+            departmentId: guard.project.departmentId
+          }),
+          method: request.method,
+          path: new URL(request.url).pathname
+        }
       })
     );
   } catch (error) {
@@ -81,7 +91,13 @@ async function createDrawing(request: Request, context: RouteContext) {
             ...body,
             actorId: guard.actor.id,
             auditContext: contextValue,
-            sourceFileAccess: { actor: guard.actor, project: guard.project }
+            sourceFileAccess: {
+              actor: guard.actor,
+              project: guard.project,
+              auditContext: contextValue,
+              method: request.method,
+              path: new URL(request.url).pathname
+            }
           },
           transaction
         )

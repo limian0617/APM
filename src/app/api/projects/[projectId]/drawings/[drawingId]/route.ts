@@ -1,5 +1,6 @@
 import { PERMISSIONS } from "@/lib/auth/permissions";
 import { authorizeProjectRequest } from "@/lib/auth/project-guard";
+import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { getMechanicalDrawing } from "@/modules/drawings/application/mechanical-drawing-service";
 import { mechanicalDrawingErrorResponse } from "@/modules/drawings/contracts/mechanical-drawing-http";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
@@ -22,7 +23,17 @@ async function getDrawing(request: Request, context: RouteContext) {
     return Response.json(
       await getMechanicalDrawing({
         ...path,
-        sourceFileAccess: { actor: guard.actor, project: guard.project }
+        sourceFileAccess: {
+          actor: guard.actor,
+          project: guard.project,
+          auditContext: auditContextFromRequest(request, {
+            actorId: guard.actor.id,
+            projectId: path.projectId,
+            departmentId: guard.project.departmentId
+          }),
+          method: request.method,
+          path: new URL(request.url).pathname
+        }
       })
     );
   } catch (error) {

@@ -205,13 +205,14 @@ DECLARE
   file_sha256 TEXT;
   file_mime TEXT;
   file_size BIGINT;
-  source_file_id TEXT;
+  version_source_file_id TEXT;
 BEGIN
   SELECT "document_id" INTO drawing_document_id
     FROM "mechanical_drawings"
     WHERE "id" = NEW."drawing_id" AND "project_id" = NEW."project_id";
-  SELECT "document_id", "source_file_id" INTO version_document_id, source_file_id
-    FROM "controlled_document_versions"
+  SELECT version_row."document_id", version_row."source_file_id"
+    INTO version_document_id, version_source_file_id
+    FROM "controlled_document_versions" AS version_row
     WHERE "id" = NEW."document_version_id" AND "project_id" = NEW."project_id";
   SELECT "status", "sha256", "verified_mime_type", "verified_size"
     INTO file_status, file_sha256, file_mime, file_size
@@ -236,7 +237,7 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
   IF NEW."role" = 'CAD_SOURCE'::"DrawingFileRole"
-    AND NEW."file_id" IS DISTINCT FROM source_file_id THEN
+    AND NEW."file_id" IS DISTINCT FROM version_source_file_id THEN
     RAISE EXCEPTION 'drawing CAD source must match the controlled document version source file'
       USING ERRCODE = '23514';
   END IF;

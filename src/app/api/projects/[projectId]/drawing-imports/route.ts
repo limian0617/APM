@@ -49,7 +49,13 @@ async function createDrawingImport(request: Request, context: RouteContext) {
             ...body,
             actorId: guard.actor.id,
             auditContext: contextValue,
-            sourceFileAccess: { actor: guard.actor, project: guard.project }
+            sourceFileAccess: {
+              actor: guard.actor,
+              project: guard.project,
+              auditContext: contextValue,
+              method: request.method,
+              path: new URL(request.url).pathname
+            }
           },
           transaction
         )

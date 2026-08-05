@@ -36,6 +36,12 @@ async function publishDrawingVersion(request: Request, context: RouteContext) {
     });
     const body = await parseJsonBody(request, publishMechanicalDrawingVersionBodySchema);
     const { idempotencyKey } = parseIdempotencyHeaders(request);
+    const contextValue = auditContextFromRequest(request, {
+      actorId: guard.actor.id,
+      projectId: path.projectId,
+      departmentId: guard.project.departmentId,
+      reason: body.reason
+    });
     return await idempotentCommandResponse({
       actorId: guard.actor.id,
       operation: "projects.mechanical-drawing.publish-version",
@@ -48,12 +54,14 @@ async function publishDrawingVersion(request: Request, context: RouteContext) {
             ...path,
             ...body,
             actorId: guard.actor.id,
-            auditContext: auditContextFromRequest(request, {
-              actorId: guard.actor.id,
-              projectId: path.projectId,
-              departmentId: guard.project.departmentId,
-              reason: body.reason
-            })
+            auditContext: contextValue,
+            sourceFileAccess: {
+              actor: guard.actor,
+              project: guard.project,
+              auditContext: contextValue,
+              method: request.method,
+              path: new URL(request.url).pathname
+            }
           },
           transaction
         )

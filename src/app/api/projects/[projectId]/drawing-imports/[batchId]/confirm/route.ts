@@ -30,6 +30,12 @@ async function confirmDrawingImport(request: Request, context: RouteContext) {
     const path = parsePath(drawingImportBatchPathSchema, { projectId, batchId });
     const body = await parseJsonBody(request, confirmMechanicalDrawingImportBodySchema);
     const { idempotencyKey } = parseIdempotencyHeaders(request);
+    const contextValue = auditContextFromRequest(request, {
+      actorId: guard.actor.id,
+      projectId: path.projectId,
+      departmentId: guard.project.departmentId,
+      reason: body.reason
+    });
     return await idempotentCommandResponse({
       actorId: guard.actor.id,
       operation: "projects.mechanical-drawing.import.confirm",
@@ -42,12 +48,14 @@ async function confirmDrawingImport(request: Request, context: RouteContext) {
             ...path,
             ...body,
             actorId: guard.actor.id,
-            auditContext: auditContextFromRequest(request, {
-              actorId: guard.actor.id,
-              projectId: path.projectId,
-              departmentId: guard.project.departmentId,
-              reason: body.reason
-            })
+            auditContext: contextValue,
+            sourceFileAccess: {
+              actor: guard.actor,
+              project: guard.project,
+              auditContext: contextValue,
+              method: request.method,
+              path: new URL(request.url).pathname
+            }
           },
           transaction
         )

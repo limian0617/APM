@@ -16,6 +16,10 @@ import {
   publishControlledDocumentVersion
 } from "@/modules/documents/application/controlled-document-service";
 import {
+  recordFileAccessDenied,
+  recordSensitiveFileRead
+} from "@/modules/documents/application/file-download-service";
+import {
   ControlledDocumentError,
   validateDocumentTitle
 } from "@/modules/documents/domain/controlled-document";
@@ -81,6 +85,16 @@ type ImportBatchFact = Prisma.MechanicalDrawingImportBatchGetPayload<{
 type SourceFileAccess = {
   actor: AuthorizationActor;
   project: ProjectAuthorizationTarget;
+  auditContext?: AuditContext;
+  method?: string;
+  path?: string;
+};
+
+type SensitiveDrawingFile = {
+  id: string;
+  projectId: string;
+  uploadedById: string;
+  sensitivity: string;
 };
 
 function commandReason(value: unknown): string {
@@ -173,45 +187,65 @@ async function availableFiles(
   return new Map(files.map((file) => [file.id, file] as const));
 }
 
+function sensitiveFileDecision(file: SensitiveDrawingFile, access?: SourceFileAccess) {
+  if (!access) return null;
+  return decideAuthorization(access.actor, PERMISSIONS.SENSITIVE_FILE_READ, {
+    projectId: access.project.id,
+    resourceDepartmentId: access.project.departmentId,
+    resourceOwnerId: file.uploadedById,
+    memberRoles: access.project.memberRoles
+  });
+}
+
+async function assertSensitiveFileAccess(
+  files: Iterable<SensitiveDrawingFile>,
+  access?: SourceFileAccess,
+  recordAllowedRead = false
+) {
+  const uniqueFiles = new Map([...files].map((file) => [file.id, file] as const));
+  for (const file of uniqueFiles.values()) {
+    if (file.sensitivity !== "RESTRICTED") continue;
+    const decision = sensitiveFileDecision(file, access);
+    if (!decision?.allowed) {
+      if (access?.auditContext && access.method && access.path) {
+        await recordFileAccessDenied({
+          fileId: file.id,
+          context: access.auditContext,
+          permission: PERMISSIONS.SENSITIVE_FILE_READ,
+          method: access.method,
+          path: access.path,
+          reason: decision?.reason ?? "PERMISSION_NOT_GRANTED"
+        });
+      }
+      throw new DrawingError("SENSITIVE_FILE_READ_REQUIRED", "当前角色无权读取严格受限图纸。", 403);
+    }
+    if (recordAllowedRead && access?.auditContext && access.method && access.path) {
+      await recordSensitiveFileRead({
+        file,
+        context: access.auditContext,
+        method: access.method,
+        path: access.path
+      });
+    }
+  }
+}
+
 async function assertReadAccess(drawing: DrawingFact, access?: SourceFileAccess) {
-  if (!access) return;
-  const files = new Map(
+  await assertSensitiveFileAccess(
     [
       ...drawing.document.versions.map((version) => version.sourceFile),
       ...drawing.versionFiles.map((versionFile) => versionFile.file)
-    ].map((file) => [file.id, file] as const)
+    ],
+    access,
+    true
   );
-  for (const file of files.values()) {
-    if (file.sensitivity !== "RESTRICTED") continue;
-    const decision = decideAuthorization(access.actor, PERMISSIONS.SENSITIVE_FILE_READ, {
-      projectId: access.project.id,
-      resourceDepartmentId: access.project.departmentId,
-      resourceOwnerId: file.uploadedById,
-      memberRoles: access.project.memberRoles
-    });
-    if (!decision.allowed) {
-      throw new DrawingError("SENSITIVE_FILE_READ_REQUIRED", "当前角色无权读取严格受限图纸。", 403);
-    }
-  }
 }
 
 async function assertSensitiveFileWriteAccess(
   files: Iterable<Awaited<ReturnType<typeof availableFile>>>,
   access?: SourceFileAccess
 ) {
-  if (!access) return;
-  for (const file of files) {
-    if (file.sensitivity !== "RESTRICTED") continue;
-    const decision = decideAuthorization(access.actor, PERMISSIONS.SENSITIVE_FILE_READ, {
-      projectId: access.project.id,
-      resourceDepartmentId: access.project.departmentId,
-      resourceOwnerId: file.uploadedById,
-      memberRoles: access.project.memberRoles
-    });
-    if (!decision.allowed) {
-      throw new DrawingError("SENSITIVE_FILE_READ_REQUIRED", "当前角色无权引用严格受限图纸。", 403);
-    }
-  }
+  await assertSensitiveFileAccess(files, access);
 }
 
 function serializeDocument(document: DrawingFact["document"]) {
@@ -623,6 +657,10 @@ export async function publishMechanicalDrawingVersion(
       const versionFiles = drawing.versionFiles.filter(
         (file) => file.documentVersionId === input.documentVersionId
       );
+      await assertSensitiveFileWriteAccess(
+        [target.sourceFile, ...versionFiles.map((versionFile) => versionFile.file)],
+        input.sourceFileAccess
+      );
       if (versionFiles.filter((file) => file.role === DRAWING_FILE_ROLES.CAD_SOURCE).length !== 1) {
         throw new DrawingError(
           "DRAWING_CAD_SOURCE_REQUIRED",
@@ -779,6 +817,7 @@ export async function confirmMechanicalDrawingImportBatch(
     reason: unknown;
     actorId: string;
     auditContext: AuditContext;
+    sourceFileAccess?: SourceFileAccess;
   },
   transaction?: Prisma.TransactionClient
 ) {
@@ -845,7 +884,8 @@ export async function confirmMechanicalDrawingImportBatch(
             stepExchangeFileIds: stepFiles.map((file) => file.fileId),
             reason,
             actorId: input.actorId,
-            auditContext: auditContext(input, reason)
+            auditContext: auditContext(input, reason),
+            sourceFileAccess: input.sourceFileAccess
           },
           client
         );
