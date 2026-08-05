@@ -280,6 +280,7 @@ export const replayJobBodySchema = z.strictObject({ reason: reasonSchema });
 
 export const projectPathSchema = z.strictObject({ projectId: identifierSchema });
 export const cockpitRefreshBodySchema = z.strictObject({ reason: reasonSchema });
+export const resourceLoadRefreshBodySchema = z.strictObject({ reason: reasonSchema });
 export const planningBaselinePathSchema = z.strictObject({
   projectId: identifierSchema,
   baselineId: identifierSchema

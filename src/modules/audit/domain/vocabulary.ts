@@ -85,7 +85,9 @@ export const AUDIT_ACTIONS = {
   ALERT_RESOLVED: "ALERT_RESOLVED",
   ALERT_CLOSED: "ALERT_CLOSED",
   ALERT_ESCALATED: "ALERT_ESCALATED",
-  COCKPIT_PROJECTION_REFRESHED: "COCKPIT_PROJECTION_REFRESHED"
+  COCKPIT_PROJECTION_REFRESHED: "COCKPIT_PROJECTION_REFRESHED",
+  COCKPIT_RESOURCE_LOAD_REFRESHED: "COCKPIT_RESOURCE_LOAD_REFRESHED",
+  COCKPIT_RESOURCE_LOAD_PERSON_READ: "COCKPIT_RESOURCE_LOAD_PERSON_READ"
 } as const;
 
 export const AUDIT_OBJECT_TYPES = {
@@ -127,7 +129,8 @@ export const AUDIT_OBJECT_TYPES = {
   ALERT_RULE: "ALERT_RULE",
   PROJECT_ALERT: "PROJECT_ALERT",
   PROJECT_ALERT_SCAN: "PROJECT_ALERT_SCAN",
-  COCKPIT_PROJECTION: "COCKPIT_PROJECTION"
+  COCKPIT_PROJECTION: "COCKPIT_PROJECTION",
+  COCKPIT_RESOURCE_LOAD: "COCKPIT_RESOURCE_LOAD"
 } as const;
 
 export const AUDIT_SOURCES = {
@@ -241,6 +244,23 @@ export const COCKPIT_AUDIT_FIELDS = [
   "calculatedAt",
   "exceptionCount",
   "reused"
+] as const;
+
+export const RESOURCE_LOAD_AUDIT_FIELDS = [
+  "projectId",
+  "projectionId",
+  "sourceChecksum",
+  "calculatedAt",
+  "peopleCount",
+  "activeTaskCount",
+  "reused"
+] as const;
+
+export const RESOURCE_LOAD_PERSON_READ_AUDIT_FIELDS = [
+  "projectId",
+  "projectionId",
+  "peopleCount",
+  "permission"
 ] as const;
 
 export const TEMPLATE_AUDIT_FIELDS = [
