@@ -6,7 +6,10 @@ import { db } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 
 import {
+  addProjectIssueRelation,
+  closeProjectIssueRelation,
   IssueServiceError,
+  assignProjectIssueResponsibility,
   createProjectIssue,
   transitionProjectIssue,
   updateProjectIssue
@@ -67,6 +70,24 @@ describeDatabase("APM-070 PostgreSQL unified issues", () => {
 
   it("persists one classified issue with separated phenomena and root cause, then retains lifecycle facts", async () => {
     const project = await seedProject("LIFECYCLE");
+    const [owner, verifier] = await Promise.all([
+      db.projectMember.create({
+        data: {
+          projectId: project.id,
+          userId: ids.engineer,
+          projectRole: "ENGINEER",
+          assignedById: ids.manager
+        }
+      }),
+      db.projectMember.create({
+        data: {
+          projectId: project.id,
+          userId: ids.manager,
+          projectRole: "PROJECT_MANAGER",
+          assignedById: ids.manager
+        }
+      })
+    ]);
     const created = await createProjectIssue({
       projectId: project.id,
       title: "定位销干涉",
@@ -79,6 +100,17 @@ describeDatabase("APM-070 PostgreSQL unified issues", () => {
       tags: ["干涉", "停机", "干涉"],
       actorId: ids.manager,
       auditContext: auditContext("issue-create", project.id)
+    });
+    const assigned = await assignProjectIssueResponsibility({
+      projectId: project.id,
+      issueId: created.issue.id,
+      version: created.issue.version,
+      ownerMembershipId: owner.id,
+      verifierMembershipId: verifier.id,
+      dueDate: null,
+      reason: "明确整改责任和独立验证人。",
+      actorId: ids.manager,
+      auditContext: auditContext("issue-assign-lifecycle", project.id)
     });
     expect(created.issue).toMatchObject({
       projectId: project.id,
@@ -96,7 +128,7 @@ describeDatabase("APM-070 PostgreSQL unified issues", () => {
     const analyzing = await transitionProjectIssue({
       projectId: project.id,
       issueId: created.issue.id,
-      version: created.issue.version,
+      version: assigned.issue.version,
       action: "START_ANALYSIS",
       reason: "已安排设计工程师分析。",
       verificationEvidence: null,
@@ -152,11 +184,12 @@ describeDatabase("APM-070 PostgreSQL unified issues", () => {
       })
     ).resolves.toMatchObject([
       { eventType: "CREATED", sequence: 1 },
-      { eventType: "STARTED_ANALYSIS", sequence: 2 },
-      { eventType: "STARTED_PROCESSING", sequence: 3 },
-      { eventType: "VERIFICATION_SUBMITTED", sequence: 4 },
-      { eventType: "CLOSED", sequence: 5 },
-      { eventType: "REOPENED", sequence: 6 }
+      { eventType: "RESPONSIBILITY_ASSIGNED", sequence: 2 },
+      { eventType: "STARTED_ANALYSIS", sequence: 3 },
+      { eventType: "STARTED_PROCESSING", sequence: 4 },
+      { eventType: "VERIFICATION_SUBMITTED", sequence: 5 },
+      { eventType: "CLOSED", sequence: 6 },
+      { eventType: "REOPENED", sequence: 7 }
     ]);
     await expect(
       db.$executeRaw`UPDATE "issue_histories" SET "reason" = 'forbidden' WHERE "issue_id" = ${created.issue.id}`
@@ -284,4 +317,146 @@ describeDatabase("APM-070 PostgreSQL unified issues", () => {
       ).rejects.toMatchObject({ code: "PROJECT_READ_ONLY", status: 409 });
     }
   );
+
+  it("requires distinct active project members for a high-severity issue owner and verifier", async () => {
+    const project = await seedProject("RESPONSIBILITY");
+    const [owner, verifier] = await Promise.all([
+      db.projectMember.create({
+        data: {
+          projectId: project.id,
+          userId: ids.manager,
+          projectRole: "PROJECT_MANAGER",
+          assignedById: ids.manager
+        }
+      }),
+      db.projectMember.create({
+        data: {
+          projectId: project.id,
+          userId: ids.engineer,
+          projectRole: "ENGINEER",
+          assignedById: ids.manager
+        }
+      })
+    ]);
+    const created = await createProjectIssue({
+      projectId: project.id,
+      title: "安全门联锁失效",
+      confirmedText: "安全门打开后设备仍可能继续动作。",
+      category: "SAFETY",
+      severity: "HIGH",
+      phenomenonDescription: null,
+      rootCauseCategory: null,
+      rootCauseDescription: null,
+      tags: ["安全门"],
+      actorId: ids.manager,
+      auditContext: auditContext("issue-create-responsibility", project.id)
+    });
+
+    await expect(
+      assignProjectIssueResponsibility({
+        projectId: project.id,
+        issueId: created.issue.id,
+        version: created.issue.version,
+        ownerMembershipId: owner.id,
+        verifierMembershipId: owner.id,
+        dueDate: "2026-08-04",
+        reason: "不允许 Owner 自验。",
+        actorId: ids.manager,
+        auditContext: auditContext("issue-assign-same-member", project.id)
+      })
+    ).rejects.toMatchObject({ code: "ISSUE_VERIFIER_NOT_INDEPENDENT", status: 422 });
+
+    await expect(
+      assignProjectIssueResponsibility({
+        projectId: project.id,
+        issueId: created.issue.id,
+        version: created.issue.version,
+        ownerMembershipId: owner.id,
+        verifierMembershipId: verifier.id,
+        dueDate: "2026-08-04",
+        reason: "安排处理责任和独立验证。",
+        actorId: ids.manager,
+        auditContext: auditContext("issue-assign-responsibility", project.id)
+      })
+    ).resolves.toMatchObject({
+      issue: {
+        ownerMembershipId: owner.id,
+        verifierMembershipId: verifier.id,
+        dueDate: "2026-08-04",
+        isOverdue: true,
+        isBlocked: false
+      },
+      auditId: expect.any(String),
+      outboxEventId: expect.any(String)
+    });
+  });
+
+  it("derives blocking from an open blocker relation and retains the closed relation fact", async () => {
+    const project = await seedProject("BLOCKER");
+    const blocker = await createProjectIssue({
+      projectId: project.id,
+      title: "安全回路待整改",
+      confirmedText: "安全回路整改完成前不能验证关联问题。",
+      category: "SAFETY",
+      severity: "HIGH",
+      phenomenonDescription: null,
+      rootCauseCategory: null,
+      rootCauseDescription: null,
+      tags: ["安全回路"],
+      actorId: ids.manager,
+      auditContext: auditContext("issue-create-blocker", project.id)
+    });
+    const blocked = await createProjectIssue({
+      projectId: project.id,
+      title: "节拍验证等待安全整改",
+      confirmedText: "整改未完成时不能继续性能验证。",
+      category: "PERFORMANCE",
+      severity: "MEDIUM",
+      phenomenonDescription: null,
+      rootCauseCategory: null,
+      rootCauseDescription: null,
+      tags: ["验证"],
+      actorId: ids.manager,
+      auditContext: auditContext("issue-create-blocked", project.id)
+    });
+    const relation = await addProjectIssueRelation({
+      projectId: project.id,
+      issueId: blocked.issue.id,
+      version: blocked.issue.version,
+      relationType: "BLOCKED_BY_ISSUE",
+      targetId: blocker.issue.id,
+      reason: "等待安全回路整改关闭。",
+      actorId: ids.manager,
+      auditContext: auditContext("issue-add-blocker", project.id)
+    });
+
+    expect(relation).toMatchObject({
+      issue: { isBlocked: true },
+      relation: {
+        relationType: "BLOCKED_BY_ISSUE",
+        targetId: blocker.issue.id,
+        status: "ACTIVE"
+      },
+      auditId: expect.any(String),
+      outboxEventId: expect.any(String)
+    });
+    await expect(
+      db.$executeRaw`DELETE FROM "issue_relations" WHERE "id" = ${relation.relation.id}`
+    ).rejects.toThrow();
+
+    await expect(
+      closeProjectIssueRelation({
+        projectId: project.id,
+        issueId: blocked.issue.id,
+        relationId: relation.relation.id,
+        version: relation.issue.version,
+        reason: "调整完成后恢复性能验证。",
+        actorId: ids.manager,
+        auditContext: auditContext("issue-close-blocker", project.id)
+      })
+    ).resolves.toMatchObject({
+      issue: { isBlocked: false },
+      relation: { status: "CLOSED" }
+    });
+  });
 });

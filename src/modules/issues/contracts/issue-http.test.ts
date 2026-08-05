@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   parseIssueCreatePayload,
   parseIssueListQuery,
+  parseIssueRelationClosePayload,
+  parseIssueRelationPayload,
+  parseIssueResponsibilityPayload,
   parseIssueTransitionPayload,
   parseIssueUpdatePayload
 } from "./issue-http";
@@ -64,5 +67,36 @@ describe("APM-070 issue HTTP contracts", () => {
       limit: 50,
       cursor: undefined
     });
+  });
+
+  it("accepts a day-granularity responsibility assignment and strict typed relation", () => {
+    expect(
+      parseIssueResponsibilityPayload({
+        version: 2,
+        ownerMembershipId: "member-owner",
+        verifierMembershipId: "member-verifier",
+        dueDate: "2026-08-05",
+        reason: "安排整改与独立验证。"
+      })
+    ).toMatchObject({ dueDate: "2026-08-05" });
+    expect(
+      parseIssueRelationPayload({
+        version: 2,
+        relationType: "GATE_INSTANCE",
+        targetId: "gate-1",
+        reason: "关联放行 Gate。"
+      })
+    ).toMatchObject({ relationType: "GATE_INSTANCE" });
+    expect(() =>
+      parseIssueRelationPayload({
+        version: 2,
+        relationType: "UNKNOWN",
+        targetId: "gate-1",
+        reason: "错误类型。"
+      })
+    ).toThrow();
+    expect(() =>
+      parseIssueRelationClosePayload({ version: 2, reason: "关闭关联。", extra: true })
+    ).toThrow();
   });
 });

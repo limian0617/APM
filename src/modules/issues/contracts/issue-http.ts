@@ -2,6 +2,9 @@ import { parseDto, parseQuery } from "@/modules/platform-api/contracts/dto";
 import { apiErrorResponse } from "@/modules/platform-api/contracts/errors";
 import {
   createProjectIssueBodySchema,
+  issueRelationBodySchema,
+  issueRelationCloseBodySchema,
+  issueResponsibilityBodySchema,
   issueTransitionBodySchema,
   projectIssueQuerySchema,
   updateProjectIssueBodySchema
@@ -19,6 +22,18 @@ export function parseIssueUpdatePayload(value: unknown) {
 
 export function parseIssueTransitionPayload(value: unknown) {
   return parseDto(issueTransitionBodySchema, value, "body");
+}
+
+export function parseIssueResponsibilityPayload(value: unknown) {
+  return parseDto(issueResponsibilityBodySchema, value, "body");
+}
+
+export function parseIssueRelationPayload(value: unknown) {
+  return parseDto(issueRelationBodySchema, value, "body");
+}
+
+export function parseIssueRelationClosePayload(value: unknown) {
+  return parseDto(issueRelationCloseBodySchema, value, "body");
 }
 
 export function parseIssueListQuery(url: URL) {

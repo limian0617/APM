@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, UserStatus } from "@prisma/client";
 
 import { db, inTransaction } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
@@ -13,9 +13,11 @@ import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 import {
   ISSUE_CATEGORIES,
   ISSUE_SEVERITIES,
+  deriveIssueIndicators,
   IssueLifecycleError,
   nextIssueStatus,
   normalizeIssueTags,
+  requiresIndependentVerification,
   type IssueAction,
   type IssueCategory,
   type IssueSeverity,
@@ -24,13 +26,25 @@ import {
 
 const issueInclude = {
   tags: { orderBy: { tag: "asc" } },
-  history: { orderBy: { sequence: "asc" } }
+  history: { orderBy: { sequence: "asc" } },
+  ownerMembership: { include: { user: true } },
+  verifierMembership: { include: { user: true } },
+  relations: {
+    orderBy: { createdAt: "asc" },
+    include: { blockerIssue: { select: { status: true } } }
+  }
 } satisfies Prisma.IssueInclude;
 
 type IssueFact = Prisma.IssueGetPayload<{ include: typeof issueInclude }>;
+type IssueRelationFact = Prisma.IssueRelationGetPayload<{
+  include: { blockerIssue: { select: { status: true } } };
+}>;
 type IssueEventType =
   | "CREATED"
   | "DETAILS_UPDATED"
+  | "RESPONSIBILITY_ASSIGNED"
+  | "RELATION_ADDED"
+  | "RELATION_CLOSED"
   | "STARTED_ANALYSIS"
   | "STARTED_PROCESSING"
   | "VERIFICATION_SUBMITTED"
@@ -117,6 +131,15 @@ function version(value: unknown): number {
   return value as number;
 }
 
+function dueDate(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const date = requiredText(value, "dueDate", 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00.000Z`))) {
+    throw new IssueServiceError("ISSUE_INVALID_INPUT", "dueDate 必须是 YYYY-MM-DD 格式。", 422);
+  }
+  return date;
+}
+
 function action(value: unknown): IssueAction {
   const values: IssueAction[] = [
     "START_ANALYSIS",
@@ -176,7 +199,37 @@ function details(input: {
   }
 }
 
-function serializeIssue(issue: IssueFact) {
+function serializeIssueRelation(relation: IssueRelationFact) {
+  return {
+    id: relation.id,
+    projectId: relation.projectId,
+    issueId: relation.issueId,
+    relationType: relation.relationType,
+    targetId: relation.targetId,
+    status: relation.status,
+    reason: relation.reason,
+    closedReason: relation.closedReason,
+    createdById: relation.createdById,
+    closedById: relation.closedById,
+    createdAt: relation.createdAt.toISOString(),
+    closedAt: relation.closedAt?.toISOString() ?? null
+  };
+}
+
+function serializeIssue(issue: IssueFact, now: Date) {
+  const indicators = deriveIssueIndicators(
+    {
+      status: issue.status as IssueStatus,
+      dueDate: issue.dueDate?.toISOString().slice(0, 10) ?? null,
+      hasOpenBlocker: issue.relations.some(
+        (relation) =>
+          relation.status === "ACTIVE" &&
+          relation.relationType === "BLOCKED_BY_ISSUE" &&
+          relation.blockerIssue?.status !== "CLOSED"
+      )
+    },
+    now
+  );
   return {
     id: issue.id,
     projectId: issue.projectId,
@@ -193,6 +246,33 @@ function serializeIssue(issue: IssueFact) {
     closedAt: issue.closedAt?.toISOString() ?? null,
     closedById: issue.closedById,
     verificationEvidence: issue.verificationEvidence,
+    ownerMembershipId: issue.ownerMembershipId,
+    verifierMembershipId: issue.verifierMembershipId,
+    dueDate: issue.dueDate?.toISOString().slice(0, 10) ?? null,
+    owner: issue.ownerMembership
+      ? {
+          membershipId: issue.ownerMembership.id,
+          userId: issue.ownerMembership.userId,
+          name: issue.ownerMembership.user.name,
+          active:
+            issue.ownerMembership.leftAt === null &&
+            issue.ownerMembership.user.status === UserStatus.ACTIVE
+        }
+      : null,
+    verifier: issue.verifierMembership
+      ? {
+          membershipId: issue.verifierMembership.id,
+          userId: issue.verifierMembership.userId,
+          name: issue.verifierMembership.user.name,
+          active:
+            issue.verifierMembership.leftAt === null &&
+            issue.verifierMembership.user.status === UserStatus.ACTIVE
+        }
+      : null,
+    requiresIndependentVerification: requiresIndependentVerification(
+      issue.severity as IssueSeverity
+    ),
+    ...indicators,
     version: issue.version,
     createdById: issue.createdById,
     updatedById: issue.updatedById,
@@ -203,6 +283,7 @@ function serializeIssue(issue: IssueFact) {
       tag: tag.tag,
       createdAt: tag.createdAt.toISOString()
     })),
+    relations: issue.relations.map(serializeIssueRelation),
     history: issue.history.map((entry) => ({
       id: entry.id,
       sequence: entry.sequence,
@@ -230,6 +311,11 @@ function auditValue(
     status: issue.status,
     rootCauseCategory: issue.rootCauseCategory,
     tagCount: issue.tags.length,
+    ownerMembershipId: issue.ownerMembershipId,
+    verifierMembershipId: issue.verifierMembershipId,
+    dueDate: issue.dueDate,
+    isBlocked: issue.isBlocked,
+    isOverdue: issue.isOverdue,
     eventType,
     reason,
     version: issue.version
@@ -248,6 +334,21 @@ function historySnapshot(
     rootCauseDescription: issue.rootCauseDescription,
     verificationEvidence: issue.verificationEvidence,
     tags: issue.tags.map((tag) => tag.tag)
+  };
+}
+
+function relationAuditValue(
+  issue: ReturnType<typeof serializeIssue>,
+  relation: ReturnType<typeof serializeIssueRelation>,
+  eventType: IssueEventType,
+  reason: string
+) {
+  return {
+    ...auditValue(issue, eventType, reason),
+    relationId: relation.id,
+    relationType: relation.relationType,
+    targetId: relation.targetId,
+    relationStatus: relation.status
   };
 }
 
@@ -271,7 +372,7 @@ function issueActionAudit(action: IssueAction) {
   return AUDIT_ACTIONS.ISSUE_STATUS_CHANGED;
 }
 
-async function databaseNow(client: Prisma.TransactionClient): Promise<Date> {
+async function databaseNow(client: Prisma.TransactionClient | typeof db): Promise<Date> {
   const [clock] = await client.$queryRaw<Array<{ now: Date }>>`SELECT CURRENT_TIMESTAMP AS "now"`;
   if (!clock) throw new Error("无法读取数据库时间。 ");
   return clock.now;
@@ -289,6 +390,146 @@ async function lockProject(client: Prisma.TransactionClient, projectId: string) 
     SELECT "id" FROM "projects" WHERE "id" = ${projectId} FOR UPDATE
   `;
   return client.project.findUnique({ where: { id: projectId } });
+}
+
+async function activeIssueMembership(
+  client: Prisma.TransactionClient,
+  projectId: string,
+  membershipId: string,
+  field: string
+) {
+  const membership = await client.projectMember.findFirst({
+    where: {
+      id: membershipId,
+      projectId,
+      leftAt: null,
+      user: { status: UserStatus.ACTIVE }
+    },
+    include: { user: true }
+  });
+  if (!membership) {
+    throw new IssueServiceError("ISSUE_MEMBER_INVALID", `${field} 必须是当前项目的有效成员。`, 422);
+  }
+  return membership;
+}
+
+function isActiveIssueMembership(
+  membership: IssueFact["ownerMembership"] | IssueFact["verifierMembership"]
+): boolean {
+  return Boolean(
+    membership && membership.leftAt === null && membership.user.status === UserStatus.ACTIVE
+  );
+}
+
+function assertIndependentVerificationAssignment(issue: IssueFact, actorId?: string) {
+  const owner = issue.ownerMembership;
+  const verifier = issue.verifierMembership;
+  if (
+    !owner ||
+    !verifier ||
+    !isActiveIssueMembership(owner) ||
+    !isActiveIssueMembership(verifier)
+  ) {
+    throw new IssueServiceError(
+      "ISSUE_VERIFIER_REQUIRED",
+      "高严重度问题必须有当前有效的 Owner 和独立验证人。",
+      422
+    );
+  }
+  if (owner.userId === verifier.userId) {
+    throw new IssueServiceError(
+      "ISSUE_VERIFIER_NOT_INDEPENDENT",
+      "高严重度问题的验证人不得与 Owner 相同。",
+      422
+    );
+  }
+  if (actorId && verifier.userId !== actorId) {
+    throw new IssueServiceError(
+      "ISSUE_VERIFIER_FORBIDDEN",
+      "只有当前独立验证人可以关闭高严重度问题。",
+      403
+    );
+  }
+}
+
+const ISSUE_RELATION_TYPES = [
+  "TASK",
+  "GATE_INSTANCE",
+  "DRAWING_VERSION",
+  "TEST_RESULT",
+  "BLOCKED_BY_ISSUE"
+] as const;
+
+type IssueRelationType = (typeof ISSUE_RELATION_TYPES)[number];
+
+function issueRelationType(value: unknown): IssueRelationType {
+  if (!ISSUE_RELATION_TYPES.includes(value as IssueRelationType)) {
+    throw new IssueServiceError("ISSUE_INVALID_INPUT", "relationType 未注册。", 422);
+  }
+  return value as IssueRelationType;
+}
+
+async function lockIssueRelation(
+  client: Prisma.TransactionClient,
+  projectId: string,
+  issueId: string,
+  relationId: string
+) {
+  await client.$queryRaw`
+    SELECT "id" FROM "issue_relations"
+    WHERE "id" = ${relationId} AND "project_id" = ${projectId} AND "issue_id" = ${issueId}
+    FOR UPDATE
+  `;
+  return client.issueRelation.findFirst({
+    where: { id: relationId, projectId, issueId },
+    include: { blockerIssue: { select: { status: true } } }
+  });
+}
+
+async function assertIssueRelationTarget(
+  client: Prisma.TransactionClient,
+  projectId: string,
+  issueId: string,
+  relationType: IssueRelationType,
+  targetId: string
+) {
+  if (relationType === "TASK") {
+    const task = await client.planningTask.findFirst({ where: { id: targetId, projectId } });
+    if (!task) {
+      throw new IssueServiceError(
+        "ISSUE_RELATION_TARGET_NOT_FOUND",
+        "关联任务不存在或不属于该项目。",
+        404
+      );
+    }
+    return null;
+  }
+  if (relationType === "GATE_INSTANCE") {
+    const gate = await client.projectGateInstance.findFirst({ where: { id: targetId, projectId } });
+    if (!gate) {
+      throw new IssueServiceError(
+        "ISSUE_RELATION_TARGET_NOT_FOUND",
+        "关联 Gate 不存在或不属于该项目。",
+        404
+      );
+    }
+    return null;
+  }
+  if (relationType === "BLOCKED_BY_ISSUE") {
+    if (targetId === issueId) {
+      throw new IssueServiceError("ISSUE_RELATION_SELF_REFERENCE", "问题不能阻塞自身。", 422);
+    }
+    const blocker = await client.issue.findFirst({ where: { id: targetId, projectId } });
+    if (!blocker) {
+      throw new IssueServiceError(
+        "ISSUE_RELATION_TARGET_NOT_FOUND",
+        "阻塞问题不存在或不属于该项目。",
+        404
+      );
+    }
+    return blocker;
+  }
+  return null;
 }
 
 export function assertProjectIssuesWritable(status: string) {
@@ -382,7 +623,8 @@ export async function createProjectIssue(
       },
       include: issueInclude
     });
-    const serialized = serializeIssue(issue);
+    const now = await databaseNow(client);
+    const serialized = serializeIssue(issue, now);
     const reason = "创建统一问题主记录。";
     await appendHistory(client, {
       issueId: issue.id,
@@ -407,7 +649,7 @@ export async function createProjectIssue(
       payload: { ...auditValue(serialized, "CREATED", reason), auditId: audit.id }
     });
     return {
-      issue: serializeIssue(await readIssueOrThrow(client, projectId, issue.id)),
+      issue: serializeIssue(await readIssueOrThrow(client, projectId, issue.id), now),
       auditId: audit.id,
       outboxEventId: outbox.id
     };
@@ -447,6 +689,7 @@ export async function updateProjectIssue(
     if (current.status === "CLOSED") {
       throw new IssueServiceError("ISSUE_CLOSED", "已关闭问题必须先重开才能更新详情。", 409);
     }
+    const now = await databaseNow(client);
     const updated = await client.issue.updateMany({
       where: { id: issueId, projectId, version: expectedVersion },
       data: {
@@ -470,14 +713,14 @@ export async function updateProjectIssue(
         data: value.tags.map((tag) => ({ projectId, issueId, tag }))
       });
     }
-    const issue = serializeIssue(await readIssueOrThrow(client, projectId, issueId));
+    const issue = serializeIssue(await readIssueOrThrow(client, projectId, issueId), now);
     await appendHistory(client, {
       issueId,
       projectId,
       eventType: "DETAILS_UPDATED",
       reason,
       snapshot: {
-        before: historySnapshot(serializeIssue(current), "DETAILS_UPDATED", reason),
+        before: historySnapshot(serializeIssue(current, now), "DETAILS_UPDATED", reason),
         after: historySnapshot(issue, "DETAILS_UPDATED", reason)
       },
       actorId: input.actorId
@@ -488,7 +731,7 @@ export async function updateProjectIssue(
       objectId: issueId,
       context: context(input, projectId, reason),
       before: {
-        value: auditValue(serializeIssue(current), "DETAILS_UPDATED", reason),
+        value: auditValue(serializeIssue(current, now), "DETAILS_UPDATED", reason),
         allowedFields: ISSUE_AUDIT_FIELDS
       },
       after: {
@@ -504,10 +747,331 @@ export async function updateProjectIssue(
       payload: { ...auditValue(issue, "DETAILS_UPDATED", reason), auditId: audit.id }
     });
     return {
-      issue: serializeIssue(await readIssueOrThrow(client, projectId, issueId)),
+      issue: serializeIssue(await readIssueOrThrow(client, projectId, issueId), now),
       auditId: audit.id,
       outboxEventId: outbox.id
     };
+  });
+}
+
+export async function assignProjectIssueResponsibility(
+  input: {
+    projectId: string;
+    issueId: string;
+    version: unknown;
+    ownerMembershipId: unknown;
+    verifierMembershipId: unknown;
+    dueDate: unknown;
+    reason: unknown;
+    actorId: string;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
+  const projectId = requiredText(input.projectId, "projectId", 191);
+  const issueId = requiredText(input.issueId, "issueId", 191);
+  const expectedVersion = version(input.version);
+  const ownerMembershipId = requiredText(input.ownerMembershipId, "ownerMembershipId", 191);
+  const verifierMembershipId = optionalText(
+    input.verifierMembershipId,
+    "verifierMembershipId",
+    191
+  );
+  const assignedDueDate = dueDate(input.dueDate);
+  const reason = requiredText(input.reason, "reason", 1024);
+  return inTransaction(transaction, async (client) => {
+    const project = await lockProject(client, projectId);
+    if (!project) throw new IssueServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+    assertProjectIssuesWritable(project.status);
+    const current = await lockIssue(client, projectId, issueId);
+    if (!current) throw new IssueServiceError("ISSUE_NOT_FOUND", "问题不存在或不属于该项目。", 404);
+    if (current.status === "CLOSED") {
+      throw new IssueServiceError("ISSUE_CLOSED", "已关闭问题必须先重开才能调整责任。", 409);
+    }
+    const ownerMembership = await activeIssueMembership(
+      client,
+      projectId,
+      ownerMembershipId,
+      "ownerMembershipId"
+    );
+    const verifierMembership = verifierMembershipId
+      ? await activeIssueMembership(client, projectId, verifierMembershipId, "verifierMembershipId")
+      : null;
+    if (requiresIndependentVerification(current.severity as IssueSeverity)) {
+      if (!verifierMembershipId) {
+        throw new IssueServiceError(
+          "ISSUE_VERIFIER_REQUIRED",
+          "高严重度问题必须指定独立验证人。",
+          422
+        );
+      }
+      if (
+        !verifierMembership ||
+        ownerMembershipId === verifierMembershipId ||
+        ownerMembership.userId === verifierMembership.userId
+      ) {
+        throw new IssueServiceError(
+          "ISSUE_VERIFIER_NOT_INDEPENDENT",
+          "高严重度问题的验证人不得与 Owner 相同。",
+          422
+        );
+      }
+    }
+    const now = await databaseNow(client);
+    const updated = await client.issue.updateMany({
+      where: { id: issueId, projectId, version: expectedVersion },
+      data: {
+        ownerMembershipId,
+        verifierMembershipId,
+        dueDate: assignedDueDate,
+        updatedById: input.actorId,
+        version: { increment: 1 }
+      }
+    });
+    if (updated.count !== 1) {
+      throw new IssueServiceError("VERSION_CONFLICT", "问题已被其他操作更新。", 409);
+    }
+    const issue = serializeIssue(await readIssueOrThrow(client, projectId, issueId), now);
+    await appendHistory(client, {
+      issueId,
+      projectId,
+      eventType: "RESPONSIBILITY_ASSIGNED",
+      reason,
+      snapshot: {
+        before: historySnapshot(serializeIssue(current, now), "RESPONSIBILITY_ASSIGNED", reason),
+        after: historySnapshot(issue, "RESPONSIBILITY_ASSIGNED", reason)
+      },
+      actorId: input.actorId
+    });
+    const audit = await writeAudit(client, {
+      action: AUDIT_ACTIONS.ISSUE_RESPONSIBILITY_ASSIGNED,
+      objectType: AUDIT_OBJECT_TYPES.ISSUE,
+      objectId: issueId,
+      context: context(input, projectId, reason),
+      before: {
+        value: auditValue(serializeIssue(current, now), "RESPONSIBILITY_ASSIGNED", reason),
+        allowedFields: ISSUE_AUDIT_FIELDS
+      },
+      after: {
+        value: auditValue(issue, "RESPONSIBILITY_ASSIGNED", reason),
+        allowedFields: ISSUE_AUDIT_FIELDS
+      }
+    });
+    const outbox = await appendOutboxEvent(client, {
+      eventType: "issues.issue.responsibility-assigned",
+      aggregateType: "ISSUE",
+      aggregateId: issueId,
+      idempotencyKey: `${issueId}:version:${issue.version}`,
+      payload: { ...auditValue(issue, "RESPONSIBILITY_ASSIGNED", reason), auditId: audit.id }
+    });
+    return {
+      issue,
+      auditId: audit.id,
+      outboxEventId: outbox.id
+    };
+  });
+}
+
+export async function addProjectIssueRelation(
+  input: {
+    projectId: string;
+    issueId: string;
+    version: unknown;
+    relationType: unknown;
+    targetId: unknown;
+    reason: unknown;
+    actorId: string;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
+  const projectId = requiredText(input.projectId, "projectId", 191);
+  const issueId = requiredText(input.issueId, "issueId", 191);
+  const expectedVersion = version(input.version);
+  const relationType = issueRelationType(input.relationType);
+  const targetId = requiredText(input.targetId, "targetId", 191);
+  const reason = requiredText(input.reason, "reason", 1024);
+  return inTransaction(transaction, async (client) => {
+    const project = await lockProject(client, projectId);
+    if (!project) throw new IssueServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+    assertProjectIssuesWritable(project.status);
+    const current = await lockIssue(client, projectId, issueId);
+    if (!current) throw new IssueServiceError("ISSUE_NOT_FOUND", "问题不存在或不属于该项目。", 404);
+    if (current.status === "CLOSED") {
+      throw new IssueServiceError("ISSUE_CLOSED", "已关闭问题必须先重开才能新增关联。", 409);
+    }
+    if (
+      current.relations.some(
+        (relation) =>
+          relation.status === "ACTIVE" &&
+          relation.relationType === relationType &&
+          relation.targetId === targetId
+      )
+    ) {
+      throw new IssueServiceError("ISSUE_RELATION_EXISTS", "问题已存在相同的有效关联。", 409);
+    }
+    const blocker = await assertIssueRelationTarget(
+      client,
+      projectId,
+      issueId,
+      relationType,
+      targetId
+    );
+    const now = await databaseNow(client);
+    const updated = await client.issue.updateMany({
+      where: { id: issueId, projectId, version: expectedVersion },
+      data: { updatedById: input.actorId, version: { increment: 1 } }
+    });
+    if (updated.count !== 1) {
+      throw new IssueServiceError("VERSION_CONFLICT", "问题已被其他操作更新。", 409);
+    }
+    const relation = await client.issueRelation.create({
+      data: {
+        projectId,
+        issueId,
+        relationType,
+        targetId,
+        blockerIssueId: blocker?.id ?? null,
+        reason,
+        createdById: input.actorId
+      },
+      include: { blockerIssue: { select: { status: true } } }
+    });
+    const issue = serializeIssue(await readIssueOrThrow(client, projectId, issueId), now);
+    const relationFact = serializeIssueRelation(relation);
+    await appendHistory(client, {
+      issueId,
+      projectId,
+      eventType: "RELATION_ADDED",
+      reason,
+      snapshot: {
+        before: historySnapshot(serializeIssue(current, now), "RELATION_ADDED", reason),
+        after: historySnapshot(issue, "RELATION_ADDED", reason),
+        relation: relationFact
+      },
+      actorId: input.actorId
+    });
+    const audit = await writeAudit(client, {
+      action: AUDIT_ACTIONS.ISSUE_RELATION_ADDED,
+      objectType: AUDIT_OBJECT_TYPES.ISSUE_RELATION,
+      objectId: relation.id,
+      context: context(input, projectId, reason),
+      after: {
+        value: relationAuditValue(issue, relationFact, "RELATION_ADDED", reason),
+        allowedFields: ISSUE_AUDIT_FIELDS
+      }
+    });
+    const outbox = await appendOutboxEvent(client, {
+      eventType: "issues.issue-relation.added",
+      aggregateType: "ISSUE_RELATION",
+      aggregateId: relation.id,
+      idempotencyKey: relation.id,
+      payload: {
+        issue: auditValue(issue, "RELATION_ADDED", reason),
+        relation: relationFact,
+        auditId: audit.id
+      }
+    });
+    return { issue, relation: relationFact, auditId: audit.id, outboxEventId: outbox.id };
+  });
+}
+
+export async function closeProjectIssueRelation(
+  input: {
+    projectId: string;
+    issueId: string;
+    relationId: string;
+    version: unknown;
+    reason: unknown;
+    actorId: string;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
+  const projectId = requiredText(input.projectId, "projectId", 191);
+  const issueId = requiredText(input.issueId, "issueId", 191);
+  const relationId = requiredText(input.relationId, "relationId", 191);
+  const expectedVersion = version(input.version);
+  const reason = requiredText(input.reason, "reason", 1024);
+  return inTransaction(transaction, async (client) => {
+    const project = await lockProject(client, projectId);
+    if (!project) throw new IssueServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+    assertProjectIssuesWritable(project.status);
+    const current = await lockIssue(client, projectId, issueId);
+    if (!current) throw new IssueServiceError("ISSUE_NOT_FOUND", "问题不存在或不属于该项目。", 404);
+    if (current.status === "CLOSED") {
+      throw new IssueServiceError("ISSUE_CLOSED", "已关闭问题必须先重开才能关闭关联。", 409);
+    }
+    const currentRelation = await lockIssueRelation(client, projectId, issueId, relationId);
+    if (!currentRelation) {
+      throw new IssueServiceError(
+        "ISSUE_RELATION_NOT_FOUND",
+        "问题关联不存在或不属于该项目。",
+        404
+      );
+    }
+    if (currentRelation.status === "CLOSED") {
+      throw new IssueServiceError("ISSUE_RELATION_CLOSED", "问题关联已关闭。", 409);
+    }
+    const now = await databaseNow(client);
+    const updated = await client.issue.updateMany({
+      where: { id: issueId, projectId, version: expectedVersion },
+      data: { updatedById: input.actorId, version: { increment: 1 } }
+    });
+    if (updated.count !== 1) {
+      throw new IssueServiceError("VERSION_CONFLICT", "问题已被其他操作更新。", 409);
+    }
+    const relation = await client.issueRelation.update({
+      where: { id: relationId },
+      data: {
+        status: "CLOSED",
+        closedReason: reason,
+        closedById: input.actorId,
+        closedAt: now
+      },
+      include: { blockerIssue: { select: { status: true } } }
+    });
+    const issue = serializeIssue(await readIssueOrThrow(client, projectId, issueId), now);
+    const beforeRelation = serializeIssueRelation(currentRelation);
+    const relationFact = serializeIssueRelation(relation);
+    await appendHistory(client, {
+      issueId,
+      projectId,
+      eventType: "RELATION_CLOSED",
+      reason,
+      snapshot: {
+        before: historySnapshot(serializeIssue(current, now), "RELATION_CLOSED", reason),
+        after: historySnapshot(issue, "RELATION_CLOSED", reason),
+        relation: { before: beforeRelation, after: relationFact }
+      },
+      actorId: input.actorId
+    });
+    const audit = await writeAudit(client, {
+      action: AUDIT_ACTIONS.ISSUE_RELATION_CLOSED,
+      objectType: AUDIT_OBJECT_TYPES.ISSUE_RELATION,
+      objectId: relationId,
+      context: context(input, projectId, reason),
+      before: {
+        value: relationAuditValue(issue, beforeRelation, "RELATION_CLOSED", reason),
+        allowedFields: ISSUE_AUDIT_FIELDS
+      },
+      after: {
+        value: relationAuditValue(issue, relationFact, "RELATION_CLOSED", reason),
+        allowedFields: ISSUE_AUDIT_FIELDS
+      }
+    });
+    const outbox = await appendOutboxEvent(client, {
+      eventType: "issues.issue-relation.closed",
+      aggregateType: "ISSUE_RELATION",
+      aggregateId: relationId,
+      idempotencyKey: `${relationId}:closed`,
+      payload: {
+        issue: auditValue(issue, "RELATION_CLOSED", reason),
+        relation: relationFact,
+        auditId: audit.id
+      }
+    });
+    return { issue, relation: relationFact, auditId: audit.id, outboxEventId: outbox.id };
   });
 }
 
@@ -546,6 +1110,18 @@ export async function transitionProjectIssue(
     assertProjectIssuesWritable(project.status);
     const current = await lockIssue(client, projectId, issueId);
     if (!current) throw new IssueServiceError("ISSUE_NOT_FOUND", "问题不存在或不属于该项目。", 404);
+    if (
+      requiresIndependentVerification(current.severity as IssueSeverity) &&
+      requestedAction === "SUBMIT_VERIFICATION"
+    ) {
+      assertIndependentVerificationAssignment(current);
+    }
+    if (
+      requiresIndependentVerification(current.severity as IssueSeverity) &&
+      requestedAction === "VERIFY_CLOSE"
+    ) {
+      assertIndependentVerificationAssignment(current, input.actorId);
+    }
     let next: IssueStatus;
     try {
       next = nextIssueStatus(current.status as IssueStatus, requestedAction);
@@ -572,14 +1148,14 @@ export async function transitionProjectIssue(
       throw new IssueServiceError("VERSION_CONFLICT", "问题已被其他操作更新。", 409);
     }
     const eventType = historyEvent(requestedAction);
-    const issue = serializeIssue(await readIssueOrThrow(client, projectId, issueId));
+    const issue = serializeIssue(await readIssueOrThrow(client, projectId, issueId), now);
     await appendHistory(client, {
       issueId,
       projectId,
       eventType,
       reason,
       snapshot: {
-        before: historySnapshot(serializeIssue(current), eventType, reason),
+        before: historySnapshot(serializeIssue(current, now), eventType, reason),
         after: historySnapshot(issue, eventType, reason)
       },
       actorId: input.actorId
@@ -590,7 +1166,7 @@ export async function transitionProjectIssue(
       objectId: issueId,
       context: context(input, projectId, reason),
       before: {
-        value: auditValue(serializeIssue(current), eventType, reason),
+        value: auditValue(serializeIssue(current, now), eventType, reason),
         allowedFields: ISSUE_AUDIT_FIELDS
       },
       after: { value: auditValue(issue, eventType, reason), allowedFields: ISSUE_AUDIT_FIELDS }
@@ -604,7 +1180,7 @@ export async function transitionProjectIssue(
       payload: { ...auditValue(issue, eventType, reason), auditId: audit.id }
     });
     return {
-      issue: serializeIssue(await readIssueOrThrow(client, projectId, issueId)),
+      issue: serializeIssue(await readIssueOrThrow(client, projectId, issueId), now),
       auditId: audit.id,
       outboxEventId: outbox.id
     };
@@ -637,8 +1213,9 @@ export async function listProjectIssues(input: {
     take: input.limit + 1
   });
   const page = issues.slice(0, input.limit);
+  const now = await databaseNow(db);
   return {
-    issues: page.map(serializeIssue),
+    issues: page.map((issue) => serializeIssue(issue, now)),
     nextCursor: issues.length > input.limit ? (page[page.length - 1]?.id ?? null) : null
   };
 }
@@ -649,5 +1226,5 @@ export async function getProjectIssue(projectId: string, issueId: string) {
     include: issueInclude
   });
   if (!issue) throw new IssueServiceError("ISSUE_NOT_FOUND", "问题不存在或不属于该项目。", 404);
-  return { issue: serializeIssue(issue) };
+  return { issue: serializeIssue(issue, await databaseNow(db)) };
 }
