@@ -439,7 +439,9 @@ describeDatabase("APM-050 PostgreSQL controlled document facts", () => {
       db.controlledDocument.delete({ where: { id: created.document.id } })
     ).rejects.toThrow(/cannot be deleted/u);
     await expect(
-      db.$executeRawUnsafe('TRUNCATE TABLE "controlled_document_versions", "controlled_documents"')
+      db.$executeRawUnsafe(
+        'TRUNCATE TABLE "controlled_document_versions", "controlled_documents", "mechanical_drawing_import_item_files", "mechanical_drawing_import_items", "mechanical_drawing_import_batches", "mechanical_drawing_version_files", "mechanical_drawings"'
+      )
     ).rejects.toThrow(/cannot be truncated/u);
   });
 

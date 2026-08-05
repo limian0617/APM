@@ -304,6 +304,8 @@ model FileObject {
   uploadSession    FileUploadSession?
   commands         FileCommand[]
   documentSourceVersions ControlledDocumentVersion[] @relation("DocumentVersionSourceFile")
+  mechanicalDrawingVersionFiles MechanicalDrawingVersionFile[] @relation("DrawingVersionFile")
+  mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[] @relation("DrawingImportItemFile")
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -570,6 +572,30 @@ enum ControlledDocumentVersionStatus {
   PUBLISHED
   SUPERSEDED
   VOIDED
+}
+
+enum DrawingFileRole {
+  CAD_SOURCE
+  PDF_PREVIEW
+  STEP_EXCHANGE
+}
+
+enum DrawingImportPairingStatus {
+  PAIRED
+  UNPAIRED
+  AMBIGUOUS
+}
+
+enum DrawingImportBatchStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  REJECTED
+}
+
+enum DrawingImportItemStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
 }
 
 enum NotificationSensitivity {
@@ -883,6 +909,11 @@ enum AuditAction {
   CONTROLLED_DOCUMENT_VERSION_DRAFTED
   CONTROLLED_DOCUMENT_VERSION_PUBLISHED
   CONTROLLED_DOCUMENT_VOIDED
+  MECHANICAL_DRAWING_CREATED
+  MECHANICAL_DRAWING_VERSION_DRAFTED
+  MECHANICAL_DRAWING_VERSION_PUBLISHED
+  MECHANICAL_DRAWING_IMPORT_CREATED
+  MECHANICAL_DRAWING_IMPORT_CONFIRMED
   NOTIFICATION_TEMPLATE_PUBLISHED
   NOTIFICATION_TEMPLATE_STATUS_CHANGED
   NOTIFICATION_CREATED
@@ -970,6 +1001,10 @@ enum AuditObjectType {
   FILE_UPLOAD_SESSION
   CONTROLLED_DOCUMENT
   CONTROLLED_DOCUMENT_VERSION
+  MECHANICAL_DRAWING
+  MECHANICAL_DRAWING_VERSION_FILE
+  MECHANICAL_DRAWING_IMPORT_BATCH
+  MECHANICAL_DRAWING_IMPORT_ITEM
   NOTIFICATION_TEMPLATE
   NOTIFICATION
   NOTIFICATION_DELIVERY
@@ -1043,6 +1078,8 @@ model User {
   controlledDocumentVersionsCreated     ControlledDocumentVersion[]   @relation("ControlledDocumentVersionCreatedBy")
   controlledDocumentVersionsPublished   ControlledDocumentVersion[]   @relation("ControlledDocumentVersionPublishedBy")
   controlledDocumentVersionsVoided      ControlledDocumentVersion[]   @relation("ControlledDocumentVersionVoidedBy")
+  mechanicalDrawingsCreated             MechanicalDrawing[]           @relation("MechanicalDrawingCreatedBy")
+  mechanicalDrawingImportBatchesCreated MechanicalDrawingImportBatch[] @relation("MechanicalDrawingImportBatchCreatedBy")
   notificationTemplateVersionsPublished NotificationTemplateVersion[] @relation("NotificationTemplatePublishedBy")
   notificationsReceived                 Notification[]                @relation("NotificationRecipient")
   notificationReadReceipts              NotificationReadReceipt[]     @relation("NotificationReadRecipient")
@@ -1186,6 +1223,11 @@ model Project {
   files                         FileObject[]
   controlledDocuments           ControlledDocument[]
   controlledDocumentVersions    ControlledDocumentVersion[]
+  mechanicalDrawings            MechanicalDrawing[]
+  mechanicalDrawingVersionFiles MechanicalDrawingVersionFile[]
+  mechanicalDrawingImportBatches MechanicalDrawingImportBatch[]
+  mechanicalDrawingImportItems  MechanicalDrawingImportItem[]
+  mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[]
   notifications                 Notification[]
   deliveryUnits                 DeliveryUnit[]
   projectModules                ProjectModule[]
@@ -1251,6 +1293,7 @@ model ControlledDocument {
   voidedBy                  User?                    @relation("ControlledDocumentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
   currentPublishedVersion   ControlledDocumentVersion? @relation("DocumentCurrentPublishedVersion", fields: [currentPublishedVersionId, projectId], references: [id, projectId], onDelete: Restrict)
   versions                  ControlledDocumentVersion[] @relation("ControlledDocumentVersions")
+  mechanicalDrawing         MechanicalDrawing?
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -1284,12 +1327,116 @@ model ControlledDocumentVersion {
   publishedBy         User?                           @relation("ControlledDocumentVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
   voidedBy            User?                           @relation("ControlledDocumentVersionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
   currentForDocument  ControlledDocument?             @relation("DocumentCurrentPublishedVersion")
+  mechanicalDrawingVersionFiles MechanicalDrawingVersionFile[]
 
   @@unique([documentId, version])
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
   @@index([sourceFileId])
   @@map("controlled_document_versions")
+}
+
+model MechanicalDrawing {
+  id            String             @id @default(cuid())
+  projectId     String             @map("project_id")
+  documentId    String             @unique @map("document_id")
+  drawingNumber String             @map("drawing_number")
+  drawingType   String             @map("drawing_type")
+  version       Int                @default(1)
+  createdById   String             @map("created_by_id")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+  project       Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  document      ControlledDocument @relation(fields: [documentId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy     User               @relation("MechanicalDrawingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  versionFiles  MechanicalDrawingVersionFile[]
+  importItems   MechanicalDrawingImportItem[] @relation("ConfirmedMechanicalDrawing")
+
+  @@unique([id, projectId])
+  @@unique([documentId, projectId])
+  @@unique([projectId, drawingNumber])
+  @@index([projectId, drawingType, drawingNumber])
+  @@map("mechanical_drawings")
+}
+
+model MechanicalDrawingVersionFile {
+  id                String                    @id @default(cuid())
+  projectId         String                    @map("project_id")
+  drawingId         String                    @map("drawing_id")
+  documentVersionId String                    @map("document_version_id")
+  fileId            String                    @map("file_id")
+  role              DrawingFileRole
+  fileSha256        String                    @map("file_sha256")
+  fileMimeType      String                    @map("file_mime_type")
+  fileSize          BigInt                    @map("file_size")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  drawing           MechanicalDrawing         @relation(fields: [drawingId, projectId], references: [id, projectId], onDelete: Restrict)
+  documentVersion   ControlledDocumentVersion @relation(fields: [documentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  file              FileObject                @relation("DrawingVersionFile", fields: [fileId, projectId], references: [id, projectId], onDelete: Restrict)
+  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([documentVersionId, role])
+  @@unique([id, projectId])
+  @@index([projectId, drawingId, documentVersionId])
+  @@index([fileId])
+  @@map("mechanical_drawing_version_files")
+}
+
+model MechanicalDrawingImportBatch {
+  id          String                   @id @default(cuid())
+  projectId   String                   @map("project_id")
+  status      DrawingImportBatchStatus @default(PENDING_CONFIRMATION)
+  version     Int                      @default(1)
+  createdById String                   @map("created_by_id")
+  createdAt   DateTime                 @default(now()) @map("created_at")
+  updatedAt   DateTime                 @updatedAt @map("updated_at")
+  project     Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy   User                     @relation("MechanicalDrawingImportBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  items       MechanicalDrawingImportItem[]
+
+  @@unique([id, projectId])
+  @@index([projectId, status, createdAt])
+  @@map("mechanical_drawing_import_batches")
+}
+
+model MechanicalDrawingImportItem {
+  id                 String                    @id @default(cuid())
+  projectId          String                    @map("project_id")
+  batchId            String                    @map("batch_id")
+  filenameStem       String                    @map("filename_stem")
+  pairingStatus      DrawingImportPairingStatus @map("pairing_status")
+  status             DrawingImportItemStatus   @default(PENDING)
+  confirmedDrawingId String?                   @map("confirmed_drawing_id")
+  drawingNumber      String?                   @map("drawing_number")
+  title              String?                   @map("title")
+  drawingType        String?                   @map("drawing_type")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  updatedAt          DateTime                  @updatedAt @map("updated_at")
+  project           Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  batch             MechanicalDrawingImportBatch @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
+  confirmedDrawing  MechanicalDrawing?         @relation("ConfirmedMechanicalDrawing", fields: [confirmedDrawingId, projectId], references: [id, projectId], onDelete: Restrict)
+  files             MechanicalDrawingImportItemFile[]
+
+  @@unique([id, projectId])
+  @@index([batchId, status])
+  @@index([projectId, confirmedDrawingId])
+  @@map("mechanical_drawing_import_items")
+}
+
+model MechanicalDrawingImportItemFile {
+  id           String                   @id @default(cuid())
+  projectId    String                   @map("project_id")
+  itemId       String                   @map("item_id")
+  fileId       String                   @map("file_id")
+  inferredRole DrawingFileRole?         @map("inferred_role")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  project      Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  item         MechanicalDrawingImportItem @relation(fields: [itemId, projectId], references: [id, projectId], onDelete: Restrict)
+  file         FileObject               @relation("DrawingImportItemFile", fields: [fileId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([itemId, fileId])
+  @@index([projectId, fileId])
+  @@map("mechanical_drawing_import_item_files")
 }
 
 model ProjectTemplateSnapshot {
