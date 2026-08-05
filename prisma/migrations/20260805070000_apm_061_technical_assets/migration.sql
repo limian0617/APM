@@ -338,8 +338,8 @@ CREATE TRIGGER technical_asset_validations_reject_truncate
   BEFORE TRUNCATE ON "technical_asset_validations"
   FOR EACH STATEMENT EXECUTE FUNCTION reject_technical_asset_truncate();
 
-INSERT INTO "roles" ("id", "code", "name", "description", "is_system") VALUES
-('role-technical-asset-maintainer', 'TECHNICAL_ASSET_MAINTAINER', '技术资产维护人', '维护企业技术资产主记录和独立验证流程', true);
+INSERT INTO "roles" ("id", "code", "name", "description", "is_system", "created_at", "updated_at") VALUES
+('role-technical-asset-maintainer', 'TECHNICAL_ASSET_MAINTAINER', '技术资产维护人', '维护企业技术资产主记录和独立验证流程', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
 INSERT INTO "permissions" ("id", "code", "description") VALUES
 ('permission-technical-asset-read', 'TECHNICAL_ASSET_READ', '读取企业技术资产主记录和验证历史'),
