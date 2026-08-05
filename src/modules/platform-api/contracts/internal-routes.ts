@@ -995,6 +995,84 @@ export const controlledDocumentQuerySchema = z.strictObject({
     .pipe(z.number().int().min(1).max(100))
 });
 
+const publicLibraryMaterialTypeSchema = z.enum([
+  "DRIVER",
+  "FIRMWARE",
+  "TOOL",
+  "MANUAL",
+  "TRAINING",
+  "STANDARD",
+  "TEMPLATE"
+]);
+const publicLibraryApplicabilitySchema = z
+  .array(z.string().trim().min(1).max(191))
+  .max(100)
+  .transform((values) => [...new Set(values)]);
+export const publicLibraryDocumentPathSchema = z.strictObject({
+  documentId: identifierSchema
+});
+export const publicLibraryDocumentVersionPathSchema = z.strictObject({
+  documentId: identifierSchema,
+  documentVersionId: identifierSchema
+});
+export const createPublicLibraryDocumentBodySchema = z.strictObject({
+  code: controlledDocumentCodeSchema,
+  title: controlledDocumentTitleSchema,
+  materialType: publicLibraryMaterialTypeSchema,
+  sourceFileId: identifierSchema,
+  applicableModels: publicLibraryApplicabilitySchema.optional().default([]),
+  applicablePlatforms: publicLibraryApplicabilitySchema.optional().default([]),
+  reason: reasonSchema
+});
+export const createPublicLibraryDocumentVersionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  sourceFileId: identifierSchema,
+  applicableModels: publicLibraryApplicabilitySchema.optional().default([]),
+  applicablePlatforms: publicLibraryApplicabilitySchema.optional().default([]),
+  reason: reasonSchema
+});
+export const publishPublicLibraryDocumentVersionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const voidPublicLibraryDocumentBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const publicLibraryDocumentQuerySchema = z.strictObject({
+  status: z.enum(["ACTIVE", "VOIDED"]).optional(),
+  materialType: publicLibraryMaterialTypeSchema.optional(),
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
+export const projectPublicLibraryReferencePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  referenceId: identifierSchema
+});
+export const createProjectPublicLibraryReferenceBodySchema = z.strictObject({
+  publicDocumentVersionId: identifierSchema,
+  reason: reasonSchema
+});
+export const retireProjectPublicLibraryReferenceBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const projectPublicLibraryReferenceQuerySchema = z.strictObject({
+  status: z.enum(["ACTIVE", "RETIRED"]).optional(),
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
+
 const drawingNumberSchema = z
   .string()
   .trim()

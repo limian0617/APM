@@ -527,7 +527,10 @@ describe("APM-010 template policy", () => {
   });
 
   it("keeps template component declarations aligned with the enum append migration", () => {
-    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8").replace(
+      /\r\n?/gu,
+      "\n"
+    );
     const migration = readFileSync(
       resolve(
         process.cwd(),

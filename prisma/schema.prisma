@@ -304,6 +304,7 @@ model FileObject {
   uploadSession          FileUploadSession?
   commands               FileCommand[]
   documentSourceVersions ControlledDocumentVersion[] @relation("DocumentVersionSourceFile")
+  publicLibrarySourceVersions PublicLibraryDocumentVersion[] @relation("PublicLibraryVersionSourceFile")
   mechanicalDrawingVersionFiles    MechanicalDrawingVersionFile[]    @relation("DrawingVersionFile")
   mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[] @relation("DrawingImportItemFile")
 
@@ -572,6 +573,33 @@ enum ControlledDocumentVersionStatus {
   PUBLISHED
   SUPERSEDED
   VOIDED
+}
+
+enum PublicLibraryMaterialType {
+  DRIVER
+  FIRMWARE
+  TOOL
+  MANUAL
+  TRAINING
+  STANDARD
+  TEMPLATE
+}
+
+enum PublicLibraryDocumentStatus {
+  ACTIVE
+  VOIDED
+}
+
+enum PublicLibraryDocumentVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+  VOIDED
+}
+
+enum ProjectPublicLibraryReferenceStatus {
+  ACTIVE
+  RETIRED
 }
 
 enum DrawingFileRole {
@@ -956,6 +984,12 @@ enum AuditAction {
   CONTROLLED_DOCUMENT_VERSION_DRAFTED
   CONTROLLED_DOCUMENT_VERSION_PUBLISHED
   CONTROLLED_DOCUMENT_VOIDED
+  PUBLIC_LIBRARY_DOCUMENT_CREATED
+  PUBLIC_LIBRARY_VERSION_DRAFTED
+  PUBLIC_LIBRARY_VERSION_PUBLISHED
+  PUBLIC_LIBRARY_DOCUMENT_VOIDED
+  PROJECT_PUBLIC_LIBRARY_REFERENCE_CREATED
+  PROJECT_PUBLIC_LIBRARY_REFERENCE_RETIRED
   MECHANICAL_DRAWING_CREATED
   MECHANICAL_DRAWING_VERSION_DRAFTED
   MECHANICAL_DRAWING_VERSION_PUBLISHED
@@ -1057,6 +1091,9 @@ enum AuditObjectType {
   FILE_UPLOAD_SESSION
   CONTROLLED_DOCUMENT
   CONTROLLED_DOCUMENT_VERSION
+  PUBLIC_LIBRARY_DOCUMENT
+  PUBLIC_LIBRARY_DOCUMENT_VERSION
+  PROJECT_PUBLIC_LIBRARY_REFERENCE
   MECHANICAL_DRAWING
   MECHANICAL_DRAWING_VERSION_FILE
   MECHANICAL_DRAWING_IMPORT_BATCH
@@ -1140,6 +1177,13 @@ model User {
   controlledDocumentVersionsCreated     ControlledDocumentVersion[]       @relation("ControlledDocumentVersionCreatedBy")
   controlledDocumentVersionsPublished   ControlledDocumentVersion[]       @relation("ControlledDocumentVersionPublishedBy")
   controlledDocumentVersionsVoided      ControlledDocumentVersion[]       @relation("ControlledDocumentVersionVoidedBy")
+  publicLibraryDocumentsCreated         PublicLibraryDocument[]            @relation("PublicLibraryDocumentCreatedBy")
+  publicLibraryDocumentsVoided          PublicLibraryDocument[]            @relation("PublicLibraryDocumentVoidedBy")
+  publicLibraryVersionsCreated          PublicLibraryDocumentVersion[]     @relation("PublicLibraryVersionCreatedBy")
+  publicLibraryVersionsPublished        PublicLibraryDocumentVersion[]     @relation("PublicLibraryVersionPublishedBy")
+  publicLibraryVersionsVoided           PublicLibraryDocumentVersion[]     @relation("PublicLibraryVersionVoidedBy")
+  projectPublicLibraryReferencesCreated ProjectPublicLibraryReference[]    @relation("ProjectPublicLibraryReferenceCreatedBy")
+  projectPublicLibraryReferencesRetired ProjectPublicLibraryReference[]    @relation("ProjectPublicLibraryReferenceRetiredBy")
   mechanicalDrawingsCreated             MechanicalDrawing[]                @relation("MechanicalDrawingCreatedBy")
   mechanicalDrawingImportBatchesCreated MechanicalDrawingImportBatch[]     @relation("MechanicalDrawingImportBatchCreatedBy")
   notificationTemplateVersionsPublished NotificationTemplateVersion[]     @relation("NotificationTemplatePublishedBy")
@@ -1344,6 +1388,7 @@ model Project {
   cockpitExceptionProjections   CockpitExceptionProjection[]
   resourceLoadProjections       ResourceLoadProjection[]
   resourceLoadPersonProjections ResourceLoadPersonProjection[]
+  publicLibraryReferences       ProjectPublicLibraryReference[]
 
   @@unique([mainControlStageId, mainControlStageProjectId])
   @@index([departmentId])
@@ -1441,6 +1486,95 @@ model MechanicalDrawing {
   @@unique([projectId, drawingNumber])
   @@index([projectId, drawingType, drawingNumber])
   @@map("mechanical_drawings")
+}
+
+model PublicLibraryDocument {
+  id                        String                        @id @default(cuid())
+  code                      String                        @unique
+  title                     String
+  materialType              PublicLibraryMaterialType     @map("material_type")
+  status                    PublicLibraryDocumentStatus   @default(ACTIVE)
+  currentPublishedVersionId String?                       @unique @map("current_published_version_id")
+  version                   Int                           @default(1)
+  createdById               String                        @map("created_by_id")
+  voidedById                String?                       @map("voided_by_id")
+  voidedAt                  DateTime?                     @map("voided_at")
+  voidReason                String?                       @map("void_reason")
+  createdAt                 DateTime                      @default(now()) @map("created_at")
+  updatedAt                 DateTime                      @updatedAt @map("updated_at")
+  createdBy                 User                          @relation("PublicLibraryDocumentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voidedBy                  User?                         @relation("PublicLibraryDocumentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentPublishedVersion   PublicLibraryDocumentVersion? @relation("PublicLibraryDocumentCurrentPublishedVersion", fields: [currentPublishedVersionId], references: [id], onDelete: Restrict)
+  versions                  PublicLibraryDocumentVersion[] @relation("PublicLibraryDocumentVersions")
+  projectReferences         ProjectPublicLibraryReference[]
+
+  @@index([status, materialType, code])
+  @@index([createdById, createdAt])
+  @@map("public_library_documents")
+}
+
+model PublicLibraryDocumentVersion {
+  id                  String                           @id @default(cuid())
+  documentId          String                           @map("document_id")
+  version             Int
+  status              PublicLibraryDocumentVersionStatus @default(DRAFT)
+  sourceFileId        String                           @map("source_file_id")
+  sourceFileSha256    String                           @map("source_file_sha256")
+  sourceMimeType      String                           @map("source_mime_type")
+  sourceFileSize      BigInt                           @map("source_file_size")
+  applicableModels    Json                             @default("[]") @map("applicable_models")
+  applicablePlatforms Json                             @default("[]") @map("applicable_platforms")
+  createdById         String                           @map("created_by_id")
+  publishedById       String?                          @map("published_by_id")
+  publishedAt         DateTime?                        @map("published_at")
+  voidedById          String?                          @map("voided_by_id")
+  voidedAt            DateTime?                        @map("voided_at")
+  voidReason          String?                          @map("void_reason")
+  createdAt           DateTime                         @default(now()) @map("created_at")
+  document            PublicLibraryDocument            @relation("PublicLibraryDocumentVersions", fields: [documentId], references: [id], onDelete: Restrict)
+  sourceFile          FileObject                       @relation("PublicLibraryVersionSourceFile", fields: [sourceFileId], references: [id], onDelete: Restrict)
+  createdBy           User                             @relation("PublicLibraryVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy         User?                            @relation("PublicLibraryVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  voidedBy            User?                            @relation("PublicLibraryVersionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentForDocument  PublicLibraryDocument?           @relation("PublicLibraryDocumentCurrentPublishedVersion")
+  projectReferences   ProjectPublicLibraryReference[]
+
+  @@unique([documentId, version])
+  @@index([status, createdAt])
+  @@index([sourceFileId])
+  @@map("public_library_document_versions")
+}
+
+model ProjectPublicLibraryReference {
+  id                      String                              @id @default(cuid())
+  projectId               String                              @map("project_id")
+  publicLibraryDocumentId String                              @map("public_library_document_id")
+  publicDocumentVersionId String                              @map("public_document_version_id")
+  documentCode            String                              @map("document_code")
+  documentTitle           String                              @map("document_title")
+  materialType            PublicLibraryMaterialType           @map("material_type")
+  documentVersion         Int                                 @map("document_version")
+  sourceFileSha256        String                              @map("source_file_sha256")
+  applicableModels        Json                                @default("[]") @map("applicable_models")
+  applicablePlatforms     Json                                @default("[]") @map("applicable_platforms")
+  status                  ProjectPublicLibraryReferenceStatus @default(ACTIVE)
+  version                 Int                                 @default(1)
+  createdById             String                              @map("created_by_id")
+  retiredById             String?                             @map("retired_by_id")
+  retiredAt               DateTime?                           @map("retired_at")
+  retireReason            String?                             @map("retire_reason")
+  createdAt               DateTime                            @default(now()) @map("created_at")
+  updatedAt               DateTime                            @updatedAt @map("updated_at")
+  project                 Project                             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  publicLibraryDocument   PublicLibraryDocument               @relation(fields: [publicLibraryDocumentId], references: [id], onDelete: Restrict)
+  publicDocumentVersion   PublicLibraryDocumentVersion        @relation(fields: [publicDocumentVersionId], references: [id], onDelete: Restrict)
+  createdBy               User                                @relation("ProjectPublicLibraryReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  retiredBy               User?                               @relation("ProjectPublicLibraryReferenceRetiredBy", fields: [retiredById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, publicDocumentVersionId])
+  @@index([projectId, status, createdAt])
+  @@index([publicLibraryDocumentId, documentVersion])
+  @@map("project_public_library_references")
 }
 
 model MechanicalDrawingVersionFile {

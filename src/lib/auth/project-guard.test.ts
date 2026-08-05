@@ -186,6 +186,7 @@ describe("authorizeProjectRequest", () => {
     const result = await authorizeProjectRequest(
       new Request("http://localhost/api/projects/project-1/gate-submissions/submission-1/approve", {
         method: "POST",
+
         headers: { "x-apm-user-id": "quality-1" }
       }),
       "project-1",
