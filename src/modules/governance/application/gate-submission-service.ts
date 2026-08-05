@@ -10,6 +10,8 @@ import {
   GATE_SUBMISSION_AUDIT_FIELDS
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
+import { createGateSubmissionDocumentReferences } from "@/modules/documents/application/controlled-document-service";
+import { DocumentReviewError } from "@/modules/documents/domain/document-review";
 
 import {
   evaluateGateSubmissionDecision,
@@ -35,9 +37,13 @@ export type GateApprovalConfiguration = {
   projectRoles: ProjectRoleCode[];
 };
 
-type SubmissionWithFacts = Prisma.GateSubmissionGetPayload<{
-  include: { approvers: true; approvals: true };
-}>;
+const submissionInclude = {
+  approvers: true,
+  approvals: true,
+  documentReferences: { orderBy: [{ documentCode: "asc" }, { documentVersion: "asc" }] }
+} satisfies Prisma.GateSubmissionInclude;
+
+type SubmissionWithFacts = Prisma.GateSubmissionGetPayload<{ include: typeof submissionInclude }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -138,6 +144,18 @@ function submissionSnapshot(submission: SubmissionWithFacts) {
         decidedAt: approval.decidedAt.toISOString()
       }))
       .sort((left, right) => left.decidedAt.localeCompare(right.decidedAt)),
+    documentReferences: submission.documentReferences.map((reference) => ({
+      documentReferenceId: reference.id,
+      documentVersionId: reference.documentVersionId,
+      documentVersionRelationId: reference.documentVersionRelationId,
+      documentCode: reference.documentCode,
+      documentTitle: reference.documentTitle,
+      documentVersion: reference.documentVersion,
+      sourceFileSha256: reference.sourceFileSha256,
+      reviewEvidence: reference.reviewEvidenceJson,
+      reviewEvidenceChecksum: reference.reviewEvidenceChecksum,
+      createdAt: reference.createdAt.toISOString()
+    })),
     submittedById: submission.submittedById,
     submittedAt: submission.submittedAt.toISOString(),
     withdrawnById: submission.withdrawnById,
@@ -210,7 +228,7 @@ async function lockSubmission(
   `;
   return client.gateSubmission.findFirst({
     where: { id: submissionId, projectId },
-    include: { approvers: true, approvals: true }
+    include: submissionInclude
   });
 }
 
@@ -342,9 +360,22 @@ async function createSubmission(
       projectRolesJson: approver.projectRoles as Prisma.InputJsonValue
     }))
   });
+  try {
+    await createGateSubmissionDocumentReferences({
+      client,
+      projectId: input.projectId,
+      gateInstanceId: gateInstance.id,
+      gateSubmissionId: submission.id
+    });
+  } catch (error) {
+    if (error instanceof DocumentReviewError) {
+      throw new GateSubmissionServiceError(error.code, error.message, error.status);
+    }
+    throw error;
+  }
   const created = await client.gateSubmission.findUniqueOrThrow({
     where: { id: submission.id },
-    include: { approvers: true, approvals: true }
+    include: submissionInclude
   });
   const snapshot = submissionSnapshot(created);
   const event = await appendSubmissionEvent(client, {
@@ -501,7 +532,7 @@ export async function withdrawGateSubmission(
     }
     const updated = await client.gateSubmission.findUniqueOrThrow({
       where: { id: current.id },
-      include: { approvers: true, approvals: true }
+      include: submissionInclude
     });
     const before = submissionSnapshot(current);
     const after = submissionSnapshot(updated);
@@ -639,7 +670,7 @@ export async function decideGateSubmission(
     }
     const updated = await client.gateSubmission.findUniqueOrThrow({
       where: { id: current.id },
-      include: { approvers: true, approvals: true }
+      include: submissionInclude
     });
     const before = submissionSnapshot(current);
     const after = submissionSnapshot(updated);
@@ -726,7 +757,7 @@ export async function findGateSubmissionApproverIds(projectId: string, submissio
 export async function listGateSubmissions(projectId: string) {
   const submissions = await db.gateSubmission.findMany({
     where: { projectId },
-    include: { approvers: true, approvals: true },
+    include: submissionInclude,
     orderBy: [{ gateInstanceId: "asc" }, { sequence: "desc" }]
   });
   return submissions.map(submissionSnapshot);

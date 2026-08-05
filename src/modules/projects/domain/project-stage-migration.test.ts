@@ -15,7 +15,9 @@ const hardeningMigrationPath = resolve(
 const stagePersistenceMigrations = [
   stageMigration,
   existsSync(hardeningMigrationPath) ? readFileSync(hardeningMigrationPath, "utf8") : ""
-].join("\n");
+]
+  .join("\n")
+  .replace(/\r\n/g, "\n");
 
 describe("project stage persistence migrations", () => {
   it("synchronizes the selected main-control stage summary after a stage status update", () => {
