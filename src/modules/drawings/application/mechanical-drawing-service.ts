@@ -492,7 +492,8 @@ export async function createMechanicalDrawing(
           sourceFileId: input.cadSourceFileId,
           reason,
           actorId: input.actorId,
-          auditContext: auditContext(input, reason)
+          auditContext: auditContext(input, reason),
+          sourceFileAccess: input.sourceFileAccess
         },
         client
       );
@@ -580,7 +581,8 @@ export async function createMechanicalDrawingDraft(
           sourceFileId: input.cadSourceFileId,
           reason,
           actorId: input.actorId,
-          auditContext: auditContext(input, reason)
+          auditContext: auditContext(input, reason),
+          sourceFileAccess: input.sourceFileAccess
         },
         client
       );
