@@ -799,6 +799,108 @@ export const alertTransitionBodySchema = z.strictObject({
   action: z.enum(["ACKNOWLEDGE", "START", "RESOLVE", "CLOSE"]),
   reason: reasonSchema
 });
+
+const issueCategorySchema = z.enum([
+  "SAFETY",
+  "FUNCTION",
+  "PERFORMANCE",
+  "APPEARANCE",
+  "DELIVERY_COMPLETENESS"
+]);
+const issueSeveritySchema = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
+const issueRootCauseCategorySchema = z.enum([
+  "DESIGN",
+  "MANUFACTURING",
+  "ASSEMBLY",
+  "SOFTWARE",
+  "PROCUREMENT",
+  "MATERIAL",
+  "PROCESS",
+  "OTHER"
+]);
+const issueDetailsSchema = {
+  title: z.string().trim().min(1).max(191),
+  confirmedText: z.string().trim().min(1).max(10_000),
+  category: issueCategorySchema,
+  severity: issueSeveritySchema,
+  phenomenonDescription: z.string().trim().min(1).max(10_000).nullable(),
+  rootCauseCategory: issueRootCauseCategorySchema.nullable(),
+  rootCauseDescription: z.string().trim().min(1).max(10_000).nullable(),
+  tags: z.array(z.string().trim().min(1).max(100)).max(50)
+};
+
+function requireCompleteIssueRootCause(
+  value: { rootCauseCategory: unknown; rootCauseDescription: unknown },
+  context: z.RefinementCtx
+) {
+  if ((value.rootCauseCategory === null) !== (value.rootCauseDescription === null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["rootCauseCategory"],
+      message: "根因分类和根因描述必须同时提供或同时留空。"
+    });
+  }
+}
+
+export const createProjectIssueBodySchema = z
+  .strictObject(issueDetailsSchema)
+  .superRefine(requireCompleteIssueRootCause);
+export const updateProjectIssueBodySchema = z
+  .strictObject({ version: positiveVersionSchema, reason: reasonSchema, ...issueDetailsSchema })
+  .superRefine(requireCompleteIssueRootCause);
+export const projectIssuePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  issueId: identifierSchema
+});
+export const projectIssueQuerySchema = z.strictObject({
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
+export const projectIssueCommandPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  issueId: identifierSchema,
+  command: z.enum([
+    "start-analysis",
+    "start-processing",
+    "submit-verification",
+    "verify-close",
+    "reopen"
+  ])
+});
+export const issueTransitionBodySchema = z
+  .strictObject({
+    version: positiveVersionSchema,
+    action: z.enum([
+      "START_ANALYSIS",
+      "START_PROCESSING",
+      "SUBMIT_VERIFICATION",
+      "VERIFY_CLOSE",
+      "REOPEN"
+    ]),
+    reason: reasonSchema,
+    verificationEvidence: z.string().trim().min(1).max(10_000).nullable()
+  })
+  .superRefine((value, context) => {
+    if (value.action === "VERIFY_CLOSE" && value.verificationEvidence === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["verificationEvidence"],
+        message: "关闭问题必须提供验证证据。"
+      });
+    }
+    if (value.action !== "VERIFY_CLOSE" && value.verificationEvidence !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["verificationEvidence"],
+        message: "仅关闭问题可以提交验证证据。"
+      });
+    }
+  });
 export const projectMembershipPathSchema = z.strictObject({
   projectId: identifierSchema,
   membershipId: identifierSchema
