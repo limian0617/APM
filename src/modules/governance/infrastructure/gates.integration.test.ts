@@ -13,6 +13,17 @@ import {
 import { createProjectFromTemplate } from "@/modules/projects/application/create-project";
 import { initializeProjectStructure } from "@/modules/projects/application/project-structure";
 import { executeIdempotentCommand } from "@/modules/platform-api/application/idempotent-command";
+import {
+  createControlledDocument,
+  createControlledDocumentDraft,
+  createDocumentReview,
+  createDocumentReviewComment,
+  createDocumentVersionRelation,
+  decideDocumentReview,
+  publishControlledDocumentVersion,
+  resolveDocumentReviewComment,
+  voidDocumentVersionRelation
+} from "@/modules/documents/application/controlled-document-service";
 
 import { createGateInstance, runGateChecks } from "../application/gate-service";
 import {
@@ -76,6 +87,26 @@ function auditContext(operationId: string, projectId: string | null = null): Aud
     departmentId: "engineering",
     operationId
   };
+}
+
+async function availableDocumentFile(projectId: string, label: string) {
+  return db.fileObject.create({
+    data: {
+      projectId,
+      uploadedById: ids.admin,
+      originalName: `${label}.pdf`,
+      declaredMimeType: "application/pdf",
+      verifiedMimeType: "application/pdf",
+      declaredSize: 1024n,
+      verifiedSize: 1024n,
+      sha256: randomUUID().replaceAll("-", "").padEnd(64, "a"),
+      objectKey: randomUUID(),
+      storageArea: "CONTROLLED",
+      status: "AVAILABLE",
+      sensitivity: "INTERNAL",
+      scannedAt: new Date()
+    }
+  });
 }
 
 function componentDefinition(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
@@ -967,6 +998,202 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
         data: { approverRolesJson: ["ENGINEER"] }
       })
     ).rejects.toThrow(/immutable|transition/u);
+  });
+
+  it("freezes an exact reviewed document version in Gate evidence without rewriting prior submissions", async () => {
+    const facts = await seedProject("DOCUMENT-EVIDENCE");
+    await db.projectMember.createMany({
+      data: [
+        {
+          projectId: facts.project.id,
+          userId: ids.quality,
+          projectRole: "QUALITY",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        },
+        {
+          projectId: facts.project.id,
+          userId: ids.departmentLead,
+          projectRole: "DEPARTMENT_LEAD",
+          departmentId: "engineering",
+          assignedById: ids.admin
+        }
+      ]
+    });
+    await db.projectStage.updateMany({
+      where: { id: facts.stage.id, projectId: facts.project.id },
+      data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
+    });
+    const gate = await db.projectGateInstance.findFirstOrThrow({
+      where: { projectId: facts.project.id, gateDefinition: { code: "G.PROJECT" } }
+    });
+    const firstFile = await availableDocumentFile(facts.project.id, "gate-evidence-v1");
+    const created = await createControlledDocument({
+      projectId: facts.project.id,
+      code: `GATE.EVIDENCE.${suffix}`.toUpperCase(),
+      title: "Gate 文档评审证据",
+      sourceFileId: firstFile.id,
+      reason: "创建需要评审的 Gate 文档",
+      actorId: ids.admin,
+      auditContext: auditContext("document-evidence-create", facts.project.id)
+    });
+    const firstVersion = created.document.versions[0]!;
+    const review = await createDocumentReview({
+      projectId: facts.project.id,
+      documentId: created.document.id,
+      documentVersionId: firstVersion.id,
+      version: created.resourceVersion,
+      reviewerId: ids.quality,
+      required: true,
+      reason: "质量评审 Gate 文档",
+      actorId: ids.projectManager,
+      auditContext: auditContext("document-evidence-review", facts.project.id)
+    });
+    const comment = await createDocumentReviewComment({
+      projectId: facts.project.id,
+      documentId: created.document.id,
+      documentVersionId: firstVersion.id,
+      reviewId: review.review.id,
+      body: "补充安全联锁版本说明",
+      required: true,
+      reason: "记录必要评审意见",
+      actorId: ids.quality,
+      auditContext: auditContext("document-evidence-comment", facts.project.id)
+    });
+    await expect(
+      publishControlledDocumentVersion({
+        projectId: facts.project.id,
+        documentId: created.document.id,
+        documentVersionId: firstVersion.id,
+        version: review.resourceVersion,
+        reason: "必要评审未闭环时不能发布",
+        actorId: ids.projectManager,
+        auditContext: auditContext("document-evidence-premature-publish", facts.project.id)
+      })
+    ).rejects.toMatchObject({ code: "DOCUMENT_REVIEW_REQUIRED", status: 409 });
+    await expect(
+      decideDocumentReview({
+        projectId: facts.project.id,
+        documentId: created.document.id,
+        documentVersionId: firstVersion.id,
+        reviewId: review.review.id,
+        version: review.review.version,
+        status: "APPROVED",
+        reason: "尚未闭环时不能批准",
+        actorId: ids.quality,
+        auditContext: auditContext("document-evidence-premature-approval", facts.project.id)
+      })
+    ).rejects.toMatchObject({ code: "DOCUMENT_REVIEW_FEEDBACK_UNRESOLVED", status: 409 });
+    await resolveDocumentReviewComment({
+      projectId: facts.project.id,
+      documentId: created.document.id,
+      documentVersionId: firstVersion.id,
+      reviewId: review.review.id,
+      commentId: comment.comment.id,
+      resolution: "已完成安全联锁版本说明",
+      reason: "评审人确认意见闭环",
+      actorId: ids.quality,
+      auditContext: auditContext("document-evidence-resolve", facts.project.id)
+    });
+    const approved = await decideDocumentReview({
+      projectId: facts.project.id,
+      documentId: created.document.id,
+      documentVersionId: firstVersion.id,
+      reviewId: review.review.id,
+      version: review.review.version,
+      status: "APPROVED",
+      reason: "必要意见已闭环并批准",
+      actorId: ids.quality,
+      auditContext: auditContext("document-evidence-approve", facts.project.id)
+    });
+    const published = await publishControlledDocumentVersion({
+      projectId: facts.project.id,
+      documentId: created.document.id,
+      documentVersionId: firstVersion.id,
+      version: review.resourceVersion,
+      reason: "发布已完成必要评审的文档",
+      actorId: ids.projectManager,
+      auditContext: auditContext("document-evidence-publish", facts.project.id)
+    });
+    const relation = await createDocumentVersionRelation({
+      projectId: facts.project.id,
+      documentId: created.document.id,
+      documentVersionId: firstVersion.id,
+      version: published.resourceVersion,
+      targetType: "GATE_INSTANCE",
+      targetId: gate.id,
+      reason: "将精确版本关联到项目 Gate",
+      actorId: ids.projectManager,
+      auditContext: auditContext("document-evidence-relate", facts.project.id)
+    });
+    const checked = await runGateChecks({
+      projectId: facts.project.id,
+      gateInstanceId: gate.id,
+      version: gate.version,
+      reason: "运行带文档证据的 Gate 检查",
+      actorId: ids.projectManager,
+      auditContext: auditContext("document-evidence-check", facts.project.id)
+    });
+    const submitted = await submitGateSubmission({
+      projectId: facts.project.id,
+      gateInstanceId: gate.id,
+      version: checked.resourceVersion,
+      reason: "提交带精确文档版本的 Gate",
+      actorId: ids.projectManager,
+      auditContext: auditContext("document-evidence-submit", facts.project.id)
+    });
+    expect(submitted.submission.documentReferences).toEqual([
+      expect.objectContaining({
+        documentVersionId: firstVersion.id,
+        documentVersion: 1,
+        sourceFileSha256: firstFile.sha256
+      })
+    ]);
+    const secondFile = await availableDocumentFile(facts.project.id, "gate-evidence-v2");
+    const secondDraft = await createControlledDocumentDraft({
+      projectId: facts.project.id,
+      documentId: created.document.id,
+      version: relation.resourceVersion,
+      sourceFileId: secondFile.id,
+      reason: "建立后续修订版本",
+      actorId: ids.projectManager,
+      auditContext: auditContext("document-evidence-v2-draft", facts.project.id)
+    });
+    const secondVersion = secondDraft.document.versions.find(({ version }) => version === 2)!;
+    const secondPublished = await publishControlledDocumentVersion({
+      projectId: facts.project.id,
+      documentId: created.document.id,
+      documentVersionId: secondVersion.id,
+      version: secondDraft.resourceVersion,
+      reason: "发布后续修订版本",
+      actorId: ids.projectManager,
+      auditContext: auditContext("document-evidence-v2-publish", facts.project.id)
+    });
+    await voidDocumentVersionRelation({
+      projectId: facts.project.id,
+      documentId: created.document.id,
+      documentVersionId: firstVersion.id,
+      relationId: relation.relation.id,
+      version: relation.relation.version,
+      reason: "后续 Gate 将改用新版本",
+      actorId: ids.projectManager,
+      auditContext: auditContext("document-evidence-relation-void", facts.project.id)
+    });
+    expect(secondPublished.document.currentPublishedVersionId).toBe(secondVersion.id);
+    await expect(
+      db.gateSubmissionDocumentReference.findMany({
+        where: { gateSubmissionId: submitted.submission.gateSubmissionId },
+        select: { documentVersionId: true, documentVersion: true, sourceFileSha256: true }
+      })
+    ).resolves.toEqual([
+      { documentVersionId: firstVersion.id, documentVersion: 1, sourceFileSha256: firstFile.sha256 }
+    ]);
+    await expect(
+      db.gateSubmissionDocumentReference.updateMany({
+        where: { gateSubmissionId: submitted.submission.gateSubmissionId },
+        data: { documentVersion: 2 }
+      })
+    ).rejects.toThrow(/immutable/u);
   });
 
   it("approves ANY on one reviewer and appends a new fact after rejection or withdrawal", async () => {

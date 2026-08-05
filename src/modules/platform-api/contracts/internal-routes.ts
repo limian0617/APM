@@ -926,6 +926,62 @@ export const voidControlledDocumentBodySchema = z.strictObject({
   version: positiveVersionSchema,
   reason: reasonSchema
 });
+export const documentReviewPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  documentId: identifierSchema,
+  documentVersionId: identifierSchema,
+  reviewId: identifierSchema
+});
+export const documentReviewCommentPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  documentId: identifierSchema,
+  documentVersionId: identifierSchema,
+  reviewId: identifierSchema,
+  commentId: identifierSchema
+});
+export const documentVersionRelationPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  documentId: identifierSchema,
+  documentVersionId: identifierSchema,
+  relationId: identifierSchema
+});
+export const createDocumentReviewBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reviewerId: identifierSchema,
+  required: z.boolean(),
+  reason: reasonSchema
+});
+export const decideDocumentReviewBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  status: z.enum(["APPROVED", "CHANGES_REQUESTED"]),
+  reason: reasonSchema
+});
+export const createDocumentReviewCommentBodySchema = z.strictObject({
+  body: z.string().trim().min(1).max(4096),
+  required: z.boolean(),
+  reason: reasonSchema
+});
+export const resolveDocumentReviewCommentBodySchema = z.strictObject({
+  resolution: z.string().trim().min(1).max(1024),
+  reason: reasonSchema
+});
+export const createDocumentVersionRelationBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  targetType: z.enum([
+    "DELIVERY_UNIT",
+    "MODULE",
+    "RESPONSIBILITY_PACKAGE",
+    "PLANNING_TASK",
+    "MILESTONE",
+    "GATE_INSTANCE"
+  ]),
+  targetId: identifierSchema,
+  reason: reasonSchema
+});
+export const voidDocumentVersionRelationBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
 export const controlledDocumentQuerySchema = z.strictObject({
   status: z.enum(["ACTIVE", "VOIDED"]).optional(),
   cursor: identifierSchema.optional(),
