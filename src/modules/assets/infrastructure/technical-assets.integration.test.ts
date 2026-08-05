@@ -106,8 +106,7 @@ describeDatabase("APM-061 PostgreSQL technical asset masters", () => {
       ownerId: ids.owner,
       assetType: "MECHANICAL",
       status: "DRAFT",
-      version: 1,
-      releases: undefined
+      version: 1
     });
     await expect(
       db.rndProjectEvent.count({
