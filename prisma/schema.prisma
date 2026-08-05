@@ -7,6 +7,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model ApiIdempotencyRecord {
+  id             String    @id @default(cuid())
+  actorId        String    @map("actor_id")
+  operation      String
+  idempotencyKey String    @map("idempotency_key")
+  requestHash    String    @map("request_hash")
+  responseStatus Int?      @map("response_status")
+  responseJson   Json?     @map("response_json")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  completedAt    DateTime? @map("completed_at")
+  actor          User      @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([actorId, operation, idempotencyKey])
+  @@index([completedAt, createdAt])
+  @@map("api_idempotency_records")
+}
+
 model SystemSetting {
   key       String                  @id
   value     Json
@@ -37,30 +54,152 @@ model SystemSettingRevision {
 }
 
 model CompanyCapability {
-  code      CapabilityCode              @id
-  enabled   Boolean                     @default(false)
-  version   Int                         @default(1)
-  createdAt DateTime                    @default(now()) @map("created_at")
-  updatedAt DateTime                    @updatedAt @map("updated_at")
-  revisions CompanyCapabilityRevision[]
+  code                CapabilityCode              @id
+  enabled             Boolean                     @default(false)
+  version             Int                         @default(1)
+  createdAt           DateTime                    @default(now()) @map("created_at")
+  updatedAt           DateTime                    @updatedAt @map("updated_at")
+  revisions           CompanyCapabilityRevision[]
+  projectCapabilities ProjectCapability[]
 
   @@map("company_capabilities")
 }
 
 model CompanyCapabilityRevision {
-  id             String            @id @default(cuid())
-  capabilityCode CapabilityCode    @map("capability_code")
-  version        Int
-  enabled        Boolean
-  changedById    String?           @map("changed_by_id")
-  changeReason   String?           @map("change_reason")
-  createdAt      DateTime          @default(now()) @map("created_at")
-  capability     CompanyCapability @relation(fields: [capabilityCode], references: [code], onDelete: Restrict)
-  changedBy      User?             @relation("CompanyCapabilityRevisionChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+  id                         String                      @id @default(cuid())
+  capabilityCode             CapabilityCode              @map("capability_code")
+  version                    Int
+  enabled                    Boolean
+  changedById                String?                     @map("changed_by_id")
+  changeReason               String?                     @map("change_reason")
+  createdAt                  DateTime                    @default(now()) @map("created_at")
+  capability                 CompanyCapability           @relation(fields: [capabilityCode], references: [code], onDelete: Restrict)
+  changedBy                  User?                       @relation("CompanyCapabilityRevisionChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+  projectCapabilityRevisions ProjectCapabilityRevision[] @relation("ProjectCapabilityCompanyRevision")
 
   @@unique([capabilityCode, version])
   @@index([changedById, createdAt])
   @@map("company_capability_revisions")
+}
+
+model TemplateComponent {
+  id             String                     @id @default(cuid())
+  code           String                     @unique
+  componentType  TemplateComponentType      @map("component_type")
+  name           String
+  description    String?
+  draftContent   Json                       @map("draft_content")
+  status         TemplateMasterStatus       @default(DRAFT)
+  currentVersion Int                        @default(0) @map("current_version")
+  version        Int                        @default(1)
+  createdById    String                     @map("created_by_id")
+  updatedById    String                     @map("updated_by_id")
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  updatedAt      DateTime                   @updatedAt @map("updated_at")
+  createdBy      User                       @relation("TemplateComponentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy      User                       @relation("TemplateComponentUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  versions       TemplateComponentVersion[]
+
+  @@index([componentType, status, code])
+  @@map("template_components")
+}
+
+model TemplateComponentVersion {
+  id                        String                             @id @default(cuid())
+  componentId               String                             @map("component_id")
+  version                   Int
+  status                    TemplateVersionStatus              @default(PUBLISHED)
+  componentType             TemplateComponentType              @map("component_type")
+  name                      String
+  description               String?
+  contentJson               Json                               @map("content_json")
+  checksum                  String
+  publishedById             String                             @map("published_by_id")
+  publishedAt               DateTime                           @default(now()) @map("published_at")
+  component                 TemplateComponent                  @relation(fields: [componentId], references: [id], onDelete: Restrict)
+  publishedBy               User                               @relation("TemplateComponentVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  draftReferences           TemplateDraftComponent[]
+  versionReferences         TemplateVersionComponent[]
+  projectSnapshotComponents ProjectTemplateSnapshotComponent[]
+
+  @@unique([componentId, version])
+  @@index([componentType, publishedAt])
+  @@index([publishedById, publishedAt])
+  @@map("template_component_versions")
+}
+
+model ProjectTemplate {
+  id              String                   @id @default(cuid())
+  code            String                   @unique
+  name            String
+  description     String?
+  status          TemplateMasterStatus     @default(DRAFT)
+  currentVersion  Int                      @default(0) @map("current_version")
+  version         Int                      @default(1)
+  createdById     String                   @map("created_by_id")
+  updatedById     String                   @map("updated_by_id")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+  createdBy       User                     @relation("ProjectTemplateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy       User                     @relation("ProjectTemplateUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  draftComponents TemplateDraftComponent[]
+  versions        ProjectTemplateVersion[]
+
+  @@index([status, code])
+  @@map("templates")
+}
+
+model TemplateDraftComponent {
+  id                 String                   @id @default(cuid())
+  templateId         String                   @map("template_id")
+  componentVersionId String                   @map("component_version_id")
+  componentType      TemplateComponentType    @map("component_type")
+  slot               String
+  position           Int
+  template           ProjectTemplate          @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  componentVersion   TemplateComponentVersion @relation(fields: [componentVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([templateId, slot])
+  @@unique([templateId, position])
+  @@index([componentVersionId])
+  @@map("template_draft_components")
+}
+
+model ProjectTemplateVersion {
+  id               String                     @id @default(cuid())
+  templateId       String                     @map("template_id")
+  version          Int
+  status           TemplateVersionStatus      @default(PUBLISHED)
+  name             String
+  description      String?
+  checksum         String
+  publishedById    String                     @map("published_by_id")
+  publishedAt      DateTime                   @default(now()) @map("published_at")
+  template         ProjectTemplate            @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  publishedBy      User                       @relation("ProjectTemplateVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  components       TemplateVersionComponent[]
+  sourceProjects   Project[]                  @relation("ProjectSourceTemplateVersion")
+  projectSnapshots ProjectTemplateSnapshot[]  @relation("ProjectSnapshotSourceTemplateVersion")
+
+  @@unique([templateId, version])
+  @@index([publishedById, publishedAt])
+  @@map("template_versions")
+}
+
+model TemplateVersionComponent {
+  id                 String                   @id @default(cuid())
+  templateVersionId  String                   @map("template_version_id")
+  componentVersionId String                   @map("component_version_id")
+  componentType      TemplateComponentType    @map("component_type")
+  slot               String
+  position           Int
+  templateVersion    ProjectTemplateVersion   @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  componentVersion   TemplateComponentVersion @relation(fields: [componentVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([templateVersionId, slot])
+  @@unique([templateVersionId, position])
+  @@index([componentVersionId])
+  @@map("template_version_components")
 }
 
 model OutboxEvent {
@@ -71,12 +210,14 @@ model OutboxEvent {
   payload        Json
   payloadHash    String         @map("payload_hash")
   idempotencyKey String         @map("idempotency_key")
+  traceId        String?        @map("trace_id")
   occurredAt     DateTime       @default(now()) @map("occurred_at")
   dispatchedAt   DateTime?      @map("dispatched_at")
   job            PersistentJob?
 
   @@unique([eventType, idempotencyKey])
   @@index([dispatchedAt, occurredAt])
+  @@index([traceId, occurredAt])
   @@map("outbox_events")
 }
 
@@ -87,6 +228,7 @@ model PersistentJob {
   payload             Json
   payloadHash         String       @map("payload_hash")
   idempotencyKey      String       @map("idempotency_key")
+  traceId             String?      @map("trace_id")
   status              JobStatus    @default(PENDING)
   maxAttempts         Int          @map("max_attempts")
   attemptCount        Int          @default(0) @map("attempt_count")
@@ -106,6 +248,7 @@ model PersistentJob {
   @@unique([jobType, idempotencyKey])
   @@index([status, nextRunAt])
   @@index([status, leaseExpiresAt])
+  @@index([traceId, createdAt])
   @@map("persistent_jobs")
 }
 
@@ -131,6 +274,208 @@ model JobAttempt {
   @@index([status, availableAt])
   @@index([requestedById, createdAt])
   @@map("job_attempts")
+}
+
+model FileObject {
+  id                     String                      @id @default(cuid())
+  projectId              String                      @map("project_id")
+  uploadedById           String                      @map("uploaded_by_id")
+  originalName           String                      @map("original_name")
+  declaredMimeType       String                      @map("declared_mime_type")
+  verifiedMimeType       String?                     @map("verified_mime_type")
+  declaredSize           BigInt                      @map("declared_size")
+  verifiedSize           BigInt?                     @map("verified_size")
+  sha256                 String?
+  objectKey              String                      @unique @map("object_key")
+  storageArea            FileStorageArea             @default(QUARANTINE) @map("storage_area")
+  status                 FileObjectStatus            @default(UPLOADING)
+  sensitivity            FileSensitivity             @default(INTERNAL)
+  scanEngine             String?                     @map("scan_engine")
+  scannerVersion         String?                     @map("scanner_version")
+  scanSignature          String?                     @map("scan_signature")
+  scannedAt              DateTime?                   @map("scanned_at")
+  failureCode            String?                     @map("failure_code")
+  failureMessage         String?                     @map("failure_message")
+  version                Int                         @default(1)
+  createdAt              DateTime                    @default(now()) @map("created_at")
+  updatedAt              DateTime                    @updatedAt @map("updated_at")
+  project                Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  uploadedBy             User                        @relation("FileObjectUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  uploadSession          FileUploadSession?
+  commands               FileCommand[]
+  documentSourceVersions ControlledDocumentVersion[] @relation("DocumentVersionSourceFile")
+  publicLibrarySourceVersions PublicLibraryDocumentVersion[] @relation("PublicLibraryVersionSourceFile")
+  mechanicalDrawingVersionFiles    MechanicalDrawingVersionFile[]    @relation("DrawingVersionFile")
+  mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[] @relation("DrawingImportItemFile")
+
+  @@unique([id, projectId])
+  @@index([projectId, status, createdAt])
+  @@index([uploadedById, createdAt])
+  @@map("file_objects")
+}
+
+model FileUploadSession {
+  id              String                  @id @default(cuid())
+  fileObjectId    String                  @unique @map("file_object_id")
+  storageUploadId String                  @unique @map("storage_upload_id")
+  status          FileUploadSessionStatus @default(INITIATED)
+  expectedParts   Int                     @map("expected_parts")
+  partSize        BigInt                  @map("part_size")
+  expiresAt       DateTime                @map("expires_at")
+  completedAt     DateTime?               @map("completed_at")
+  failureCode     String?                 @map("failure_code")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+  fileObject      FileObject              @relation(fields: [fileObjectId], references: [id], onDelete: Restrict)
+  parts           FileUploadPart[]
+  commands        FileCommand[]
+
+  @@index([status, expiresAt])
+  @@map("file_upload_sessions")
+}
+
+model FileUploadPart {
+  uploadSessionId String            @map("upload_session_id")
+  partNumber      Int               @map("part_number")
+  expectedSize    BigInt            @map("expected_size")
+  completedSize   BigInt?           @map("completed_size")
+  etag            String?
+  uploadSession   FileUploadSession @relation(fields: [uploadSessionId], references: [id], onDelete: Restrict)
+
+  @@id([uploadSessionId, partNumber])
+  @@map("file_upload_parts")
+}
+
+model FileCommand {
+  id              String             @id @default(cuid())
+  actorId         String             @map("actor_id")
+  fileObjectId    String             @map("file_object_id")
+  uploadSessionId String?            @map("upload_session_id")
+  operation       FileCommandType
+  idempotencyKey  String             @map("idempotency_key")
+  payloadHash     String             @map("payload_hash")
+  status          FileCommandStatus  @default(STARTED)
+  responseJson    Json?              @map("response_json")
+  errorCode       String?            @map("error_code")
+  errorMessage    String?            @map("error_message")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+  actor           User               @relation("FileCommandActor", fields: [actorId], references: [id], onDelete: Restrict)
+  fileObject      FileObject         @relation(fields: [fileObjectId], references: [id], onDelete: Restrict)
+  uploadSession   FileUploadSession? @relation(fields: [uploadSessionId], references: [id], onDelete: Restrict)
+
+  @@unique([actorId, operation, idempotencyKey])
+  @@unique([uploadSessionId, operation])
+  @@index([fileObjectId, createdAt])
+  @@map("file_commands")
+}
+
+model NotificationTemplate {
+  code           String                        @id
+  enabled        Boolean                       @default(true)
+  currentVersion Int                           @default(0) @map("current_version")
+  version        Int                           @default(1)
+  createdAt      DateTime                      @default(now()) @map("created_at")
+  updatedAt      DateTime                      @updatedAt @map("updated_at")
+  versions       NotificationTemplateVersion[]
+
+  @@map("notification_templates")
+}
+
+model NotificationTemplateVersion {
+  id               String               @id @default(cuid())
+  templateCode     String               @map("template_code")
+  version          Int
+  subjectTemplate  String               @map("subject_template")
+  bodyTextTemplate String               @map("body_text_template")
+  bodyHtmlTemplate String?              @map("body_html_template")
+  variableSchema   Json                 @map("variable_schema")
+  publishedById    String?              @map("published_by_id")
+  publishedAt      DateTime             @default(now()) @map("published_at")
+  template         NotificationTemplate @relation(fields: [templateCode], references: [code], onDelete: Restrict)
+  publishedBy      User?                @relation("NotificationTemplatePublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  notifications    Notification[]
+
+  @@unique([templateCode, version])
+  @@index([publishedById, publishedAt])
+  @@map("notification_template_versions")
+}
+
+model Notification {
+  id                String                      @id @default(cuid())
+  sourceEventKey    String                      @map("source_event_key")
+  eventType         String                      @map("event_type")
+  recipientId       String                      @map("recipient_id")
+  projectId         String?                     @map("project_id")
+  templateVersionId String                      @map("template_version_id")
+  payloadHash       String                      @map("payload_hash")
+  subject           String
+  bodyText          String                      @map("body_text")
+  bodyHtml          String?                     @map("body_html")
+  targetPath        String?                     @map("target_path")
+  sensitivity       NotificationSensitivity     @default(INTERNAL)
+  createdAt         DateTime                    @default(now()) @map("created_at")
+  recipient         User                        @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  project           Project?                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  templateVersion   NotificationTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  readReceipt       NotificationReadReceipt?
+  deliveries        NotificationDelivery[]
+
+  @@unique([sourceEventKey, recipientId])
+  @@unique([id, recipientId])
+  @@index([recipientId, createdAt])
+  @@index([recipientId, sensitivity, createdAt])
+  @@index([projectId, createdAt])
+  @@map("notifications")
+}
+
+model NotificationReadReceipt {
+  id             String       @id @default(cuid())
+  notificationId String       @unique @map("notification_id")
+  recipientId    String       @map("recipient_id")
+  readAt         DateTime     @default(now()) @map("read_at")
+  notification   Notification @relation(fields: [notificationId, recipientId], references: [id, recipientId], onDelete: Restrict)
+  recipient      User         @relation("NotificationReadRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+
+  @@unique([notificationId, recipientId])
+  @@index([recipientId, readAt])
+  @@map("notification_read_receipts")
+}
+
+model NotificationDelivery {
+  id                String                        @id @default(cuid())
+  notificationId    String                        @map("notification_id")
+  channel           NotificationChannel
+  status            NotificationDeliveryStatus    @default(PENDING)
+  idempotencyKey    String                        @unique @map("idempotency_key")
+  sentAt            DateTime?                     @map("sent_at")
+  providerMessageId String?                       @map("provider_message_id")
+  lastErrorCode     String?                       @map("last_error_code")
+  lastErrorMessage  String?                       @map("last_error_message")
+  createdAt         DateTime                      @default(now()) @map("created_at")
+  updatedAt         DateTime                      @updatedAt @map("updated_at")
+  notification      Notification                  @relation(fields: [notificationId], references: [id], onDelete: Restrict)
+  attempts          NotificationDeliveryAttempt[]
+
+  @@unique([notificationId, channel])
+  @@index([status, createdAt])
+  @@map("notification_deliveries")
+}
+
+model NotificationDeliveryAttempt {
+  id                String                            @id @default(cuid())
+  deliveryId        String                            @map("delivery_id")
+  attemptNumber     Int                               @map("attempt_number")
+  status            NotificationDeliveryAttemptStatus @default(RUNNING)
+  startedAt         DateTime                          @default(now()) @map("started_at")
+  completedAt       DateTime?                         @map("completed_at")
+  providerMessageId String?                           @map("provider_message_id")
+  errorCode         String?                           @map("error_code")
+  errorMessage      String?                           @map("error_message")
+  delivery          NotificationDelivery              @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+
+  @@unique([deliveryId, attemptNumber])
+  @@map("notification_delivery_attempts")
 }
 
 enum SettingValueType {
@@ -163,6 +508,172 @@ enum JobAttemptStatus {
   FAILED
 }
 
+enum TemplateComponentType {
+  STAGE
+  GATE
+  ROLE
+  WBS
+  CAPABILITY_RULE
+  MILESTONE
+}
+
+enum TemplateMasterStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+}
+
+enum TemplateVersionStatus {
+  PUBLISHED
+}
+
+enum FileObjectStatus {
+  UPLOADING
+  PENDING_SCAN
+  AVAILABLE
+  QUARANTINED
+  FAILED
+}
+
+enum FileStorageArea {
+  QUARANTINE
+  CONTROLLED
+}
+
+enum FileSensitivity {
+  INTERNAL
+  RESTRICTED
+}
+
+enum FileUploadSessionStatus {
+  INITIATED
+  COMPLETING
+  COMPLETED
+  FAILED
+  ABORTED
+}
+
+enum FileCommandType {
+  UPLOAD_COMPLETE
+}
+
+enum FileCommandStatus {
+  STARTED
+  SUCCEEDED
+  FAILED
+}
+
+enum ControlledDocumentStatus {
+  ACTIVE
+  VOIDED
+}
+
+enum ControlledDocumentVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+  VOIDED
+}
+
+enum PublicLibraryMaterialType {
+  DRIVER
+  FIRMWARE
+  TOOL
+  MANUAL
+  TRAINING
+  STANDARD
+  TEMPLATE
+}
+
+enum PublicLibraryDocumentStatus {
+  ACTIVE
+  VOIDED
+}
+
+enum PublicLibraryDocumentVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+  VOIDED
+}
+
+enum ProjectPublicLibraryReferenceStatus {
+  ACTIVE
+  RETIRED
+}
+
+enum DrawingFileRole {
+  CAD_SOURCE
+  PDF_PREVIEW
+  STEP_EXCHANGE
+}
+
+enum DrawingImportPairingStatus {
+  PAIRED
+  UNPAIRED
+  AMBIGUOUS
+}
+
+enum DrawingImportBatchStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  REJECTED
+}
+
+enum DrawingImportItemStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+enum DocumentReviewStatus {
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+enum DocumentReviewEventType {
+  REQUESTED
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+enum DocumentVersionRelationStatus {
+  ACTIVE
+  VOIDED
+}
+
+enum DocumentVersionRelationTargetType {
+  DELIVERY_UNIT
+  MODULE
+  RESPONSIBILITY_PACKAGE
+  PLANNING_TASK
+  MILESTONE
+  GATE_INSTANCE
+}
+
+enum NotificationSensitivity {
+  INTERNAL
+  RESTRICTED
+}
+
+enum NotificationChannel {
+  EMAIL
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  RETRYING
+  SENT
+  DEAD_LETTER
+}
+
+enum NotificationDeliveryAttemptStatus {
+  RUNNING
+  SENT
+  FAILED
+}
+
 enum UserStatus {
   ACTIVE
   DISABLED
@@ -185,6 +696,370 @@ enum ProjectStatus {
   CANCELED
 }
 
+enum RndProjectStatus {
+  PROPOSED
+  IN_DEVELOPMENT
+  VALIDATION
+  RELEASE_REVIEW
+  COMPLETED
+  CANCELED
+}
+
+enum RndProjectEventType {
+  CREATED
+  STATUS_CHANGED
+}
+
+enum TechnicalAssetType {
+  MECHANICAL
+  ELECTRICAL
+  SOFTWARE
+}
+
+enum TechnicalAssetStatus {
+  DRAFT
+  VALIDATION_PENDING
+  VALIDATED
+  CANCELED
+}
+
+enum TechnicalAssetEventType {
+  CREATED
+  STATUS_CHANGED
+  VALIDATED
+}
+
+enum TechnicalAssetValidationDecision {
+  PASSED
+  FAILED
+}
+
+enum ProjectInitializationStatus {
+  LEGACY
+  READY
+}
+
+enum ProjectType {
+  LEGACY
+  CUSTOMER_DELIVERY
+  INTERNAL_RND
+}
+
+enum EquipmentShape {
+  SINGLE_MACHINE
+  LINE
+}
+
+enum ProjectStructureStatus {
+  UNCONFIGURED
+  READY
+}
+
+enum DeliveryUnitType {
+  LINE
+  AREA
+  MACHINE
+}
+
+enum ProjectStructureNodeStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ProjectCapabilityConfigurationStatus {
+  UNCONFIGURED
+  READY
+}
+
+enum ResponsibilityPackageStatus {
+  OPEN
+  ACCEPTANCE_PENDING
+  ACCEPTED
+  CLOSED
+}
+
+enum ResponsibilityPackageEventType {
+  CREATED
+  ACCEPTANCE_SUBMITTED
+  ACCEPTED
+  REOPENED
+  CLOSED
+}
+
+enum ProjectMilestoneStatus {
+  PENDING
+  ACHIEVED
+  VOID
+}
+
+enum ProjectMilestoneAchievementSource {
+  MANUAL
+  LINKED_TASKS
+}
+
+enum ProjectMilestoneEventType {
+  CREATED
+  UPDATED
+  TASK_LINKED
+  TASK_LINK_VOIDED
+  ACHIEVED_MANUALLY
+  ACHIEVED_FROM_LINKED_TASKS
+  VOIDED
+}
+
+enum ProjectMilestoneTaskLinkStatus {
+  ACTIVE
+  VOID
+}
+
+enum ProjectStageExecutionStatus {
+  NOT_STARTED
+  AUTHORIZED
+  IN_PROGRESS
+  AWAITING_GATE
+  COMPLETED
+  CONDITIONALLY_RELEASED
+  SKIPPED
+}
+
+enum ProjectStageEventType {
+  CREATED
+  AUTHORIZED
+  STARTED
+  AWAITING_GATE
+  COMPLETED
+  CONDITIONALLY_RELEASED
+  SKIPPED
+}
+
+enum GateScope {
+  PROJECT
+  DELIVERY_UNIT
+  MODULE
+}
+
+enum GateCheckStatus {
+  PASSED
+  WARNING
+  HARD_FAILED
+}
+
+enum GateApprovalMode {
+  ALL
+  ANY
+}
+
+enum GateSubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum GateApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum GateSubmissionEventType {
+  SUBMITTED
+  WITHDRAWN
+  APPROVED
+  REJECTED
+}
+
+enum ResidualItemStatus {
+  OPEN
+  IN_PROGRESS
+  AWAITING_VERIFICATION
+  CLOSED
+}
+
+enum ResidualItemEventType {
+  CREATED
+  STARTED
+  VERIFICATION_SUBMITTED
+  VERIFIED
+  RETURNED
+}
+
+enum AlertSourceType {
+  SCHEDULE_FORECAST_STALE
+  CRITICAL_TASK_DELAY
+  MILESTONE_OVERDUE
+  GATE_HARD_FAILURE
+  RESIDUAL_ITEM_OVERDUE
+}
+
+enum AlertRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AlertRuleStatus {
+  ENABLED
+  DISABLED
+}
+
+enum ProjectAlertStatus {
+  TRIGGERED
+  ACKNOWLEDGED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum ProjectAlertEventType {
+  TRIGGERED
+  ACKNOWLEDGED
+  STARTED
+  RESOLVED
+  CLOSED
+  RETRIGGERED
+  ESCALATED
+}
+
+enum ProjectAlertScanStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum IssueCategory {
+  SAFETY
+  FUNCTION
+  PERFORMANCE
+  APPEARANCE
+  DELIVERY_COMPLETENESS
+}
+
+enum IssueSourceType {
+  PROJECT
+  FAT
+  SAT
+}
+
+enum IssueSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IssueRootCauseCategory {
+  DESIGN
+  MANUFACTURING
+  ASSEMBLY
+  SOFTWARE
+  PROCUREMENT
+  MATERIAL
+  PROCESS
+  OTHER
+}
+
+enum IssueStatus {
+  PENDING_ACCEPTANCE
+  ANALYZING
+  PROCESSING
+  PENDING_VERIFICATION
+  CLOSED
+}
+
+enum IssueHistoryEventType {
+  CREATED
+  DETAILS_UPDATED
+  STARTED_ANALYSIS
+  STARTED_PROCESSING
+  VERIFICATION_SUBMITTED
+  CLOSED
+  REOPENED
+  RESPONSIBILITY_ASSIGNED
+  RELATION_ADDED
+  RELATION_CLOSED
+}
+
+enum IssueRelationType {
+  TASK
+  GATE_INSTANCE
+  DRAWING_VERSION
+  TEST_RESULT
+  BLOCKED_BY_ISSUE
+}
+
+enum IssueRelationStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum CockpitHealthStatus {
+  UNKNOWN
+  HEALTHY
+  ATTENTION
+  CRITICAL
+}
+
+enum CockpitExceptionKind {
+  SCHEDULE_FAILED
+  SCHEDULE_STALE
+  CRITICAL_PATH_DELAY
+  MILESTONE_OVERDUE
+  GATE_HARD_FAILURE
+  HIGH_RISK_ALERT
+}
+
+enum CockpitExceptionSeverity {
+  ATTENTION
+  CRITICAL
+}
+
+enum StageReleaseAuthorizationScope {
+  PROJECT
+  DELIVERY_UNIT
+}
+
+enum StageReleaseAuthorizationStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum PlanningNodeStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum PlanningTaskStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  CLOSED
+}
+
+enum PlanningCalendarStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum TaskDependencyStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum TaskDependencyType {
+  FS
+  SS
+  FF
+}
+
+enum ScheduleRecalculationStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SUPERSEDED
+}
+
 enum ProjectRole {
   PROJECT_MANAGER
   DEPARTMENT_LEAD
@@ -202,6 +1077,122 @@ enum AuditAction {
   CONFIGURATION_SETTING_CHANGED
   COMPANY_CAPABILITY_CHANGED
   JOB_REPLAYED
+  FILE_UPLOAD_STARTED
+  FILE_UPLOAD_COMPLETED
+  FILE_SCAN_COMPLETED
+  FILE_QUARANTINED
+  FILE_PROCESSING_FAILED
+  FILE_DOWNLOAD_URL_ISSUED
+  SENSITIVE_FILE_READ
+  CONTROLLED_DOCUMENT_CREATED
+  CONTROLLED_DOCUMENT_VERSION_DRAFTED
+  CONTROLLED_DOCUMENT_VERSION_PUBLISHED
+  CONTROLLED_DOCUMENT_VOIDED
+  PUBLIC_LIBRARY_DOCUMENT_CREATED
+  PUBLIC_LIBRARY_VERSION_DRAFTED
+  PUBLIC_LIBRARY_VERSION_PUBLISHED
+  PUBLIC_LIBRARY_DOCUMENT_VOIDED
+  PROJECT_PUBLIC_LIBRARY_REFERENCE_CREATED
+  PROJECT_PUBLIC_LIBRARY_REFERENCE_RETIRED
+  MECHANICAL_DRAWING_CREATED
+  MECHANICAL_DRAWING_VERSION_DRAFTED
+  MECHANICAL_DRAWING_VERSION_PUBLISHED
+  MECHANICAL_DRAWING_IMPORT_CREATED
+  MECHANICAL_DRAWING_IMPORT_CONFIRMED
+  DOCUMENT_REVIEW_REQUESTED
+  DOCUMENT_REVIEW_DECIDED
+  DOCUMENT_REVIEW_COMMENTED
+  DOCUMENT_REVIEW_COMMENT_RESOLVED
+  DOCUMENT_VERSION_RELATED
+  DOCUMENT_VERSION_RELATION_VOIDED
+  NOTIFICATION_TEMPLATE_PUBLISHED
+  NOTIFICATION_TEMPLATE_STATUS_CHANGED
+  NOTIFICATION_CREATED
+  NOTIFICATION_INBOX_READ
+  NOTIFICATION_MARKED_READ
+  NOTIFICATION_DELIVERED
+  TEMPLATE_COMPONENT_DRAFT_SAVED
+  TEMPLATE_COMPONENT_PUBLISHED
+  TEMPLATE_COMPONENT_STATUS_CHANGED
+  TEMPLATE_DRAFT_SAVED
+  TEMPLATE_PUBLISHED
+  TEMPLATE_STATUS_CHANGED
+  PROJECT_CREATED
+  PROJECT_STRUCTURE_INITIALIZED
+  DELIVERY_UNIT_STATUS_CHANGED
+  PROJECT_CAPABILITIES_CONFIRMED
+  PROJECT_CAPABILITY_CHANGED
+  RESPONSIBILITY_PACKAGE_CREATED
+  RESPONSIBILITY_PACKAGE_UPDATED
+  RESPONSIBILITY_PACKAGE_ACCEPTANCE_SUBMITTED
+  RESPONSIBILITY_PACKAGE_ACCEPTED
+  RESPONSIBILITY_PACKAGE_REOPENED
+  RESPONSIBILITY_PACKAGE_CLOSED
+  WBS_NODE_CREATED
+  WBS_NODE_UPDATED
+  WBS_NODE_CLOSED
+  PLANNING_TASK_CREATED
+  PLANNING_TASK_UPDATED
+  PLANNING_TASK_PROGRESS_UPDATED
+  PLANNING_TASK_CLOSED
+  PROJECT_CALENDAR_CREATED
+  PROJECT_CALENDAR_UPDATED
+  PROJECT_CALENDAR_CLOSED
+  TASK_DEPENDENCY_CREATED
+  TASK_DEPENDENCY_UPDATED
+  TASK_DEPENDENCY_CLOSED
+  PLANNING_BASELINE_FROZEN
+  PROJECT_MILESTONE_CREATED
+  PROJECT_MILESTONE_UPDATED
+  PROJECT_MILESTONE_TASK_LINKED
+  PROJECT_MILESTONE_TASK_LINK_VOIDED
+  PROJECT_MILESTONE_ACHIEVED_MANUALLY
+  PROJECT_MILESTONE_ACHIEVED_FROM_LINKED_TASKS
+  PROJECT_MILESTONE_VOIDED
+  PROJECT_STAGE_CREATED
+  PROJECT_STAGE_UPDATED
+  DELIVERY_UNIT_STAGE_UPDATED
+  STAGE_RELEASE_AUTHORIZED
+  STAGE_RELEASE_REVOKED
+  GATE_DEFINITION_MATERIALIZED
+  GATE_INSTANCE_CREATED
+  GATE_CHECK_RUN_COMPLETED
+  GATE_SUBMISSION_SUBMITTED
+  GATE_APPROVAL_RECORDED
+  GATE_SUBMISSION_WITHDRAWN
+  GATE_SUBMISSION_APPROVED
+  GATE_SUBMISSION_REJECTED
+  GATE_CONDITIONALLY_RELEASED
+  RESIDUAL_ITEM_CREATED
+  RESIDUAL_ITEM_STARTED
+  RESIDUAL_ITEM_VERIFICATION_SUBMITTED
+  RESIDUAL_ITEM_VERIFIED
+  RESIDUAL_ITEM_RETURNED
+  ALERT_RULE_CREATED
+  ALERT_RULE_UPDATED
+  ALERT_SCAN_REQUESTED
+  ALERT_SCAN_COMPLETED
+  ALERT_TRIGGERED
+  ALERT_ACKNOWLEDGED
+  ALERT_STARTED
+  ALERT_RESOLVED
+  ALERT_CLOSED
+  ALERT_ESCALATED
+  RND_PROJECT_CREATED
+  RND_PROJECT_STATUS_CHANGED
+  TECHNICAL_ASSET_CREATED
+  TECHNICAL_ASSET_STATUS_CHANGED
+  TECHNICAL_ASSET_VALIDATED
+  ISSUE_CREATED
+  ISSUE_UPDATED
+  ISSUE_STATUS_CHANGED
+  ISSUE_REOPENED
+  ISSUE_RESPONSIBILITY_ASSIGNED
+  ISSUE_RELATION_ADDED
+  ISSUE_RELATION_CLOSED
+  COCKPIT_PROJECTION_REFRESHED
+  COCKPIT_RESOURCE_LOAD_REFRESHED
+  COCKPIT_RESOURCE_LOAD_PERSON_READ
 }
 
 enum AuditObjectType {
@@ -212,6 +1203,59 @@ enum AuditObjectType {
   COMPANY_CAPABILITY
   OUTBOX_EVENT
   PERSISTENT_JOB
+  FILE_OBJECT
+  FILE_UPLOAD_SESSION
+  CONTROLLED_DOCUMENT
+  CONTROLLED_DOCUMENT_VERSION
+  PUBLIC_LIBRARY_DOCUMENT
+  PUBLIC_LIBRARY_DOCUMENT_VERSION
+  PROJECT_PUBLIC_LIBRARY_REFERENCE
+  MECHANICAL_DRAWING
+  MECHANICAL_DRAWING_VERSION_FILE
+  MECHANICAL_DRAWING_IMPORT_BATCH
+  MECHANICAL_DRAWING_IMPORT_ITEM
+  DOCUMENT_REVIEW
+  DOCUMENT_REVIEW_COMMENT
+  DOCUMENT_VERSION_RELATION
+  GATE_SUBMISSION_DOCUMENT_REFERENCE
+  NOTIFICATION_TEMPLATE
+  NOTIFICATION
+  NOTIFICATION_DELIVERY
+  TEMPLATE_COMPONENT
+  TEMPLATE
+  TEMPLATE_VERSION
+  DELIVERY_UNIT
+  PROJECT_MODULE
+  PROJECT_CAPABILITY
+  RESPONSIBILITY_PACKAGE
+  WBS_NODE
+  PLANNING_TASK
+  PROJECT_CALENDAR
+  TASK_DEPENDENCY
+  PLANNING_BASELINE
+  PROJECT_MILESTONE
+  PROJECT_STAGE
+  DELIVERY_UNIT_STAGE
+  STAGE_RELEASE_AUTHORIZATION
+  PROJECT_GATE_DEFINITION
+  PROJECT_GATE_INSTANCE
+  GATE_CHECK_SNAPSHOT
+  GATE_SUBMISSION
+  GATE_APPROVAL
+  GATE_CONDITIONAL_RELEASE
+  RESIDUAL_ITEM
+  ALERT_RULE
+  PROJECT_ALERT
+  PROJECT_ALERT_SCAN
+  RND_PROJECT
+  RND_PROJECT_EVENT
+  TECHNICAL_ASSET
+  TECHNICAL_ASSET_EVENT
+  TECHNICAL_ASSET_VALIDATION
+  ISSUE
+  ISSUE_RELATION
+  COCKPIT_PROJECTION
+  COCKPIT_RESOURCE_LOAD
 }
 
 enum AuditSource {
@@ -230,25 +1274,114 @@ enum AuditResult {
 }
 
 model User {
-  id                  String                      @id @default(cuid())
-  employeeNo          String                      @unique @map("employee_no")
-  name                String
-  email               String?                     @unique
-  departmentId        String?                     @map("department_id")
-  status              UserStatus                  @default(ACTIVE)
-  version             Int                         @default(1)
-  createdAt           DateTime                    @default(now()) @map("created_at")
-  updatedAt           DateTime                    @updatedAt @map("updated_at")
-  roleAssignments     UserRole[]                  @relation("RoleAssignmentUser")
-  rolesAssigned       UserRole[]                  @relation("RoleAssignmentActor")
-  memberships         ProjectMember[]             @relation("ProjectMemberUser")
-  membershipsAssigned ProjectMember[]             @relation("ProjectMemberAssignedBy")
-  membershipsEnded    ProjectMember[]             @relation("ProjectMemberLeftBy")
-  projectsCreated     Project[]                   @relation("ProjectCreatedBy")
-  auditLogs           AuditLog[]
-  settingRevisions    SystemSettingRevision[]     @relation("SystemSettingRevisionChangedBy")
-  capabilityRevisions CompanyCapabilityRevision[] @relation("CompanyCapabilityRevisionChangedBy")
-  requestedJobReplays JobAttempt[]                @relation("JobAttemptRequestedBy")
+  id                                    String                            @id @default(cuid())
+  employeeNo                            String                            @unique @map("employee_no")
+  name                                  String
+  email                                 String?                           @unique
+  departmentId                          String?                           @map("department_id")
+  status                                UserStatus                        @default(ACTIVE)
+  version                               Int                               @default(1)
+  createdAt                             DateTime                          @default(now()) @map("created_at")
+  updatedAt                             DateTime                          @updatedAt @map("updated_at")
+  roleAssignments                       UserRole[]                        @relation("RoleAssignmentUser")
+  rolesAssigned                         UserRole[]                        @relation("RoleAssignmentActor")
+  memberships                           ProjectMember[]                   @relation("ProjectMemberUser")
+  membershipsAssigned                   ProjectMember[]                   @relation("ProjectMemberAssignedBy")
+  membershipsEnded                      ProjectMember[]                   @relation("ProjectMemberLeftBy")
+  projectsCreated                       Project[]                         @relation("ProjectCreatedBy")
+  auditLogs                             AuditLog[]
+  settingRevisions                      SystemSettingRevision[]           @relation("SystemSettingRevisionChangedBy")
+  capabilityRevisions                   CompanyCapabilityRevision[]       @relation("CompanyCapabilityRevisionChangedBy")
+  requestedJobReplays                   JobAttempt[]                      @relation("JobAttemptRequestedBy")
+  filesUploaded                         FileObject[]                      @relation("FileObjectUploadedBy")
+  fileCommands                          FileCommand[]                     @relation("FileCommandActor")
+  controlledDocumentsCreated            ControlledDocument[]              @relation("ControlledDocumentCreatedBy")
+  controlledDocumentsVoided             ControlledDocument[]              @relation("ControlledDocumentVoidedBy")
+  controlledDocumentVersionsCreated     ControlledDocumentVersion[]       @relation("ControlledDocumentVersionCreatedBy")
+  controlledDocumentVersionsPublished   ControlledDocumentVersion[]       @relation("ControlledDocumentVersionPublishedBy")
+  controlledDocumentVersionsVoided      ControlledDocumentVersion[]       @relation("ControlledDocumentVersionVoidedBy")
+  publicLibraryDocumentsCreated         PublicLibraryDocument[]            @relation("PublicLibraryDocumentCreatedBy")
+  publicLibraryDocumentsVoided          PublicLibraryDocument[]            @relation("PublicLibraryDocumentVoidedBy")
+  publicLibraryVersionsCreated          PublicLibraryDocumentVersion[]     @relation("PublicLibraryVersionCreatedBy")
+  publicLibraryVersionsPublished        PublicLibraryDocumentVersion[]     @relation("PublicLibraryVersionPublishedBy")
+  publicLibraryVersionsVoided           PublicLibraryDocumentVersion[]     @relation("PublicLibraryVersionVoidedBy")
+  projectPublicLibraryReferencesCreated ProjectPublicLibraryReference[]    @relation("ProjectPublicLibraryReferenceCreatedBy")
+  projectPublicLibraryReferencesRetired ProjectPublicLibraryReference[]    @relation("ProjectPublicLibraryReferenceRetiredBy")
+  mechanicalDrawingsCreated             MechanicalDrawing[]                @relation("MechanicalDrawingCreatedBy")
+  mechanicalDrawingImportBatchesCreated MechanicalDrawingImportBatch[]     @relation("MechanicalDrawingImportBatchCreatedBy")
+  notificationTemplateVersionsPublished NotificationTemplateVersion[]     @relation("NotificationTemplatePublishedBy")
+  notificationsReceived                 Notification[]                    @relation("NotificationRecipient")
+  notificationReadReceipts              NotificationReadReceipt[]         @relation("NotificationReadRecipient")
+  apiIdempotencyRecords                 ApiIdempotencyRecord[]
+  templateComponentsCreated             TemplateComponent[]               @relation("TemplateComponentCreatedBy")
+  templateComponentsUpdated             TemplateComponent[]               @relation("TemplateComponentUpdatedBy")
+  templateComponentVersionsPublished    TemplateComponentVersion[]        @relation("TemplateComponentVersionPublishedBy")
+  projectTemplatesCreated               ProjectTemplate[]                 @relation("ProjectTemplateCreatedBy")
+  projectTemplatesUpdated               ProjectTemplate[]                 @relation("ProjectTemplateUpdatedBy")
+  projectTemplateVersionsPublished      ProjectTemplateVersion[]          @relation("ProjectTemplateVersionPublishedBy")
+  deliveryUnitsCreated                  DeliveryUnit[]                    @relation("DeliveryUnitCreatedBy")
+  deliveryUnitsUpdated                  DeliveryUnit[]                    @relation("DeliveryUnitUpdatedBy")
+  projectModulesCreated                 ProjectModule[]                   @relation("ProjectModuleCreatedBy")
+  projectModulesUpdated                 ProjectModule[]                   @relation("ProjectModuleUpdatedBy")
+  projectCapabilitiesCreated            ProjectCapability[]               @relation("ProjectCapabilityCreatedBy")
+  projectCapabilitiesUpdated            ProjectCapability[]               @relation("ProjectCapabilityUpdatedBy")
+  projectCapabilityRevisionsChanged     ProjectCapabilityRevision[]       @relation("ProjectCapabilityRevisionChangedBy")
+  responsibilityPackagesCreated         ResponsibilityPackage[]           @relation("ResponsibilityPackageCreatedBy")
+  responsibilityPackagesUpdated         ResponsibilityPackage[]           @relation("ResponsibilityPackageUpdatedBy")
+  responsibilityPackageEventsActed      ResponsibilityPackageEvent[]      @relation("ResponsibilityPackageEventActor")
+  projectMilestonesCreated              ProjectMilestone[]                @relation("ProjectMilestoneCreatedBy")
+  projectMilestonesUpdated              ProjectMilestone[]                @relation("ProjectMilestoneUpdatedBy")
+  projectMilestoneTaskLinksCreated      ProjectMilestoneTaskLink[]        @relation("ProjectMilestoneTaskLinkCreatedBy")
+  projectMilestoneTaskLinksVoided       ProjectMilestoneTaskLink[]        @relation("ProjectMilestoneTaskLinkVoidedBy")
+  projectMilestoneEventsActed           ProjectMilestoneEvent[]           @relation("ProjectMilestoneEventActor")
+  projectStagesCreated                  ProjectStage[]                    @relation("ProjectStageCreatedBy")
+  projectStagesUpdated                  ProjectStage[]                    @relation("ProjectStageUpdatedBy")
+  deliveryUnitStagesCreated             DeliveryUnitStage[]               @relation("DeliveryUnitStageCreatedBy")
+  deliveryUnitStagesUpdated             DeliveryUnitStage[]               @relation("DeliveryUnitStageUpdatedBy")
+  stageReleaseAuthorizationsAuthorized  StageReleaseAuthorization[]       @relation("StageReleaseAuthorizationAuthorizedBy")
+  stageReleaseAuthorizationsRevoked     StageReleaseAuthorization[]       @relation("StageReleaseAuthorizationRevokedBy")
+  projectStageEventsActed               ProjectStageEvent[]               @relation("ProjectStageEventActor")
+  wbsNodesCreated                       WbsNode[]                         @relation("WbsNodeCreatedBy")
+  wbsNodesUpdated                       WbsNode[]                         @relation("WbsNodeUpdatedBy")
+  planningTasksCreated                  PlanningTask[]                    @relation("PlanningTaskCreatedBy")
+  planningTasksUpdated                  PlanningTask[]                    @relation("PlanningTaskUpdatedBy")
+  projectCalendarsCreated               ProjectCalendar[]                 @relation("ProjectCalendarCreatedBy")
+  projectCalendarsUpdated               ProjectCalendar[]                 @relation("ProjectCalendarUpdatedBy")
+  projectCalendarRevisionsCreated       ProjectCalendarRevision[]         @relation("ProjectCalendarRevisionCreatedBy")
+  taskDependenciesCreated               TaskDependency[]                  @relation("TaskDependencyCreatedBy")
+  taskDependenciesUpdated               TaskDependency[]                  @relation("TaskDependencyUpdatedBy")
+  scheduleRecalculationsRequested       ScheduleRecalculation[]           @relation("ScheduleRecalculationRequestedBy")
+  planningBaselinesCreated              PlanningBaseline[]                @relation("PlanningBaselineCreatedBy")
+  gateSubmissionsSubmitted              GateSubmission[]                  @relation("GateSubmissionSubmittedBy")
+  gateSubmissionsWithdrawn              GateSubmission[]                  @relation("GateSubmissionWithdrawnBy")
+  gateSubmissionApprovers               GateSubmissionApprover[]          @relation("GateSubmissionApproverUser")
+  gateApprovals                         GateApproval[]                    @relation("GateApprovalDecidedBy")
+  gateSubmissionEvents                  GateSubmissionEvent[]             @relation("GateSubmissionEventActor")
+  gateConditionalReleases               GateConditionalRelease[]          @relation("GateConditionalReleaseActor")
+  residualItemEvents                    ResidualItemEvent[]               @relation("ResidualItemEventActor")
+  projectAlertEvents                    ProjectAlertEvent[]               @relation("ProjectAlertEventActor")
+  projectAlertScansRequested            ProjectAlertScan[]                @relation("ProjectAlertScanRequestedBy")
+  rndProjectsOwned                      RndProject[]                      @relation("RndProjectOwner")
+  rndProjectsCreated                    RndProject[]                      @relation("RndProjectCreatedBy")
+  rndProjectEventsActed                 RndProjectEvent[]                 @relation("RndProjectEventActor")
+  technicalAssetsOwned                  TechnicalAsset[]                  @relation("TechnicalAssetOwner")
+  technicalAssetsCreated                TechnicalAsset[]                  @relation("TechnicalAssetCreatedBy")
+  technicalAssetEventsActed             TechnicalAssetEvent[]             @relation("TechnicalAssetEventActor")
+  technicalAssetValidationsActed        TechnicalAssetValidation[]        @relation("TechnicalAssetValidationValidator")
+  issuesCreated                         Issue[]                           @relation("IssueCreatedBy")
+  issuesUpdated                         Issue[]                           @relation("IssueUpdatedBy")
+  issuesClosed                          Issue[]                           @relation("IssueClosedBy")
+  issueHistoriesActed                   IssueHistory[]                    @relation("IssueHistoryActor")
+  issueRelationsCreated                 IssueRelation[]                   @relation("IssueRelationCreatedBy")
+  issueRelationsClosed                  IssueRelation[]                   @relation("IssueRelationClosedBy")
+  documentReviewsRequested              DocumentReview[]                  @relation("DocumentReviewRequestedBy")
+  documentReviewsAssigned               DocumentReview[]                  @relation("DocumentReviewReviewer")
+  documentReviewsDecided                DocumentReview[]                  @relation("DocumentReviewDecidedBy")
+  documentReviewEvents                  DocumentReviewEvent[]             @relation("DocumentReviewEventActor")
+  documentReviewComments                DocumentReviewComment[]           @relation("DocumentReviewCommentCreatedBy")
+  documentReviewCommentResolutions      DocumentReviewCommentResolution[] @relation("DocumentReviewCommentResolvedBy")
+  documentVersionRelationsCreated       DocumentVersionRelation[]         @relation("DocumentVersionRelationCreatedBy")
+  documentVersionRelationsVoided        DocumentVersionRelation[]         @relation("DocumentVersionRelationVoidedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -306,41 +1439,1967 @@ model UserRole {
   @@map("user_roles")
 }
 
-// APM-011 will extend this project shell with the template snapshot and lifecycle fields.
 model Project {
-  id           String          @id @default(cuid())
-  code         String          @unique
-  name         String
-  departmentId String?         @map("department_id")
-  status       ProjectStatus   @default(DRAFT)
-  version      Int             @default(1)
-  createdById  String          @map("created_by_id")
-  createdAt    DateTime        @default(now()) @map("created_at")
-  updatedAt    DateTime        @updatedAt @map("updated_at")
-  createdBy    User            @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  members      ProjectMember[]
-  auditLogs    AuditLog[]
+  id                            String                               @id @default(cuid())
+  code                          String                               @unique
+  name                          String
+  departmentId                  String?                              @map("department_id")
+  status                        ProjectStatus                        @default(DRAFT)
+  initializationStatus          ProjectInitializationStatus          @default(LEGACY) @map("initialization_status")
+  projectType                   ProjectType                          @default(LEGACY) @map("project_type")
+  equipmentShape                EquipmentShape?                      @map("equipment_shape")
+  structureStatus               ProjectStructureStatus               @default(UNCONFIGURED) @map("structure_status")
+  capabilityConfigurationStatus ProjectCapabilityConfigurationStatus @default(UNCONFIGURED) @map("capability_configuration_status")
+  capabilitiesConfiguredAt      DateTime?                            @map("capabilities_configured_at")
+  sourceTemplateVersionId       String?                              @map("source_template_version_id")
+  sourceTemplateChecksum        String?                              @map("source_template_checksum")
+  initializedAt                 DateTime?                            @map("initialized_at")
+  mainControlStageId            String?                              @map("main_control_stage_id")
+  mainControlStageProjectId     String?                              @map("main_control_stage_project_id")
+  mainControlStageCode          String?                              @map("main_control_stage_code")
+  mainControlStageStatus        ProjectStageExecutionStatus?        @map("main_control_stage_status")
+  mainControlStageSequence      Int?                                 @map("main_control_stage_sequence")
+  mainControlStageUpdatedAt     DateTime?                            @map("main_control_stage_updated_at")
+  version                       Int                                  @default(1)
+  createdById                   String                               @map("created_by_id")
+  createdAt                     DateTime                             @default(now()) @map("created_at")
+  updatedAt                     DateTime                             @updatedAt @map("updated_at")
+  createdBy                     User                                 @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  sourceTemplateVersion         ProjectTemplateVersion?              @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
+  templateSnapshot              ProjectTemplateSnapshot?
+  mainControlStage              ProjectStage?                        @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
+  members                       ProjectMember[]
+  auditLogs                     AuditLog[]
+  files                         FileObject[]
+  controlledDocuments           ControlledDocument[]
+  controlledDocumentVersions    ControlledDocumentVersion[]
+  mechanicalDrawings            MechanicalDrawing[]
+  mechanicalDrawingVersionFiles MechanicalDrawingVersionFile[]
+  mechanicalDrawingImportBatches MechanicalDrawingImportBatch[]
+  mechanicalDrawingImportItems  MechanicalDrawingImportItem[]
+  mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[]
+  documentReviews               DocumentReview[]
+  documentReviewEvents          DocumentReviewEvent[]
+  documentReviewComments        DocumentReviewComment[]
+  documentReviewCommentResolutions DocumentReviewCommentResolution[]
+  documentVersionRelations      DocumentVersionRelation[]
+  gateSubmissionDocumentReferences GateSubmissionDocumentReference[]
+  notifications                 Notification[]
+  deliveryUnits                 DeliveryUnit[]
+  projectModules                ProjectModule[]
+  projectCapabilities           ProjectCapability[]
+  responsibilityPackages        ResponsibilityPackage[]
+  projectMilestones             ProjectMilestone[]
+  projectMilestoneTaskLinks     ProjectMilestoneTaskLink[]
+  projectMilestoneEvents        ProjectMilestoneEvent[]
+  projectStages                 ProjectStage[]                       @relation("ProjectStages")
+  deliveryUnitStages            DeliveryUnitStage[]
+  stageReleaseAuthorizations    StageReleaseAuthorization[]
+  projectStageEvents            ProjectStageEvent[]
+  gateDefinitions               ProjectGateDefinition[]
+  gateInstances                 ProjectGateInstance[]
+  gateCheckSnapshots            GateCheckSnapshot[]
+  gateCheckResults              GateCheckResult[]
+  gateSubmissions               GateSubmission[]
+  gateSubmissionApprovers       GateSubmissionApprover[]
+  gateApprovals                 GateApproval[]
+  gateSubmissionEvents          GateSubmissionEvent[]
+  gateConditionalReleases       GateConditionalRelease[]
+  residualItems                 ResidualItem[]
+  residualItemEvents            ResidualItemEvent[]
+  alertRules                    ProjectAlertRule[]
+  alerts                        ProjectAlert[]
+  alertEvents                   ProjectAlertEvent[]
+  alertScans                    ProjectAlertScan[]
+  wbsNodes                      WbsNode[]
+  planningTasks                 PlanningTask[]
+  planningCalendar              ProjectCalendar?
+  projectCalendarRevisions      ProjectCalendarRevision[]
+  taskDependencies              TaskDependency[]
+  scheduleState                 ProjectScheduleState?
+  scheduleRecalculations        ScheduleRecalculation[]
+  scheduleTaskForecasts         ScheduleTaskForecast[]
+  planningBaselines             PlanningBaseline[]
+  cockpitProjections            CockpitProjection[]
+  cockpitExceptionProjections   CockpitExceptionProjection[]
+  resourceLoadProjections       ResourceLoadProjection[]
+  resourceLoadPersonProjections ResourceLoadPersonProjection[]
+  publicLibraryReferences       ProjectPublicLibraryReference[]
+  issues                        Issue[]
+  issueHistories                IssueHistory[]
+  issueRelations                IssueRelation[]
 
+  @@unique([mainControlStageId, mainControlStageProjectId])
   @@index([departmentId])
+  @@index([sourceTemplateVersionId])
+  @@index([initializationStatus, createdAt])
+  @@index([projectType, equipmentShape, structureStatus])
+  @@index([capabilityConfigurationStatus, createdAt])
   @@map("projects")
 }
 
-model ProjectMember {
-  id           String      @id @default(cuid())
-  projectId    String      @map("project_id")
-  userId       String      @map("user_id")
-  projectRole  ProjectRole @map("project_role")
-  departmentId String?     @map("department_id")
-  assignedById String      @map("assigned_by_id")
-  joinedAt     DateTime    @default(now()) @map("joined_at")
-  leftAt       DateTime?   @map("left_at")
-  leftById     String?     @map("left_by_id")
-  version      Int         @default(1)
-  project      Project     @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  user         User        @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Restrict)
-  assignedBy   User        @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
-  leftBy       User?       @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
+model RndProject {
+  id           String           @id @default(cuid())
+  code         String           @unique
+  name         String
+  description  String?
+  departmentId String?          @map("department_id")
+  ownerId      String           @map("owner_id")
+  status       RndProjectStatus @default(PROPOSED)
+  version      Int              @default(1)
+  createdById  String           @map("created_by_id")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  owner        User             @relation("RndProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdBy    User             @relation("RndProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  assets       TechnicalAsset[] @relation("TechnicalAssetRndProject")
+  events       RndProjectEvent[]
 
+  @@index([departmentId, status, createdAt])
+  @@index([ownerId, status, createdAt])
+  @@map("rnd_projects")
+}
+
+model RndProjectEvent {
+  id           String              @id @default(cuid())
+  rndProjectId String              @map("rnd_project_id")
+  sequence     Int
+  eventType    RndProjectEventType @map("event_type")
+  fromStatus   RndProjectStatus?   @map("from_status")
+  toStatus     RndProjectStatus    @map("to_status")
+  reason       String
+  snapshotJson Json                @map("snapshot_json")
+  actorId      String              @map("actor_id")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  rndProject   RndProject          @relation(fields: [rndProjectId], references: [id], onDelete: Restrict)
+  actor        User                @relation("RndProjectEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([rndProjectId, sequence])
+  @@index([actorId, createdAt])
+  @@index([rndProjectId, createdAt])
+  @@map("rnd_project_events")
+}
+
+model TechnicalAsset {
+  id           String               @id @default(cuid())
+  rndProjectId String               @map("rnd_project_id")
+  assetNumber  String               @unique @map("asset_number")
+  assetType    TechnicalAssetType   @map("asset_type")
+  name         String
+  description  String?
+  ownerId      String               @map("owner_id")
+  status       TechnicalAssetStatus @default(DRAFT)
+  version      Int                  @default(1)
+  createdById  String               @map("created_by_id")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+  rndProject   RndProject           @relation("TechnicalAssetRndProject", fields: [rndProjectId], references: [id], onDelete: Restrict)
+  owner        User                 @relation("TechnicalAssetOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdBy    User                 @relation("TechnicalAssetCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  events       TechnicalAssetEvent[]
+  validations  TechnicalAssetValidation[]
+
+  @@unique([id, rndProjectId])
+  @@index([rndProjectId, status, assetNumber])
+  @@index([ownerId, status, createdAt])
+  @@map("technical_assets")
+}
+
+model TechnicalAssetEvent {
+  id               String                  @id @default(cuid())
+  rndProjectId     String                  @map("rnd_project_id")
+  technicalAssetId String                  @map("technical_asset_id")
+  sequence         Int
+  eventType        TechnicalAssetEventType @map("event_type")
+  fromStatus       TechnicalAssetStatus?   @map("from_status")
+  toStatus         TechnicalAssetStatus    @map("to_status")
+  reason           String
+  snapshotJson     Json                    @map("snapshot_json")
+  actorId          String                  @map("actor_id")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  technicalAsset   TechnicalAsset          @relation(fields: [technicalAssetId, rndProjectId], references: [id, rndProjectId], onDelete: Restrict)
+  actor            User                    @relation("TechnicalAssetEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([technicalAssetId, sequence])
+  @@index([rndProjectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("technical_asset_events")
+}
+
+model TechnicalAssetValidation {
+  id               String                          @id @default(cuid())
+  rndProjectId     String                          @map("rnd_project_id")
+  technicalAssetId String                          @map("technical_asset_id")
+  assetVersion     Int                             @map("asset_version")
+  decision         TechnicalAssetValidationDecision
+  evidence         String
+  reason           String
+  validatorId      String                          @map("validator_id")
+  validatedAt      DateTime                        @default(now()) @map("validated_at")
+  technicalAsset   TechnicalAsset                  @relation(fields: [technicalAssetId, rndProjectId], references: [id, rndProjectId], onDelete: Restrict)
+  validator        User                            @relation("TechnicalAssetValidationValidator", fields: [validatorId], references: [id], onDelete: Restrict)
+
+  @@unique([technicalAssetId, assetVersion])
+  @@index([rndProjectId, validatedAt])
+  @@index([validatorId, validatedAt])
+  @@map("technical_asset_validations")
+}
+
+model ControlledDocument {
+  id                        String                      @id @default(cuid())
+  projectId                 String                      @map("project_id")
+  code                      String
+  title                     String
+  status                    ControlledDocumentStatus    @default(ACTIVE)
+  currentPublishedVersionId String?                     @map("current_published_version_id")
+  version                   Int                         @default(1)
+  createdById               String                      @map("created_by_id")
+  voidedById                String?                     @map("voided_by_id")
+  voidedAt                  DateTime?                   @map("voided_at")
+  voidReason                String?                     @map("void_reason")
+  createdAt                 DateTime                    @default(now()) @map("created_at")
+  updatedAt                 DateTime                    @updatedAt @map("updated_at")
+  project                   Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                 User                        @relation("ControlledDocumentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voidedBy                  User?                       @relation("ControlledDocumentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentPublishedVersion   ControlledDocumentVersion?  @relation("DocumentCurrentPublishedVersion", fields: [currentPublishedVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  versions                  ControlledDocumentVersion[] @relation("ControlledDocumentVersions")
+  mechanicalDrawing         MechanicalDrawing?
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@unique([currentPublishedVersionId, projectId])
+  @@index([projectId, status, code])
+  @@index([createdById, createdAt])
+  @@map("controlled_documents")
+}
+
+model ControlledDocumentVersion {
+  id                       String                            @id @default(cuid())
+  documentId               String                            @map("document_id")
+  projectId                String                            @map("project_id")
+  version                  Int
+  status                   ControlledDocumentVersionStatus   @default(DRAFT)
+  sourceFileId             String                            @map("source_file_id")
+  sourceFileSha256         String                            @map("source_file_sha256")
+  sourceMimeType           String                            @map("source_mime_type")
+  sourceFileSize           BigInt                            @map("source_file_size")
+  createdById              String                            @map("created_by_id")
+  publishedById            String?                           @map("published_by_id")
+  publishedAt              DateTime?                         @map("published_at")
+  voidedById               String?                           @map("voided_by_id")
+  voidedAt                 DateTime?                         @map("voided_at")
+  voidReason               String?                           @map("void_reason")
+  createdAt                DateTime                          @default(now()) @map("created_at")
+  document                 ControlledDocument                @relation("ControlledDocumentVersions", fields: [documentId, projectId], references: [id, projectId], onDelete: Restrict)
+  project                  Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceFile               FileObject                        @relation("DocumentVersionSourceFile", fields: [sourceFileId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                User                              @relation("ControlledDocumentVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy              User?                             @relation("ControlledDocumentVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  voidedBy                 User?                             @relation("ControlledDocumentVersionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentForDocument       ControlledDocument?               @relation("DocumentCurrentPublishedVersion")
+  reviews                  DocumentReview[]
+  reviewComments           DocumentReviewComment[]
+  relations                DocumentVersionRelation[]
+  gateSubmissionReferences GateSubmissionDocumentReference[]
+  mechanicalDrawingVersionFiles MechanicalDrawingVersionFile[]
+
+  @@unique([documentId, version])
+  @@unique([id, projectId])
+  @@index([projectId, status, createdAt])
+  @@index([sourceFileId])
+  @@map("controlled_document_versions")
+}
+
+model MechanicalDrawing {
+  id            String             @id @default(cuid())
+  projectId     String             @map("project_id")
+  documentId    String             @unique @map("document_id")
+  drawingNumber String             @map("drawing_number")
+  drawingType   String             @map("drawing_type")
+  version       Int                @default(1)
+  createdById   String             @map("created_by_id")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+  project       Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  document      ControlledDocument @relation(fields: [documentId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy     User               @relation("MechanicalDrawingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  versionFiles  MechanicalDrawingVersionFile[]
+  importItems   MechanicalDrawingImportItem[] @relation("ConfirmedMechanicalDrawing")
+
+  @@unique([id, projectId])
+  @@unique([documentId, projectId])
+  @@unique([projectId, drawingNumber])
+  @@index([projectId, drawingType, drawingNumber])
+  @@map("mechanical_drawings")
+}
+
+model PublicLibraryDocument {
+  id                        String                        @id @default(cuid())
+  code                      String                        @unique
+  title                     String
+  materialType              PublicLibraryMaterialType     @map("material_type")
+  status                    PublicLibraryDocumentStatus   @default(ACTIVE)
+  currentPublishedVersionId String?                       @unique @map("current_published_version_id")
+  version                   Int                           @default(1)
+  createdById               String                        @map("created_by_id")
+  voidedById                String?                       @map("voided_by_id")
+  voidedAt                  DateTime?                     @map("voided_at")
+  voidReason                String?                       @map("void_reason")
+  createdAt                 DateTime                      @default(now()) @map("created_at")
+  updatedAt                 DateTime                      @updatedAt @map("updated_at")
+  createdBy                 User                          @relation("PublicLibraryDocumentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voidedBy                  User?                         @relation("PublicLibraryDocumentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentPublishedVersion   PublicLibraryDocumentVersion? @relation("PublicLibraryDocumentCurrentPublishedVersion", fields: [currentPublishedVersionId], references: [id], onDelete: Restrict)
+  versions                  PublicLibraryDocumentVersion[] @relation("PublicLibraryDocumentVersions")
+  projectReferences         ProjectPublicLibraryReference[]
+
+  @@index([status, materialType, code])
+  @@index([createdById, createdAt])
+  @@map("public_library_documents")
+}
+
+model PublicLibraryDocumentVersion {
+  id                  String                           @id @default(cuid())
+  documentId          String                           @map("document_id")
+  version             Int
+  status              PublicLibraryDocumentVersionStatus @default(DRAFT)
+  sourceFileId        String                           @map("source_file_id")
+  sourceFileSha256    String                           @map("source_file_sha256")
+  sourceMimeType      String                           @map("source_mime_type")
+  sourceFileSize      BigInt                           @map("source_file_size")
+  applicableModels    Json                             @default("[]") @map("applicable_models")
+  applicablePlatforms Json                             @default("[]") @map("applicable_platforms")
+  createdById         String                           @map("created_by_id")
+  publishedById       String?                          @map("published_by_id")
+  publishedAt         DateTime?                        @map("published_at")
+  voidedById          String?                          @map("voided_by_id")
+  voidedAt            DateTime?                        @map("voided_at")
+  voidReason          String?                          @map("void_reason")
+  createdAt           DateTime                         @default(now()) @map("created_at")
+  document            PublicLibraryDocument            @relation("PublicLibraryDocumentVersions", fields: [documentId], references: [id], onDelete: Restrict)
+  sourceFile          FileObject                       @relation("PublicLibraryVersionSourceFile", fields: [sourceFileId], references: [id], onDelete: Restrict)
+  createdBy           User                             @relation("PublicLibraryVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy         User?                            @relation("PublicLibraryVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  voidedBy            User?                            @relation("PublicLibraryVersionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentForDocument  PublicLibraryDocument?           @relation("PublicLibraryDocumentCurrentPublishedVersion")
+  projectReferences   ProjectPublicLibraryReference[]
+
+  @@unique([documentId, version])
+  @@index([status, createdAt])
+  @@index([sourceFileId])
+  @@map("public_library_document_versions")
+}
+
+model ProjectPublicLibraryReference {
+  id                      String                              @id @default(cuid())
+  projectId               String                              @map("project_id")
+  publicLibraryDocumentId String                              @map("public_library_document_id")
+  publicDocumentVersionId String                              @map("public_document_version_id")
+  documentCode            String                              @map("document_code")
+  documentTitle           String                              @map("document_title")
+  materialType            PublicLibraryMaterialType           @map("material_type")
+  documentVersion         Int                                 @map("document_version")
+  sourceFileSha256        String                              @map("source_file_sha256")
+  applicableModels        Json                                @default("[]") @map("applicable_models")
+  applicablePlatforms     Json                                @default("[]") @map("applicable_platforms")
+  status                  ProjectPublicLibraryReferenceStatus @default(ACTIVE)
+  version                 Int                                 @default(1)
+  createdById             String                              @map("created_by_id")
+  retiredById             String?                             @map("retired_by_id")
+  retiredAt               DateTime?                           @map("retired_at")
+  retireReason            String?                             @map("retire_reason")
+  createdAt               DateTime                            @default(now()) @map("created_at")
+  updatedAt               DateTime                            @updatedAt @map("updated_at")
+  project                 Project                             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  publicLibraryDocument   PublicLibraryDocument               @relation(fields: [publicLibraryDocumentId], references: [id], onDelete: Restrict)
+  publicDocumentVersion   PublicLibraryDocumentVersion        @relation(fields: [publicDocumentVersionId], references: [id], onDelete: Restrict)
+  createdBy               User                                @relation("ProjectPublicLibraryReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  retiredBy               User?                               @relation("ProjectPublicLibraryReferenceRetiredBy", fields: [retiredById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, publicDocumentVersionId])
+  @@index([projectId, status, createdAt])
+  @@index([publicLibraryDocumentId, documentVersion])
+  @@map("project_public_library_references")
+}
+
+model MechanicalDrawingVersionFile {
+  id                String                    @id @default(cuid())
+  projectId         String                    @map("project_id")
+  drawingId         String                    @map("drawing_id")
+  documentVersionId String                    @map("document_version_id")
+  fileId            String                    @map("file_id")
+  role              DrawingFileRole
+  fileSha256        String                    @map("file_sha256")
+  fileMimeType      String                    @map("file_mime_type")
+  fileSize          BigInt                    @map("file_size")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  drawing           MechanicalDrawing         @relation(fields: [drawingId, projectId], references: [id, projectId], onDelete: Restrict)
+  documentVersion   ControlledDocumentVersion @relation(fields: [documentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  file              FileObject                @relation("DrawingVersionFile", fields: [fileId, projectId], references: [id, projectId], onDelete: Restrict)
+  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([documentVersionId, role])
+  @@unique([id, projectId])
+  @@index([projectId, drawingId, documentVersionId])
+  @@index([fileId])
+  @@map("mechanical_drawing_version_files")
+}
+
+model MechanicalDrawingImportBatch {
+  id          String                   @id @default(cuid())
+  projectId   String                   @map("project_id")
+  status      DrawingImportBatchStatus @default(PENDING_CONFIRMATION)
+  version     Int                      @default(1)
+  createdById String                   @map("created_by_id")
+  createdAt   DateTime                 @default(now()) @map("created_at")
+  updatedAt   DateTime                 @updatedAt @map("updated_at")
+  project     Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy   User                     @relation("MechanicalDrawingImportBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  items       MechanicalDrawingImportItem[]
+
+  @@unique([id, projectId])
+  @@index([projectId, status, createdAt])
+  @@map("mechanical_drawing_import_batches")
+}
+
+model MechanicalDrawingImportItem {
+  id                 String                    @id @default(cuid())
+  projectId          String                    @map("project_id")
+  batchId            String                    @map("batch_id")
+  filenameStem       String                    @map("filename_stem")
+  pairingStatus      DrawingImportPairingStatus @map("pairing_status")
+  status             DrawingImportItemStatus   @default(PENDING)
+  confirmedDrawingId String?                   @map("confirmed_drawing_id")
+  drawingNumber      String?                   @map("drawing_number")
+  title              String?                   @map("title")
+  drawingType        String?                   @map("drawing_type")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  updatedAt          DateTime                  @updatedAt @map("updated_at")
+  project            Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  batch              MechanicalDrawingImportBatch @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
+  confirmedDrawing   MechanicalDrawing?        @relation("ConfirmedMechanicalDrawing", fields: [confirmedDrawingId, projectId], references: [id, projectId], onDelete: Restrict)
+  files              MechanicalDrawingImportItemFile[]
+
+  @@unique([id, projectId])
+  @@index([batchId, status])
+  @@index([projectId, confirmedDrawingId])
+  @@map("mechanical_drawing_import_items")
+}
+
+model MechanicalDrawingImportItemFile {
+  id           String                   @id @default(cuid())
+  projectId    String                   @map("project_id")
+  itemId       String                   @map("item_id")
+  fileId       String                   @map("file_id")
+  inferredRole DrawingFileRole?         @map("inferred_role")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  project      Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  item         MechanicalDrawingImportItem @relation(fields: [itemId, projectId], references: [id, projectId], onDelete: Restrict)
+  file         FileObject               @relation("DrawingImportItemFile", fields: [fileId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([itemId, fileId])
+  @@index([projectId, fileId])
+  @@map("mechanical_drawing_import_item_files")
+}
+
+model DocumentReview {
+  id                 String                            @id @default(cuid())
+  projectId          String                            @map("project_id")
+  documentVersionId  String                            @map("document_version_id")
+  reviewerId         String                            @map("reviewer_id")
+  required           Boolean                           @default(true)
+  status             DocumentReviewStatus              @default(PENDING)
+  version            Int                               @default(1)
+  requestedById      String                            @map("requested_by_id")
+  requestedAt        DateTime                          @default(now()) @map("requested_at")
+  decidedById        String?                           @map("decided_by_id")
+  decidedAt          DateTime?                         @map("decided_at")
+  createdAt          DateTime                          @default(now()) @map("created_at")
+  updatedAt          DateTime                          @updatedAt @map("updated_at")
+  project            Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  documentVersion    ControlledDocumentVersion         @relation(fields: [documentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  reviewer           User                              @relation("DocumentReviewReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  requestedBy        User                              @relation("DocumentReviewRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  decidedBy          User?                             @relation("DocumentReviewDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  events             DocumentReviewEvent[]
+  comments           DocumentReviewComment[]
+  commentResolutions DocumentReviewCommentResolution[]
+
+  @@unique([id, projectId])
+  @@unique([documentVersionId, reviewerId])
+  @@index([projectId, documentVersionId, status])
+  @@index([reviewerId, status, requestedAt])
+  @@map("document_reviews")
+}
+
+model DocumentReviewEvent {
+  id           String                  @id @default(cuid())
+  projectId    String                  @map("project_id")
+  reviewId     String                  @map("review_id")
+  sequence     Int
+  eventType    DocumentReviewEventType @map("event_type")
+  fromStatus   DocumentReviewStatus?   @map("from_status")
+  toStatus     DocumentReviewStatus    @map("to_status")
+  reason       String
+  snapshotJson Json                    @map("snapshot_json")
+  actorId      String                  @map("actor_id")
+  createdAt    DateTime                @default(now()) @map("created_at")
+  project      Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  review       DocumentReview          @relation(fields: [reviewId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor        User                    @relation("DocumentReviewEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([reviewId, sequence])
+  @@index([projectId, createdAt])
+  @@map("document_review_events")
+}
+
+model DocumentReviewComment {
+  id                String                           @id @default(cuid())
+  projectId         String                           @map("project_id")
+  documentVersionId String                           @map("document_version_id")
+  reviewId          String                           @map("review_id")
+  body              String
+  required          Boolean                          @default(false)
+  createdById       String                           @map("created_by_id")
+  createdAt         DateTime                         @default(now()) @map("created_at")
+  project           Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  documentVersion   ControlledDocumentVersion        @relation(fields: [documentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  review            DocumentReview                   @relation(fields: [reviewId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy         User                             @relation("DocumentReviewCommentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  resolution        DocumentReviewCommentResolution?
+
+  @@unique([id, projectId])
+  @@index([reviewId, required, createdAt])
+  @@index([documentVersionId, createdAt])
+  @@map("document_review_comments")
+}
+
+model DocumentReviewCommentResolution {
+  id           String                @id @default(cuid())
+  projectId    String                @map("project_id")
+  commentId    String                @unique @map("comment_id")
+  reviewId     String                @map("review_id")
+  resolution   String
+  resolvedById String                @map("resolved_by_id")
+  resolvedAt   DateTime              @default(now()) @map("resolved_at")
+  project      Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  comment      DocumentReviewComment @relation(fields: [commentId, projectId], references: [id, projectId], onDelete: Restrict)
+  review       DocumentReview        @relation(fields: [reviewId, projectId], references: [id, projectId], onDelete: Restrict)
+  resolvedBy   User                  @relation("DocumentReviewCommentResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+
+  @@unique([commentId, projectId])
+  @@index([reviewId, resolvedAt])
+  @@map("document_review_comment_resolutions")
+}
+
+model DocumentVersionRelation {
+  id                       String                            @id @default(cuid())
+  projectId                String                            @map("project_id")
+  documentVersionId        String                            @map("document_version_id")
+  targetType               DocumentVersionRelationTargetType @map("target_type")
+  targetId                 String                            @map("target_id")
+  status                   DocumentVersionRelationStatus     @default(ACTIVE)
+  version                  Int                               @default(1)
+  createdById              String                            @map("created_by_id")
+  createdAt                DateTime                          @default(now()) @map("created_at")
+  voidedById               String?                           @map("voided_by_id")
+  voidedAt                 DateTime?                         @map("voided_at")
+  voidReason               String?                           @map("void_reason")
+  project                  Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  documentVersion          ControlledDocumentVersion         @relation(fields: [documentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                User                              @relation("DocumentVersionRelationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voidedBy                 User?                             @relation("DocumentVersionRelationVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  gateSubmissionReferences GateSubmissionDocumentReference[]
+
+  @@unique([id, projectId])
+  @@index([projectId, targetType, targetId, status])
+  @@index([documentVersionId, status])
+  @@map("document_version_relations")
+}
+
+model ProjectTemplateSnapshot {
+  id                      String                             @id @default(cuid())
+  projectId               String                             @unique @map("project_id")
+  sourceTemplateVersionId String                             @map("source_template_version_id")
+  sourceTemplateChecksum  String                             @map("source_template_checksum")
+  snapshotChecksum        String                             @map("snapshot_checksum")
+  templateCode            String                             @map("template_code")
+  templateName            String                             @map("template_name")
+  templateVersion         Int                                @map("template_version")
+  templatePublishedAt     DateTime                           @map("template_published_at")
+  createdAt               DateTime                           @default(now()) @map("created_at")
+  project                 Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceTemplateVersion   ProjectTemplateVersion             @relation("ProjectSnapshotSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
+  components              ProjectTemplateSnapshotComponent[]
+
+  @@index([sourceTemplateVersionId, createdAt])
+  @@map("project_template_snapshots")
+}
+
+model ProjectTemplateSnapshotComponent {
+  id                       String                   @id @default(cuid())
+  snapshotId               String                   @map("snapshot_id")
+  sourceComponentVersionId String                   @map("source_component_version_id")
+  componentType            TemplateComponentType    @map("component_type")
+  slot                     String
+  position                 Int
+  sourceChecksum           String                   @map("source_checksum")
+  componentCode            String                   @map("component_code")
+  componentName            String                   @map("component_name")
+  componentVersion         Int                      @map("component_version")
+  description              String?
+  contentJson              Json                     @map("content_json")
+  snapshot                 ProjectTemplateSnapshot  @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  sourceComponentVersion   TemplateComponentVersion @relation(fields: [sourceComponentVersionId], references: [id], onDelete: Restrict)
+  projectCapabilities      ProjectCapability[]
+  projectMilestones        ProjectMilestone[]       @relation("ProjectMilestoneSourceSnapshotComponent")
+  projectStages            ProjectStage[]           @relation("ProjectStageSourceSnapshotComponent")
+  gateDefinitions          ProjectGateDefinition[]
+
+  @@unique([snapshotId, slot])
+  @@unique([snapshotId, position])
+  @@index([sourceComponentVersionId])
+  @@map("project_template_snapshot_components")
+}
+
+model DeliveryUnit {
+  id                         String                      @id @default(cuid())
+  projectId                  String                      @map("project_id")
+  parentId                   String?                     @map("parent_id")
+  unitType                   DeliveryUnitType            @map("unit_type")
+  code                       String
+  name                       String
+  status                     ProjectStructureNodeStatus  @default(ACTIVE)
+  position                   Int
+  version                    Int                         @default(1)
+  createdById                String                      @map("created_by_id")
+  updatedById                String                      @map("updated_by_id")
+  createdAt                  DateTime                    @default(now()) @map("created_at")
+  updatedAt                  DateTime                    @updatedAt @map("updated_at")
+  project                    Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  parent                     DeliveryUnit?               @relation("DeliveryUnitHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children                   DeliveryUnit[]              @relation("DeliveryUnitHierarchy")
+  modules                    ProjectModule[]
+  responsibilityPackages     ResponsibilityPackage[]
+  planningTasks              PlanningTask[]
+  stageExecutions            DeliveryUnitStage[]
+  stageReleaseAuthorizations StageReleaseAuthorization[] @relation("DeliveryUnitStageReleaseAuthorizations")
+  gateInstances              ProjectGateInstance[]
+  createdBy                  User                        @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                  User                        @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@unique([projectId, parentId, position])
+  @@index([projectId, unitType, status])
+  @@index([parentId, position])
+  @@map("delivery_units")
+}
+
+model ProjectModule {
+  id                     String                     @id @default(cuid())
+  projectId              String                     @map("project_id")
+  deliveryUnitId         String                     @map("delivery_unit_id")
+  code                   String
+  name                   String
+  status                 ProjectStructureNodeStatus @default(ACTIVE)
+  position               Int
+  version                Int                        @default(1)
+  createdById            String                     @map("created_by_id")
+  updatedById            String                     @map("updated_by_id")
+  createdAt              DateTime                   @default(now()) @map("created_at")
+  updatedAt              DateTime                   @updatedAt @map("updated_at")
+  project                Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deliveryUnit           DeliveryUnit               @relation(fields: [deliveryUnitId], references: [id], onDelete: Restrict)
+  createdBy              User                       @relation("ProjectModuleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy              User                       @relation("ProjectModuleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  responsibilityPackages ResponsibilityPackage[]
+  planningTasks          PlanningTask[]
+  gateInstances          ProjectGateInstance[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@unique([deliveryUnitId, position])
+  @@index([projectId, status])
+  @@index([deliveryUnitId, status])
+  @@map("project_modules")
+}
+
+model ProjectCapability {
+  projectId                 String                            @map("project_id")
+  capabilityCode            CapabilityCode                    @map("capability_code")
+  templateAllowed           Boolean                           @map("template_allowed")
+  templateRequired          Boolean                           @map("template_required")
+  selectedEnabled           Boolean                           @map("selected_enabled")
+  sourceSnapshotComponentId String?                           @map("source_snapshot_component_id")
+  version                   Int                               @default(1)
+  createdById               String                            @map("created_by_id")
+  updatedById               String                            @map("updated_by_id")
+  createdAt                 DateTime                          @default(now()) @map("created_at")
+  updatedAt                 DateTime                          @updatedAt @map("updated_at")
+  project                   Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  companyCapability         CompanyCapability                 @relation(fields: [capabilityCode], references: [code], onDelete: Restrict)
+  sourceSnapshotComponent   ProjectTemplateSnapshotComponent? @relation(fields: [sourceSnapshotComponentId], references: [id], onDelete: Restrict)
+  createdBy                 User                              @relation("ProjectCapabilityCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                 User                              @relation("ProjectCapabilityUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  revisions                 ProjectCapabilityRevision[]
+
+  @@id([projectId, capabilityCode])
+  @@index([capabilityCode, selectedEnabled])
+  @@index([sourceSnapshotComponentId])
+  @@map("project_capabilities")
+}
+
+model ProjectCapabilityRevision {
+  id                        String                    @id @default(cuid())
+  projectId                 String                    @map("project_id")
+  capabilityCode            CapabilityCode            @map("capability_code")
+  version                   Int
+  templateAllowed           Boolean                   @map("template_allowed")
+  templateRequired          Boolean                   @map("template_required")
+  selectedEnabled           Boolean                   @map("selected_enabled")
+  sourceSnapshotComponentId String?                   @map("source_snapshot_component_id")
+  companyEnabled            Boolean                   @map("company_enabled")
+  companyVersion            Int                       @map("company_version")
+  effectiveEnabled          Boolean                   @map("effective_enabled")
+  changedById               String                    @map("changed_by_id")
+  changeReason              String                    @map("change_reason")
+  createdAt                 DateTime                  @default(now()) @map("created_at")
+  capability                ProjectCapability         @relation(fields: [projectId, capabilityCode], references: [projectId, capabilityCode], onDelete: Restrict)
+  companyRevision           CompanyCapabilityRevision @relation("ProjectCapabilityCompanyRevision", fields: [capabilityCode, companyVersion], references: [capabilityCode, version], onDelete: Restrict)
+  changedBy                 User                      @relation("ProjectCapabilityRevisionChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, capabilityCode, version])
+  @@index([changedById, createdAt])
+  @@index([projectId, createdAt])
+  @@map("project_capability_revisions")
+}
+
+model ResponsibilityPackage {
+  id                     String                       @id @default(cuid())
+  projectId              String                       @map("project_id")
+  deliveryUnitId         String?                      @map("delivery_unit_id")
+  moduleId               String?                      @map("module_id")
+  code                   String
+  name                   String
+  description            String?
+  ownerMembershipId      String                       @map("owner_membership_id")
+  inputsJson             Json                         @map("inputs_json")
+  outputsJson            Json                         @map("outputs_json")
+  acceptanceCriteriaJson Json                         @map("acceptance_criteria_json")
+  valueWeight            Int                          @map("value_weight")
+  status                 ResponsibilityPackageStatus  @default(OPEN)
+  acceptanceCycle        Int                          @default(0) @map("acceptance_cycle")
+  transitionSequence     Int                          @default(1) @map("transition_sequence")
+  acceptedAt             DateTime?                    @map("accepted_at")
+  closedAt               DateTime?                    @map("closed_at")
+  version                Int                          @default(1)
+  createdById            String                       @map("created_by_id")
+  updatedById            String                       @map("updated_by_id")
+  createdAt              DateTime                     @default(now()) @map("created_at")
+  updatedAt              DateTime                     @updatedAt @map("updated_at")
+  project                Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deliveryUnit           DeliveryUnit?                @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module                 ProjectModule?               @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership        ProjectMember                @relation(fields: [ownerMembershipId], references: [id], onDelete: Restrict)
+  createdBy              User                         @relation("ResponsibilityPackageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy              User                         @relation("ResponsibilityPackageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  events                 ResponsibilityPackageEvent[]
+  planningTasks          PlanningTask[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@index([projectId, status, code])
+  @@index([ownerMembershipId, status])
+  @@index([deliveryUnitId, status])
+  @@index([moduleId, status])
+  @@map("responsibility_packages")
+}
+
+model ResponsibilityPackageEvent {
+  id                    String                         @id @default(cuid())
+  packageId             String                         @map("package_id")
+  projectId             String                         @map("project_id")
+  sequence              Int
+  acceptanceCycle       Int                            @map("acceptance_cycle")
+  eventType             ResponsibilityPackageEventType @map("event_type")
+  fromStatus            ResponsibilityPackageStatus?   @map("from_status")
+  toStatus              ResponsibilityPackageStatus    @map("to_status")
+  resourceVersion       Int                            @map("resource_version")
+  reason                String
+  snapshotJson          Json                           @map("snapshot_json")
+  actorId               String                         @map("actor_id")
+  createdAt             DateTime                       @default(now()) @map("created_at")
+  responsibilityPackage ResponsibilityPackage          @relation(fields: [packageId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor                 User                           @relation("ResponsibilityPackageEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([packageId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("responsibility_package_events")
+}
+
+model ProjectMilestone {
+  id                        String                             @id @default(cuid())
+  projectId                 String                             @map("project_id")
+  sourceSnapshotComponentId String?                            @map("source_snapshot_component_id")
+  code                      String
+  name                      String
+  description               String?
+  position                  Int
+  targetAt                  DateTime?                          @map("target_at")
+  status                    ProjectMilestoneStatus             @default(PENDING)
+  achievementSource         ProjectMilestoneAchievementSource? @map("achievement_source")
+  achievedAt                DateTime?                          @map("achieved_at")
+  voidedAt                  DateTime?                          @map("voided_at")
+  version                   Int                                @default(1)
+  createdById               String                             @map("created_by_id")
+  updatedById               String                             @map("updated_by_id")
+  createdAt                 DateTime                           @default(now()) @map("created_at")
+  updatedAt                 DateTime                           @updatedAt @map("updated_at")
+  project                   Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceSnapshotComponent   ProjectTemplateSnapshotComponent?  @relation("ProjectMilestoneSourceSnapshotComponent", fields: [sourceSnapshotComponentId], references: [id], onDelete: Restrict)
+  createdBy                 User                               @relation("ProjectMilestoneCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                 User                               @relation("ProjectMilestoneUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  taskLinks                 ProjectMilestoneTaskLink[]
+  events                    ProjectMilestoneEvent[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@index([projectId, status, position])
+  @@index([sourceSnapshotComponentId])
+  @@map("project_milestones")
+}
+
+model ProjectMilestoneTaskLink {
+  id          String                         @id @default(cuid())
+  projectId   String                         @map("project_id")
+  milestoneId String                         @map("milestone_id")
+  taskId      String                         @map("task_id")
+  status      ProjectMilestoneTaskLinkStatus @default(ACTIVE)
+  createdById String                         @map("created_by_id")
+  createdAt   DateTime                       @default(now()) @map("created_at")
+  voidedById  String?                        @map("voided_by_id")
+  voidedAt    DateTime?                      @map("voided_at")
+  voidReason  String?                        @map("void_reason")
+  project     Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  milestone   ProjectMilestone               @relation(fields: [milestoneId, projectId], references: [id, projectId], onDelete: Restrict)
+  task        PlanningTask                   @relation("PlanningTaskMilestoneLinks", fields: [taskId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy   User                           @relation("ProjectMilestoneTaskLinkCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voidedBy    User?                          @relation("ProjectMilestoneTaskLinkVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+
+  @@index([milestoneId, status])
+  @@index([taskId, status])
+  @@map("project_milestone_task_links")
+}
+
+model ProjectMilestoneEvent {
+  id           String                    @id @default(cuid())
+  milestoneId  String                    @map("milestone_id")
+  projectId    String                    @map("project_id")
+  sequence     Int
+  eventType    ProjectMilestoneEventType @map("event_type")
+  fromStatus   ProjectMilestoneStatus?   @map("from_status")
+  toStatus     ProjectMilestoneStatus    @map("to_status")
+  reason       String
+  snapshotJson Json                      @map("snapshot_json")
+  actorId      String                    @map("actor_id")
+  createdAt    DateTime                  @default(now()) @map("created_at")
+  milestone    ProjectMilestone          @relation(fields: [milestoneId, projectId], references: [id, projectId], onDelete: Restrict)
+  project      Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  actor        User                      @relation("ProjectMilestoneEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([milestoneId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("project_milestone_events")
+}
+
+model ProjectStage {
+  id                        String                            @id @default(cuid())
+  projectId                 String                            @map("project_id")
+  sourceSnapshotComponentId String?                           @map("source_snapshot_component_id")
+  code                      String
+  name                      String
+  description               String?
+  sequence                  Int
+  status                    ProjectStageExecutionStatus       @default(NOT_STARTED)
+  exceptionalReason         String?                           @map("exceptional_reason")
+  statusChangedAt           DateTime                          @default(now()) @map("status_changed_at")
+  version                   Int                               @default(1)
+  createdById               String                            @map("created_by_id")
+  updatedById               String                            @map("updated_by_id")
+  createdAt                 DateTime                          @default(now()) @map("created_at")
+  updatedAt                 DateTime                          @updatedAt @map("updated_at")
+  project                   Project                           @relation("ProjectStages", fields: [projectId], references: [id], onDelete: Restrict)
+  sourceSnapshotComponent   ProjectTemplateSnapshotComponent? @relation("ProjectStageSourceSnapshotComponent", fields: [sourceSnapshotComponentId], references: [id], onDelete: Restrict)
+  mainControlForProject     Project?                          @relation("ProjectMainControlStage")
+  deliveryUnitStages        DeliveryUnitStage[]
+  conditionalReleases       GateConditionalRelease[]
+  releaseAuthorizationsFrom StageReleaseAuthorization[]       @relation("StageReleaseAuthorizationFromStage")
+  releaseAuthorizationsTo   StageReleaseAuthorization[]       @relation("StageReleaseAuthorizationToStage")
+  events                    ProjectStageEvent[]
+  gateDefinitions           ProjectGateDefinition[]
+  gateInstances             ProjectGateInstance[]
+  createdBy                 User                              @relation("ProjectStageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                 User                              @relation("ProjectStageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, code])
+  @@unique([projectId, sequence])
+  @@unique([id, projectId])
+  @@index([projectId, status, sequence])
+  @@index([sourceSnapshotComponentId])
+  @@map("project_stages")
+}
+
+model DeliveryUnitStage {
+  id                  String                      @id @default(cuid())
+  projectId           String                      @map("project_id")
+  deliveryUnitId      String                      @map("delivery_unit_id")
+  projectStageId      String                      @map("project_stage_id")
+  status              ProjectStageExecutionStatus @default(NOT_STARTED)
+  exceptionalReason   String?                     @map("exceptional_reason")
+  statusChangedAt     DateTime                    @default(now()) @map("status_changed_at")
+  version             Int                         @default(1)
+  createdById         String                      @map("created_by_id")
+  updatedById         String                      @map("updated_by_id")
+  createdAt           DateTime                    @default(now()) @map("created_at")
+  updatedAt           DateTime                    @updatedAt @map("updated_at")
+  project             Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deliveryUnit        DeliveryUnit                @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  projectStage        ProjectStage                @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  conditionalReleases GateConditionalRelease[]
+  createdBy           User                        @relation("DeliveryUnitStageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy           User                        @relation("DeliveryUnitStageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([deliveryUnitId, projectStageId])
+  @@unique([id, projectId])
+  @@index([projectId, status, deliveryUnitId])
+  @@index([projectStageId, status])
+  @@map("delivery_unit_stages")
+}
+
+model StageReleaseAuthorization {
+  id                 String                          @id @default(cuid())
+  projectId          String                          @map("project_id")
+  scope              StageReleaseAuthorizationScope
+  status             StageReleaseAuthorizationStatus @default(ACTIVE)
+  fromProjectStageId String                          @map("from_project_stage_id")
+  toProjectStageId   String                          @map("to_project_stage_id")
+  deliveryUnitId     String?                         @map("delivery_unit_id")
+  reason             String
+  authorizedById     String                          @map("authorized_by_id")
+  authorizedAt       DateTime                        @default(now()) @map("authorized_at")
+  revokedById        String?                         @map("revoked_by_id")
+  revokedAt          DateTime?                       @map("revoked_at")
+  revocationReason   String?                         @map("revocation_reason")
+  version            Int                             @default(1)
+  createdAt          DateTime                        @default(now()) @map("created_at")
+  updatedAt          DateTime                        @updatedAt @map("updated_at")
+  project            Project                         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  fromProjectStage   ProjectStage                    @relation("StageReleaseAuthorizationFromStage", fields: [fromProjectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  toProjectStage     ProjectStage                    @relation("StageReleaseAuthorizationToStage", fields: [toProjectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit       DeliveryUnit?                   @relation("DeliveryUnitStageReleaseAuthorizations", fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  authorizedBy       User                            @relation("StageReleaseAuthorizationAuthorizedBy", fields: [authorizedById], references: [id], onDelete: Restrict)
+  revokedBy          User?                           @relation("StageReleaseAuthorizationRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@index([projectId, scope, status, fromProjectStageId, toProjectStageId])
+  @@index([deliveryUnitId, status])
+  @@index([authorizedById, authorizedAt])
+  @@map("stage_release_authorizations")
+}
+
+model ProjectStageEvent {
+  id             String                       @id @default(cuid())
+  projectId      String                       @map("project_id")
+  projectStageId String                       @map("project_stage_id")
+  sequence       Int
+  eventType      ProjectStageEventType        @map("event_type")
+  fromStatus     ProjectStageExecutionStatus? @map("from_status")
+  toStatus       ProjectStageExecutionStatus  @map("to_status")
+  reason         String?
+  snapshotJson   Json                         @map("snapshot_json")
+  actorId        String                       @map("actor_id")
+  createdAt      DateTime                     @default(now()) @map("created_at")
+  project        Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectStage   ProjectStage                 @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor          User                         @relation("ProjectStageEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([projectStageId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("project_stage_events")
+}
+
+model ProjectGateDefinition {
+  id                        String                           @id @default(cuid())
+  projectId                 String                           @map("project_id")
+  sourceSnapshotComponentId String                           @map("source_snapshot_component_id")
+  projectStageId            String                           @map("project_stage_id")
+  code                      String
+  name                      String
+  scope                     GateScope
+  definitionJson            Json                             @map("definition_json")
+  checkerBindingsJson       Json                             @map("checker_bindings_json")
+  definitionChecksum        String                           @map("definition_checksum")
+  materializedById          String                           @map("materialized_by_id")
+  materializedAt            DateTime                         @default(now()) @map("materialized_at")
+  project                   Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceSnapshotComponent   ProjectTemplateSnapshotComponent @relation(fields: [sourceSnapshotComponentId], references: [id], onDelete: Restrict)
+  projectStage              ProjectStage                     @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  instances                 ProjectGateInstance[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@index([projectId, projectStageId])
+  @@index([sourceSnapshotComponentId])
+  @@map("project_gate_definitions")
+}
+
+model ProjectGateInstance {
+  id                  String                   @id @default(cuid())
+  projectId           String                   @map("project_id")
+  gateDefinitionId    String                   @map("gate_definition_id")
+  projectStageId      String                   @map("project_stage_id")
+  scope               GateScope
+  deliveryUnitId      String?                  @map("delivery_unit_id")
+  moduleId            String?                  @map("module_id")
+  checkRunSequence    Int                      @default(0) @map("check_run_sequence")
+  version             Int                      @default(1)
+  createdById         String                   @map("created_by_id")
+  updatedById         String                   @map("updated_by_id")
+  createdAt           DateTime                 @default(now()) @map("created_at")
+  updatedAt           DateTime                 @updatedAt @map("updated_at")
+  project             Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateDefinition      ProjectGateDefinition    @relation(fields: [gateDefinitionId, projectId], references: [id, projectId], onDelete: Restrict)
+  projectStage        ProjectStage             @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit        DeliveryUnit?            @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module              ProjectModule?           @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  checkSnapshots      GateCheckSnapshot[]
+  submissions         GateSubmission[]
+  conditionalReleases GateConditionalRelease[]
+
+  @@unique([id, projectId])
+  @@index([projectId, projectStageId, scope])
+  @@index([gateDefinitionId])
+  @@index([deliveryUnitId])
+  @@index([moduleId])
+  @@map("project_gate_instances")
+}
+
+model GateCheckSnapshot {
+  id                  String              @id @default(cuid())
+  projectId           String              @map("project_id")
+  gateInstanceId      String              @map("gate_instance_id")
+  sequence            Int
+  status              GateCheckStatus
+  definitionSnapshot  Json                @map("definition_snapshot")
+  scopeSnapshot       Json                @map("scope_snapshot")
+  checkerBindingsJson Json                @map("checker_bindings_json")
+  reason              String
+  inputChecksum       String              @map("input_checksum")
+  resultChecksum      String              @map("result_checksum")
+  checkedById         String              @map("checked_by_id")
+  checkedAt           DateTime            @default(now()) @map("checked_at")
+  project             Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateInstance        ProjectGateInstance @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
+  results             GateCheckResult[]
+  submissions         GateSubmission[]
+
+  @@unique([id, projectId])
+  @@unique([gateInstanceId, sequence])
+  @@index([projectId, checkedAt])
+  @@map("gate_check_snapshots")
+}
+
+model GateCheckResult {
+  id                  String            @id @default(cuid())
+  projectId           String            @map("project_id")
+  gateCheckSnapshotId String            @map("gate_check_snapshot_id")
+  position            Int
+  checkerCode         String            @map("checker_code")
+  checkerVersion      Int               @map("checker_version")
+  status              GateCheckStatus
+  failureCode         String?           @map("failure_code")
+  message             String
+  evidenceJson        Json              @map("evidence_json")
+  evidenceChecksum    String            @map("evidence_checksum")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  project             Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateCheckSnapshot   GateCheckSnapshot @relation(fields: [gateCheckSnapshotId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([gateCheckSnapshotId, position])
+  @@index([projectId, checkerCode, createdAt])
+  @@map("gate_check_results")
+}
+
+model GateSubmission {
+  id                   String                            @id @default(cuid())
+  projectId            String                            @map("project_id")
+  gateInstanceId       String                            @map("gate_instance_id")
+  gateCheckSnapshotId  String                            @map("gate_check_snapshot_id")
+  previousSubmissionId String?                           @map("previous_submission_id")
+  sequence             Int
+  status               GateSubmissionStatus              @default(PENDING)
+  approvalMode         GateApprovalMode                  @map("approval_mode")
+  approverRolesJson    Json                              @map("approver_roles_json")
+  submittedReason      String                            @map("submitted_reason")
+  submittedById        String                            @map("submitted_by_id")
+  submittedAt          DateTime                          @default(now()) @map("submitted_at")
+  withdrawnById        String?                           @map("withdrawn_by_id")
+  withdrawnAt          DateTime?                         @map("withdrawn_at")
+  withdrawalReason     String?                           @map("withdrawal_reason")
+  decidedAt            DateTime?                         @map("decided_at")
+  version              Int                               @default(1)
+  createdAt            DateTime                          @default(now()) @map("created_at")
+  updatedAt            DateTime                          @updatedAt @map("updated_at")
+  project              Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateInstance         ProjectGateInstance               @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateCheckSnapshot    GateCheckSnapshot                 @relation(fields: [gateCheckSnapshotId, projectId], references: [id, projectId], onDelete: Restrict)
+  previousSubmission   GateSubmission?                   @relation("GateSubmissionResubmission", fields: [previousSubmissionId], references: [id], onDelete: Restrict)
+  resubmissions        GateSubmission[]                  @relation("GateSubmissionResubmission")
+  submittedBy          User                              @relation("GateSubmissionSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  withdrawnBy          User?                             @relation("GateSubmissionWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict)
+  approvers            GateSubmissionApprover[]
+  approvals            GateApproval[]
+  events               GateSubmissionEvent[]
+  conditionalRelease   GateConditionalRelease?
+  planningBaselines    PlanningBaseline[]                @relation("PlanningBaselineSourceGateSubmission")
+  documentReferences   GateSubmissionDocumentReference[]
+
+  @@unique([id, projectId])
+  @@unique([gateInstanceId, sequence])
+  @@index([projectId, status, submittedAt])
+  @@index([gateCheckSnapshotId])
+  @@index([previousSubmissionId])
+  @@map("gate_submissions")
+}
+
+model GateSubmissionDocumentReference {
+  id                        String                    @id @default(cuid())
+  projectId                 String                    @map("project_id")
+  gateSubmissionId          String                    @map("gate_submission_id")
+  documentVersionId         String                    @map("document_version_id")
+  documentVersionRelationId String                    @map("document_version_relation_id")
+  documentCode              String                    @map("document_code")
+  documentTitle             String                    @map("document_title")
+  documentVersion           Int                       @map("document_version")
+  sourceFileSha256          String                    @map("source_file_sha256")
+  reviewEvidenceJson        Json                      @map("review_evidence_json")
+  reviewEvidenceChecksum    String                    @map("review_evidence_checksum")
+  createdAt                 DateTime                  @default(now()) @map("created_at")
+  project                   Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateSubmission            GateSubmission            @relation(fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  documentVersionFact       ControlledDocumentVersion @relation(fields: [documentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  documentVersionRelation   DocumentVersionRelation   @relation(fields: [documentVersionRelationId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([gateSubmissionId, documentVersionId])
+  @@index([projectId, documentVersionId, createdAt])
+  @@map("gate_submission_document_references")
+}
+
+model GateSubmissionApprover {
+  id                String         @id @default(cuid())
+  projectId         String         @map("project_id")
+  gateSubmissionId  String         @map("gate_submission_id")
+  userId            String         @map("user_id")
+  membershipIdsJson Json           @map("membership_ids_json")
+  projectRolesJson  Json           @map("project_roles_json")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  project           Project        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateSubmission    GateSubmission @relation(fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  user              User           @relation("GateSubmissionApproverUser", fields: [userId], references: [id], onDelete: Restrict)
+  approvals         GateApproval[]
+
+  @@unique([id, projectId])
+  @@unique([gateSubmissionId, userId])
+  @@index([projectId, userId])
+  @@map("gate_submission_approvers")
+}
+
+model GateApproval {
+  id                       String                 @id @default(cuid())
+  projectId                String                 @map("project_id")
+  gateSubmissionId         String                 @map("gate_submission_id")
+  gateSubmissionApproverId String                 @map("gate_submission_approver_id")
+  decision                 GateApprovalDecision
+  reason                   String
+  decidedById              String                 @map("decided_by_id")
+  decidedAt                DateTime               @default(now()) @map("decided_at")
+  project                  Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateSubmission           GateSubmission         @relation(fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateSubmissionApprover   GateSubmissionApprover @relation(fields: [gateSubmissionApproverId, projectId], references: [id, projectId], onDelete: Restrict)
+  decidedBy                User                   @relation("GateApprovalDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@unique([gateSubmissionId, gateSubmissionApproverId])
+  @@index([projectId, gateSubmissionId, decidedAt])
+  @@index([decidedById, decidedAt])
+  @@map("gate_approvals")
+}
+
+model GateSubmissionEvent {
+  id               String                  @id @default(cuid())
+  projectId        String                  @map("project_id")
+  gateSubmissionId String                  @map("gate_submission_id")
+  sequence         Int
+  eventType        GateSubmissionEventType @map("event_type")
+  reason           String
+  snapshotJson     Json                    @map("snapshot_json")
+  actorId          String                  @map("actor_id")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  project          Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateSubmission   GateSubmission          @relation(fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor            User                    @relation("GateSubmissionEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([gateSubmissionId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("gate_submission_events")
+}
+
+model GateConditionalRelease {
+  id                  String              @id @default(cuid())
+  projectId           String              @map("project_id")
+  gateSubmissionId    String              @unique @map("gate_submission_id")
+  gateInstanceId      String              @map("gate_instance_id")
+  projectStageId      String              @map("project_stage_id")
+  deliveryUnitStageId String?             @map("delivery_unit_stage_id")
+  releaseReason       String              @map("release_reason")
+  releasedById        String              @map("released_by_id")
+  releasedAt          DateTime            @default(now()) @map("released_at")
+  version             Int                 @default(1)
+  createdAt           DateTime            @default(now()) @map("created_at")
+  project             Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateSubmission      GateSubmission      @relation(fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateInstance        ProjectGateInstance @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
+  projectStage        ProjectStage        @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnitStage   DeliveryUnitStage?  @relation(fields: [deliveryUnitStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  releasedBy          User                @relation("GateConditionalReleaseActor", fields: [releasedById], references: [id], onDelete: Restrict)
+  residualItems       ResidualItem[]
+
+  @@unique([id, projectId])
+  @@unique([gateSubmissionId, projectId])
+  @@index([projectId, releasedAt])
+  @@index([gateInstanceId])
+  @@index([projectStageId])
+  @@index([deliveryUnitStageId])
+  @@index([releasedById, releasedAt])
+  @@map("gate_conditional_releases")
+}
+
+model ResidualItem {
+  id                   String                 @id @default(cuid())
+  projectId            String                 @map("project_id")
+  conditionalReleaseId String                 @map("conditional_release_id")
+  sequence             Int
+  title                String
+  ownerMembershipId    String                 @map("owner_membership_id")
+  verifierMembershipId String                 @map("verifier_membership_id")
+  dueAt                DateTime               @map("due_at")
+  evidence             String
+  escalationRule       String                 @map("escalation_rule")
+  status               ResidualItemStatus     @default(OPEN)
+  version              Int                    @default(1)
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
+  project              Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  conditionalRelease   GateConditionalRelease @relation(fields: [conditionalReleaseId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership      ProjectMember          @relation("ResidualItemOwnerMembership", fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  verifierMembership   ProjectMember          @relation("ResidualItemVerifierMembership", fields: [verifierMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  events               ResidualItemEvent[]
+
+  @@unique([id, projectId])
+  @@unique([conditionalReleaseId, sequence])
+  @@index([projectId, status, dueAt])
+  @@index([ownerMembershipId, status, dueAt])
+  @@index([verifierMembershipId, status, dueAt])
+  @@map("residual_items")
+}
+
+model ResidualItemEvent {
+  id             String                @id @default(cuid())
+  projectId      String                @map("project_id")
+  residualItemId String                @map("residual_item_id")
+  sequence       Int
+  eventType      ResidualItemEventType @map("event_type")
+  reason         String
+  snapshotJson   Json                  @map("snapshot_json")
+  actorId        String                @map("actor_id")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  project        Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  residualItem   ResidualItem          @relation(fields: [residualItemId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor          User                  @relation("ResidualItemEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([residualItemId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("residual_item_events")
+}
+
+model ProjectAlertRule {
+  id                     String          @id @default(cuid())
+  projectId              String          @map("project_id")
+  code                   String
+  name                   String
+  sourceType             AlertSourceType @map("source_type")
+  conditionJson          Json            @map("condition_json")
+  probability            AlertRiskLevel
+  impact                 AlertRiskLevel
+  ownerMembershipId      String          @map("owner_membership_id")
+  escalationMembershipId String          @map("escalation_membership_id")
+  escalationAfterDays    Int             @map("escalation_after_days")
+  status                 AlertRuleStatus @default(ENABLED)
+  version                Int             @default(1)
+  createdById            String          @map("created_by_id")
+  updatedById            String          @map("updated_by_id")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+  project                Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  alerts                 ProjectAlert[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@index([projectId, status, sourceType])
+  @@index([ownerMembershipId, status])
+  @@index([escalationMembershipId, status])
+  @@map("project_alert_rules")
+}
+
+model ProjectAlert {
+  id                           String              @id @default(cuid())
+  projectId                    String              @map("project_id")
+  ruleId                       String              @map("rule_id")
+  sourceType                   AlertSourceType     @map("source_type")
+  sourceKey                    String              @map("source_key")
+  sourceSnapshot               Json                @map("source_snapshot")
+  probability                  AlertRiskLevel
+  impact                       AlertRiskLevel
+  ownerUserId                  String              @map("owner_user_id")
+  ownerMembershipSnapshot      Json                @map("owner_membership_snapshot")
+  escalationUserId             String              @map("escalation_user_id")
+  escalationMembershipSnapshot Json                @map("escalation_membership_snapshot")
+  status                       ProjectAlertStatus  @default(TRIGGERED)
+  firstTriggeredAt             DateTime            @default(now()) @map("first_triggered_at")
+  lastObservedAt               DateTime            @default(now()) @map("last_observed_at")
+  acknowledgedAt               DateTime?           @map("acknowledged_at")
+  resolvedAt                   DateTime?           @map("resolved_at")
+  closedAt                     DateTime?           @map("closed_at")
+  escalatedAt                  DateTime?           @map("escalated_at")
+  version                      Int                 @default(1)
+  createdAt                    DateTime            @default(now()) @map("created_at")
+  updatedAt                    DateTime            @updatedAt @map("updated_at")
+  project                      Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  rule                         ProjectAlertRule    @relation(fields: [ruleId, projectId], references: [id, projectId], onDelete: Restrict)
+  events                       ProjectAlertEvent[]
+
+  @@unique([projectId, ruleId, sourceKey])
+  @@unique([id, projectId])
+  @@index([projectId, status, lastObservedAt])
+  @@index([ownerUserId, status, lastObservedAt])
+  @@index([escalationUserId, status, escalatedAt])
+  @@map("project_alerts")
+}
+
+model ProjectAlertEvent {
+  id           String                @id @default(cuid())
+  projectId    String                @map("project_id")
+  alertId      String                @map("alert_id")
+  sequence     Int
+  eventType    ProjectAlertEventType @map("event_type")
+  reason       String
+  snapshotJson Json                  @map("snapshot_json")
+  actorId      String?               @map("actor_id")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  project      Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  alert        ProjectAlert          @relation(fields: [alertId, projectId], references: [id, projectId], onDelete: Restrict)
+  actor        User?                 @relation("ProjectAlertEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([alertId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("project_alert_events")
+}
+
+model ProjectAlertScan {
+  id             String                 @id @default(cuid())
+  projectId      String                 @map("project_id")
+  idempotencyKey String                 @map("idempotency_key")
+  status         ProjectAlertScanStatus @default(PENDING)
+  requestedById  String                 @map("requested_by_id")
+  requestedAt    DateTime               @default(now()) @map("requested_at")
+  startedAt      DateTime?              @map("started_at")
+  completedAt    DateTime?              @map("completed_at")
+  errorCode      String?                @map("error_code")
+  errorMessage   String?                @map("error_message")
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requestedBy    User                   @relation("ProjectAlertScanRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, idempotencyKey])
+  @@unique([id, projectId])
+  @@index([projectId, requestedAt])
+  @@index([projectId, status, requestedAt])
+  @@map("project_alert_scans")
+}
+
+model Issue {
+  id                    String                  @id @default(cuid())
+  projectId             String                  @map("project_id")
+  title                 String
+  confirmedText         String                  @map("confirmed_text")
+  sourceType            IssueSourceType         @default(PROJECT) @map("source_type")
+  category              IssueCategory
+  severity              IssueSeverity
+  phenomenonDescription String?                 @map("phenomenon_description")
+  rootCauseCategory     IssueRootCauseCategory? @map("root_cause_category")
+  rootCauseDescription  String?                 @map("root_cause_description")
+  status                IssueStatus             @default(PENDING_ACCEPTANCE)
+  statusChangedAt       DateTime                @default(now()) @map("status_changed_at")
+  closedAt              DateTime?               @map("closed_at")
+  closedById            String?                 @map("closed_by_id")
+  verificationEvidence  String?                 @map("verification_evidence")
+  ownerMembershipId     String?                 @map("owner_membership_id")
+  verifierMembershipId  String?                 @map("verifier_membership_id")
+  dueDate               DateTime?               @map("due_date") @db.Date
+  version               Int                     @default(1)
+  createdById           String                  @map("created_by_id")
+  updatedById           String                  @map("updated_by_id")
+  createdAt             DateTime                @default(now()) @map("created_at")
+  updatedAt             DateTime                @updatedAt @map("updated_at")
+  project               Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy             User                    @relation("IssueCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy             User                    @relation("IssueUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  closedBy              User?                   @relation("IssueClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  ownerMembership       ProjectMember?          @relation("IssueOwnerMembership", fields: [ownerMembershipId], references: [id], onDelete: Restrict)
+  verifierMembership    ProjectMember?          @relation("IssueVerifierMembership", fields: [verifierMembershipId], references: [id], onDelete: Restrict)
+  tags                  IssueTag[]
+  history               IssueHistory[]
+  relations             IssueRelation[]         @relation("IssueSourceRelations")
+  blockerRelations      IssueRelation[]         @relation("IssueBlockerRelations")
+
+  @@unique([id, projectId])
+  @@index([projectId, status, severity, updatedAt])
+  @@index([projectId, category, status])
+  @@index([closedById, closedAt])
+  @@index([projectId, ownerMembershipId, dueDate])
+  @@index([projectId, verifierMembershipId, status])
+  @@map("issues")
+}
+
+model IssueRelation {
+  id             String              @id @default(cuid())
+  projectId      String              @map("project_id")
+  issueId        String              @map("issue_id")
+  relationType   IssueRelationType   @map("relation_type")
+  targetId       String              @map("target_id")
+  blockerIssueId String?             @map("blocker_issue_id")
+  status         IssueRelationStatus @default(ACTIVE)
+  reason         String
+  closedReason   String?             @map("closed_reason")
+  createdById    String              @map("created_by_id")
+  closedById     String?             @map("closed_by_id")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  closedAt       DateTime?           @map("closed_at")
+  issue          Issue               @relation("IssueSourceRelations", fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+  blockerIssue   Issue?              @relation("IssueBlockerRelations", fields: [blockerIssueId, projectId], references: [id, projectId], onDelete: Restrict)
+  project        Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy      User                @relation("IssueRelationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  closedBy       User?               @relation("IssueRelationClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+
+  @@index([projectId, issueId, status])
+  @@index([projectId, relationType, targetId])
+  @@index([blockerIssueId, status])
+  @@map("issue_relations")
+}
+
+model IssueTag {
+  id        String   @id @default(cuid())
+  projectId String   @map("project_id")
+  issueId   String   @map("issue_id")
+  tag       String
+  createdAt DateTime @default(now()) @map("created_at")
+  issue     Issue    @relation(fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([issueId, tag])
+  @@index([projectId, tag])
+  @@map("issue_tags")
+}
+
+model IssueHistory {
+  id           String                @id @default(cuid())
+  projectId    String                @map("project_id")
+  issueId      String                @map("issue_id")
+  sequence     Int
+  eventType    IssueHistoryEventType @map("event_type")
+  reason       String
+  snapshotJson Json                  @map("snapshot_json")
+  actorId      String                @map("actor_id")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  issue        Issue                 @relation(fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+  project      Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  actor        User                  @relation("IssueHistoryActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([issueId, sequence])
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("issue_histories")
+}
+
+model WbsNode {
+  id          String             @id @default(cuid())
+  projectId   String             @map("project_id")
+  parentId    String?            @map("parent_id")
+  code        String
+  name        String
+  description String?
+  position    Int
+  status      PlanningNodeStatus @default(ACTIVE)
+  version     Int                @default(1)
+  closedAt    DateTime?          @map("closed_at")
+  createdById String             @map("created_by_id")
+  updatedById String             @map("updated_by_id")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  project     Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  parent      WbsNode?           @relation("WbsNodeHierarchy", fields: [parentId, projectId], references: [id, projectId], onDelete: Restrict)
+  children    WbsNode[]          @relation("WbsNodeHierarchy")
+  tasks       PlanningTask[]
+  createdBy   User               @relation("WbsNodeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User               @relation("WbsNodeUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@unique([projectId, parentId, position])
+  @@index([projectId, status, position])
+  @@index([parentId, position])
+  @@map("wbs_nodes")
+}
+
+model PlanningTask {
+  id                       String                     @id @default(cuid())
+  projectId                String                     @map("project_id")
+  wbsNodeId                String                     @map("wbs_node_id")
+  responsibilityPackageId  String?                    @map("responsibility_package_id")
+  deliveryUnitId           String?                    @map("delivery_unit_id")
+  moduleId                 String?                    @map("module_id")
+  ownerMembershipId        String                     @map("owner_membership_id")
+  code                     String
+  name                     String
+  description              String?
+  position                 Int
+  plannedStartAt           DateTime                   @map("planned_start_at")
+  plannedFinishAt          DateTime                   @map("planned_finish_at")
+  plannedDurationMinutes   Int                        @map("planned_duration_minutes")
+  weight                   Int
+  status                   PlanningTaskStatus         @default(NOT_STARTED)
+  actualStartAt            DateTime?                  @map("actual_start_at")
+  actualFinishAt           DateTime?                  @map("actual_finish_at")
+  remainingDurationMinutes Int                        @map("remaining_duration_minutes")
+  forecastFinishAt         DateTime                   @map("forecast_finish_at")
+  version                  Int                        @default(1)
+  closedAt                 DateTime?                  @map("closed_at")
+  createdById              String                     @map("created_by_id")
+  updatedById              String                     @map("updated_by_id")
+  createdAt                DateTime                   @default(now()) @map("created_at")
+  updatedAt                DateTime                   @updatedAt @map("updated_at")
+  project                  Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  wbsNode                  WbsNode                    @relation(fields: [wbsNodeId, projectId], references: [id, projectId], onDelete: Restrict)
+  responsibilityPackage    ResponsibilityPackage?     @relation(fields: [responsibilityPackageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit             DeliveryUnit?              @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module                   ProjectModule?             @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership          ProjectMember              @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                User                       @relation("PlanningTaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                User                       @relation("PlanningTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  predecessorDependencies  TaskDependency[]           @relation("TaskDependencyPredecessor")
+  successorDependencies    TaskDependency[]           @relation("TaskDependencySuccessor")
+  milestoneLinks           ProjectMilestoneTaskLink[] @relation("PlanningTaskMilestoneLinks")
+  scheduleForecasts        ScheduleTaskForecast[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@unique([wbsNodeId, position])
+  @@index([projectId, status, code])
+  @@index([ownerMembershipId, status])
+  @@index([responsibilityPackageId, status])
+  @@index([deliveryUnitId, status])
+  @@index([moduleId, status])
+  @@map("planning_tasks")
+}
+
+model ProjectCalendar {
+  id          String                    @id @default(cuid())
+  projectId   String                    @unique @map("project_id")
+  status      PlanningCalendarStatus    @default(ACTIVE)
+  version     Int                       @default(1)
+  closedAt    DateTime?                 @map("closed_at")
+  createdById String                    @map("created_by_id")
+  updatedById String                    @map("updated_by_id")
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  updatedAt   DateTime                  @updatedAt @map("updated_at")
+  project     Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  revisions   ProjectCalendarRevision[]
+  createdBy   User                      @relation("ProjectCalendarCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User                      @relation("ProjectCalendarUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@index([status, updatedAt])
+  @@map("project_calendars")
+}
+
+model ProjectCalendarRevision {
+  id                     String                  @id @default(cuid())
+  calendarId             String                  @map("calendar_id")
+  projectId              String                  @map("project_id")
+  revision               Int
+  name                   String
+  timeZone               String                  @map("time_zone")
+  weeklyRules            Json                    @map("weekly_rules")
+  exceptions             Json
+  checksum               String
+  reason                 String
+  createdById            String                  @map("created_by_id")
+  createdAt              DateTime                @default(now()) @map("created_at")
+  calendar               ProjectCalendar         @relation(fields: [calendarId, projectId], references: [id, projectId], onDelete: Restrict)
+  project                Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy              User                    @relation("ProjectCalendarRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  scheduleRecalculations ScheduleRecalculation[]
+
+  @@unique([calendarId, revision])
+  @@index([projectId, revision])
+  @@index([checksum])
+  @@map("project_calendar_revisions")
+}
+
+model TaskDependency {
+  id                String               @id @default(cuid())
+  projectId         String               @map("project_id")
+  predecessorTaskId String               @map("predecessor_task_id")
+  successorTaskId   String               @map("successor_task_id")
+  dependencyType    TaskDependencyType   @map("dependency_type")
+  lagMinutes        Int                  @default(0) @map("lag_minutes")
+  status            TaskDependencyStatus @default(ACTIVE)
+  version           Int                  @default(1)
+  closedAt          DateTime?            @map("closed_at")
+  createdById       String               @map("created_by_id")
+  updatedById       String               @map("updated_by_id")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+  project           Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  predecessorTask   PlanningTask         @relation("TaskDependencyPredecessor", fields: [predecessorTaskId, projectId], references: [id, projectId], onDelete: Restrict)
+  successorTask     PlanningTask         @relation("TaskDependencySuccessor", fields: [successorTaskId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy         User                 @relation("TaskDependencyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy         User                 @relation("TaskDependencyUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, predecessorTaskId, successorTaskId])
+  @@unique([id, projectId])
+  @@index([projectId, status, predecessorTaskId])
+  @@index([projectId, status, successorTaskId])
+  @@map("task_dependencies")
+}
+
+model PlanningBaseline {
+  id                         String                                      @id @default(cuid())
+  projectId                  String                                      @map("project_id")
+  sourceGateSubmissionId     String                                      @map("source_gate_submission_id")
+  version                    Int
+  planningInputVersion       Int                                         @map("planning_input_version")
+  reason                     String
+  checksum                   String
+  createdById                String                                      @map("created_by_id")
+  createdAt                  DateTime                                    @default(now()) @map("created_at")
+  project                    Project                                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceGateSubmission       GateSubmission                              @relation("PlanningBaselineSourceGateSubmission", fields: [sourceGateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                  User                                        @relation("PlanningBaselineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  wbsSnapshots               PlanningBaselineWbsSnapshot[]
+  taskSnapshots              PlanningBaselineTaskSnapshot[]
+  dependencySnapshots        PlanningBaselineDependencySnapshot[]
+  milestoneSnapshots         PlanningBaselineMilestoneSnapshot[]
+  milestoneTaskLinkSnapshots PlanningBaselineMilestoneTaskLinkSnapshot[]
+  calendarSnapshot           PlanningBaselineCalendarSnapshot?
+
+  @@unique([projectId, version])
+  @@unique([id, projectId])
+  @@index([projectId, createdAt])
+  @@index([sourceGateSubmissionId])
+  @@map("planning_baselines")
+}
+
+model PlanningBaselineWbsSnapshot {
+  id              String           @id @default(cuid())
+  baselineId      String           @map("baseline_id")
+  projectId       String           @map("project_id")
+  sourceWbsNodeId String           @map("source_wbs_node_id")
+  snapshotJson    Json             @map("snapshot_json")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  baseline        PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceWbsNodeId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_wbs_snapshots")
+}
+
+model PlanningBaselineTaskSnapshot {
+  id           String           @id @default(cuid())
+  baselineId   String           @map("baseline_id")
+  projectId    String           @map("project_id")
+  sourceTaskId String           @map("source_task_id")
+  snapshotJson Json             @map("snapshot_json")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  baseline     PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceTaskId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_task_snapshots")
+}
+
+model PlanningBaselineDependencySnapshot {
+  id                 String           @id @default(cuid())
+  baselineId         String           @map("baseline_id")
+  projectId          String           @map("project_id")
+  sourceDependencyId String           @map("source_dependency_id")
+  snapshotJson       Json             @map("snapshot_json")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  baseline           PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceDependencyId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_dependency_snapshots")
+}
+
+model PlanningBaselineMilestoneSnapshot {
+  id                String           @id @default(cuid())
+  baselineId        String           @map("baseline_id")
+  projectId         String           @map("project_id")
+  sourceMilestoneId String           @map("source_milestone_id")
+  snapshotJson      Json             @map("snapshot_json")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  baseline          PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceMilestoneId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_milestone_snapshots")
+}
+
+model PlanningBaselineMilestoneTaskLinkSnapshot {
+  id                        String           @id @default(cuid())
+  baselineId                String           @map("baseline_id")
+  projectId                 String           @map("project_id")
+  sourceMilestoneTaskLinkId String           @map("source_milestone_task_link_id")
+  snapshotJson              Json             @map("snapshot_json")
+  createdAt                 DateTime         @default(now()) @map("created_at")
+  baseline                  PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, sourceMilestoneTaskLinkId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_milestone_task_link_snapshots")
+}
+
+model PlanningBaselineCalendarSnapshot {
+  id                       String           @id @default(cuid())
+  baselineId               String           @map("baseline_id")
+  projectId                String           @map("project_id")
+  sourceCalendarId         String           @map("source_calendar_id")
+  sourceCalendarRevisionId String           @map("source_calendar_revision_id")
+  snapshotJson             Json             @map("snapshot_json")
+  createdAt                DateTime         @default(now()) @map("created_at")
+  baseline                 PlanningBaseline @relation(fields: [baselineId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([baselineId, projectId])
+  @@index([projectId, baselineId])
+  @@map("planning_baseline_calendar_snapshots")
+}
+
+model CockpitProjection {
+  id                 String              @id @default(cuid())
+  projectId          String              @map("project_id")
+  sourceChecksum     String              @map("source_checksum")
+  sourceVersionsJson Json                @map("source_versions_json")
+  health             CockpitHealthStatus
+  calculatedAt       DateTime            @map("calculated_at")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  project            Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  exceptions         CockpitExceptionProjection[]
+
+  @@unique([projectId, sourceChecksum])
+  @@unique([id, projectId])
+  @@index([projectId, calculatedAt])
+  @@map("cockpit_projections")
+}
+
+model CockpitExceptionProjection {
+  id            String                   @id @default(cuid())
+  projectionId  String                   @map("projection_id")
+  projectId     String                   @map("project_id")
+  kind          CockpitExceptionKind
+  sourceKey     String                   @map("source_key")
+  severity      CockpitExceptionSeverity
+  summary       String
+  occurredAt    DateTime?                @map("occurred_at")
+  drilldownPath String                   @map("drilldown_path")
+  position      Int
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  projection    CockpitProjection        @relation(fields: [projectionId, projectId], references: [id, projectId], onDelete: Restrict)
+  project       Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([projectionId, kind, sourceKey])
+  @@index([projectId, severity, occurredAt])
+  @@map("cockpit_exception_projections")
+}
+
+model ResourceLoadProjection {
+  id                 String                         @id @default(cuid())
+  projectId          String                         @map("project_id")
+  sourceChecksum     String                         @map("source_checksum")
+  sourceVersionsJson Json                           @map("source_versions_json")
+  calculatedAt       DateTime                       @map("calculated_at")
+  createdAt          DateTime                       @default(now()) @map("created_at")
+  project            Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  people             ResourceLoadPersonProjection[]
+
+  @@unique([projectId, sourceChecksum])
+  @@unique([id, projectId])
+  @@index([projectId, calculatedAt])
+  @@map("resource_load_projections")
+}
+
+model ResourceLoadPersonProjection {
+  id                String                 @id @default(cuid())
+  projectionId      String                 @map("projection_id")
+  projectId         String                 @map("project_id")
+  ownerMembershipId String                 @map("owner_membership_id")
+  personId          String                 @map("person_id")
+  personName        String                 @map("person_name")
+  departmentId      String                 @map("department_id")
+  discipline        ProjectRole
+  plannedDays       Int                    @map("planned_days")
+  activeTaskCount   Int                    @map("active_task_count")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  projection        ResourceLoadProjection @relation(fields: [projectionId, projectId], references: [id, projectId], onDelete: Restrict)
+  project           Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  ownerMembership   ProjectMember          @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  tasks             ResourceLoadTaskProjection[]
+
+  @@unique([projectionId, ownerMembershipId])
+  @@unique([id, projectionId, projectId])
+  @@index([projectId, departmentId, discipline])
+  @@map("resource_load_person_projections")
+}
+
+model ResourceLoadTaskProjection {
+  id                 String                       @id @default(cuid())
+  personProjectionId String                       @map("person_projection_id")
+  projectionId       String                       @map("projection_id")
+  projectId          String                       @map("project_id")
+  taskId             String                       @map("task_id")
+  taskCode           String                       @map("task_code")
+  taskName           String                       @map("task_name")
+  plannedStartAt     DateTime                     @map("planned_start_at")
+  plannedFinishAt    DateTime                     @map("planned_finish_at")
+  plannedDays        Int                          @map("planned_days")
+  createdAt          DateTime                     @default(now()) @map("created_at")
+  person             ResourceLoadPersonProjection @relation(fields: [personProjectionId, projectionId, projectId], references: [id, projectionId, projectId], onDelete: Restrict)
+
+  @@unique([personProjectionId, taskId])
+  @@index([projectId, taskId])
+  @@map("resource_load_task_projections")
+}
+
+model ProjectScheduleState {
+  projectId                      String                 @id @map("project_id")
+  inputVersion                   Int                    @default(0) @map("input_version")
+  latestPublishedInputVersion    Int?                   @map("latest_published_input_version")
+  latestPublishedRecalculationId String?                @unique @map("latest_published_recalculation_id")
+  updatedAt                      DateTime               @updatedAt @map("updated_at")
+  project                        Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  latestPublishedRecalculation   ScheduleRecalculation? @relation("LatestPublishedScheduleRecalculation", fields: [latestPublishedRecalculationId], references: [id], onDelete: Restrict)
+
+  @@index([inputVersion])
+  @@map("project_schedule_states")
+}
+
+model ScheduleRecalculation {
+  id                 String                      @id @default(cuid())
+  projectId          String                      @map("project_id")
+  inputVersion       Int                         @map("input_version")
+  status             ScheduleRecalculationStatus @default(PENDING)
+  algorithmVersion   String                      @map("algorithm_version")
+  sourceAction       String                      @map("source_action")
+  reason             String
+  requestedById      String                      @map("requested_by_id")
+  calendarRevisionId String?                     @map("calendar_revision_id")
+  inputChecksum      String?                     @map("input_checksum")
+  inputSnapshot      Json?                       @map("input_snapshot")
+  resultChecksum     String?                     @map("result_checksum")
+  taskCount          Int?                        @map("task_count")
+  dependencyCount    Int?                        @map("dependency_count")
+  errorCode          String?                     @map("error_code")
+  errorMessage       String?                     @map("error_message")
+  requestedAt        DateTime                    @default(now()) @map("requested_at")
+  startedAt          DateTime?                   @map("started_at")
+  completedAt        DateTime?                   @map("completed_at")
+  updatedAt          DateTime                    @updatedAt @map("updated_at")
+  project            Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requestedBy        User                        @relation("ScheduleRecalculationRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  calendarRevision   ProjectCalendarRevision?    @relation(fields: [calendarRevisionId], references: [id], onDelete: Restrict)
+  publishedForState  ProjectScheduleState?       @relation("LatestPublishedScheduleRecalculation")
+  taskForecasts      ScheduleTaskForecast[]
+
+  @@unique([projectId, inputVersion])
+  @@unique([id, projectId])
+  @@index([projectId, status, requestedAt])
+  @@index([status, requestedAt])
+  @@map("schedule_recalculations")
+}
+
+model ScheduleTaskForecast {
+  id                String                @id @default(cuid())
+  recalculationId   String                @map("recalculation_id")
+  projectId         String                @map("project_id")
+  taskId            String                @map("task_id")
+  position          Int
+  durationMinutes   Int                   @map("duration_minutes")
+  predictedStartAt  DateTime              @map("predicted_start_at")
+  predictedFinishAt DateTime              @map("predicted_finish_at")
+  latestStartAt     DateTime              @map("latest_start_at")
+  latestFinishAt    DateTime              @map("latest_finish_at")
+  totalFloatMinutes Int                   @map("total_float_minutes")
+  isCritical        Boolean               @map("is_critical")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  recalculation     ScheduleRecalculation @relation(fields: [recalculationId, projectId], references: [id, projectId], onDelete: Restrict)
+  project           Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  task              PlanningTask          @relation(fields: [taskId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([recalculationId, taskId])
+  @@index([projectId, isCritical, position])
+  @@index([projectId, taskId, createdAt])
+  @@map("schedule_task_forecasts")
+}
+
+model ProjectMember {
+  id                          String                  @id @default(cuid())
+  projectId                   String                  @map("project_id")
+  userId                      String                  @map("user_id")
+  projectRole                 ProjectRole             @map("project_role")
+  departmentId                String?                 @map("department_id")
+  assignedById                String                  @map("assigned_by_id")
+  joinedAt                    DateTime                @default(now()) @map("joined_at")
+  leftAt                      DateTime?               @map("left_at")
+  leftById                    String?                 @map("left_by_id")
+  version                     Int                     @default(1)
+  project                     Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  user                        User                    @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Restrict)
+  assignedBy                  User                    @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+  leftBy                      User?                   @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
+  ownedResponsibilityPackages ResponsibilityPackage[]
+  assignedPlanningTasks       PlanningTask[]
+  resourceLoadPersonProjections ResourceLoadPersonProjection[]
+  ownedIssues                 Issue[]                 @relation("IssueOwnerMembership")
+  verifiedIssues              Issue[]                 @relation("IssueVerifierMembership")
+  ownedResidualItems          ResidualItem[]             @relation("ResidualItemOwnerMembership")
+  verifiedResidualItems       ResidualItem[]             @relation("ResidualItemVerifierMembership")
+
+  @@unique([id, projectId])
   @@index([projectId, leftAt])
   @@index([userId, leftAt])
   @@map("project_members")

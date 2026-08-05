@@ -64,6 +64,12 @@ export type ProjectGuardResult =
   | { authorized: true; actor: AuthorizationActor; project: ProjectAuthorizationTarget }
   | { authorized: false; response: Response };
 
+type ProjectAuthorizationContext = Omit<AuthorizationContext, "projectId" | "memberRoles">;
+type ProjectAuthorizationContextResolver = (input: {
+  actor: AuthorizationActor;
+  project: ProjectAuthorizationTarget;
+}) => Promise<ProjectAuthorizationContext>;
+
 function jsonError(status: number, code: string, message: string): Response {
   return Response.json({ error: { code, message } }, { status });
 }
@@ -72,7 +78,7 @@ export async function authorizeProjectRequest(
   request: Request,
   projectId: string,
   permission: PermissionCode,
-  context: Omit<AuthorizationContext, "projectId" | "memberRoles"> = {},
+  context: ProjectAuthorizationContext | ProjectAuthorizationContextResolver = {},
   dependencies: ProjectGuardDependencies = defaultDependencies
 ): Promise<ProjectGuardResult> {
   const identity = readRequestIdentity(request);
@@ -99,10 +105,12 @@ export async function authorizeProjectRequest(
     };
   }
 
+  const authorizationContext =
+    typeof context === "function" ? await context({ actor, project }) : context;
   const decision = decideAuthorization(actor, permission, {
-    ...context,
+    ...authorizationContext,
     projectId: project.id,
-    resourceDepartmentId: context.resourceDepartmentId ?? project.departmentId,
+    resourceDepartmentId: authorizationContext.resourceDepartmentId ?? project.departmentId,
     memberRoles: project.memberRoles
   });
 

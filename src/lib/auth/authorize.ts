@@ -27,6 +27,7 @@ export type AuthorizationContext = {
   projectId?: string;
   resourceDepartmentId?: string | null;
   resourceOwnerId?: string | null;
+  requireProjectMembership?: boolean;
   memberRoles?: string[];
   assignedUserIds?: string[];
   assignedSystemRoles?: string[];
@@ -49,6 +50,31 @@ export type AuthorizationDecision =
 
 const projectRolesByPermission: Partial<Record<PermissionCode, ProjectRoleCode[]>> = {
   [PERMISSIONS.PROJECT_PLAN_UPDATE]: [PROJECT_ROLES.PROJECT_MANAGER, PROJECT_ROLES.DEPARTMENT_LEAD],
+  [PERMISSIONS.PROJECT_ALERT_MANAGE]: [
+    PROJECT_ROLES.PROJECT_MANAGER,
+    PROJECT_ROLES.DEPARTMENT_LEAD
+  ],
+  [PERMISSIONS.PROJECT_ALERT_ACTION]: [
+    PROJECT_ROLES.PROJECT_MANAGER,
+    PROJECT_ROLES.DEPARTMENT_LEAD,
+    PROJECT_ROLES.ENGINEER,
+    PROJECT_ROLES.PROCUREMENT,
+    PROJECT_ROLES.QUALITY
+  ],
+  [PERMISSIONS.PROJECT_ISSUE_CREATE]: [
+    PROJECT_ROLES.PROJECT_MANAGER,
+    PROJECT_ROLES.DEPARTMENT_LEAD,
+    PROJECT_ROLES.ENGINEER,
+    PROJECT_ROLES.PROCUREMENT,
+    PROJECT_ROLES.QUALITY
+  ],
+  [PERMISSIONS.PROJECT_ISSUE_UPDATE]: [
+    PROJECT_ROLES.PROJECT_MANAGER,
+    PROJECT_ROLES.DEPARTMENT_LEAD,
+    PROJECT_ROLES.ENGINEER,
+    PROJECT_ROLES.PROCUREMENT,
+    PROJECT_ROLES.QUALITY
+  ],
   [PERMISSIONS.TASK_PROGRESS_UPDATE]: [
     PROJECT_ROLES.PROJECT_MANAGER,
     PROJECT_ROLES.DEPARTMENT_LEAD,
@@ -57,6 +83,13 @@ const projectRolesByPermission: Partial<Record<PermissionCode, ProjectRoleCode[]
     PROJECT_ROLES.QUALITY
   ],
   [PERMISSIONS.GATE_SUBMIT]: [PROJECT_ROLES.PROJECT_MANAGER],
+  [PERMISSIONS.CONTROLLED_DOCUMENT_MANAGE]: [
+    PROJECT_ROLES.PROJECT_MANAGER,
+    PROJECT_ROLES.DEPARTMENT_LEAD,
+    PROJECT_ROLES.ENGINEER,
+    PROJECT_ROLES.PROCUREMENT,
+    PROJECT_ROLES.QUALITY
+  ],
   [PERMISSIONS.ACCEPTANCE_RESULT_UPDATE]: [
     PROJECT_ROLES.PROJECT_MANAGER,
     PROJECT_ROLES.ENGINEER,
@@ -79,6 +112,10 @@ function decideForGrant(
   context: AuthorizationContext
 ): AuthorizationDecision {
   const memberRoles = context.memberRoles ?? [];
+
+  if (context.requireProjectMembership && memberRoles.length === 0) {
+    return { allowed: false, reason: "PROJECT_MEMBERSHIP_REQUIRED" };
+  }
 
   if (grant.scope === PERMISSION_SCOPES.ALL) {
     return { allowed: true, scope: grant.scope, systemRole: grant.systemRole };

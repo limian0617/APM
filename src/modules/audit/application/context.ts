@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { currentObservabilityContext } from "@/modules/observability/application/context";
+
 import type { AuditContext } from "../contracts/audit";
 import { sanitizeAuditText } from "../domain/sanitize";
 import { AUDIT_SOURCES, type AuditSource } from "../domain/vocabulary";
@@ -34,7 +36,8 @@ export function auditContextFromRequest(
   input: AuditContextInput,
   createId: () => string = randomUUID
 ): AuditContext {
-  const requestId = headerValue(request, "x-request-id") ?? createId();
+  const observability = currentObservabilityContext();
+  const requestId = observability?.requestId ?? headerValue(request, "x-request-id") ?? createId();
   const forwardedIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const operationId =
     input.operationId?.trim() ||
@@ -45,7 +48,7 @@ export function auditContextFromRequest(
   return {
     actorId: input.actorId,
     requestId,
-    traceId: traceId(request),
+    traceId: observability?.traceId ?? traceId(request),
     source: input.source ?? AUDIT_SOURCES.API,
     sourceIp:
       sanitizeAuditText(forwardedIp || headerValue(request, "x-real-ip") || "", 191) || null,
