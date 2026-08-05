@@ -994,3 +994,99 @@ export const controlledDocumentQuerySchema = z.strictObject({
     .transform((value) => (value === undefined ? 50 : Number(value)))
     .pipe(z.number().int().min(1).max(100))
 });
+
+const drawingNumberSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z0-9][A-Z0-9._-]{0,63}$/u);
+const drawingTypeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z][A-Z0-9._-]{0,63}$/u);
+const drawingTitleSchema = z.string().trim().min(1).max(256);
+const drawingStepFileIdsSchema = z
+  .array(identifierSchema)
+  .max(1)
+  .refine((fileIds) => new Set(fileIds).size === fileIds.length, {
+    message: "stepExchangeFileIds 不得重复。"
+  });
+
+export const mechanicalDrawingPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  drawingId: identifierSchema
+});
+export const mechanicalDrawingVersionPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  drawingId: identifierSchema,
+  documentVersionId: identifierSchema
+});
+export const createMechanicalDrawingBodySchema = z.strictObject({
+  drawingNumber: drawingNumberSchema,
+  title: drawingTitleSchema,
+  drawingType: drawingTypeSchema,
+  cadSourceFileId: identifierSchema,
+  pdfPreviewFileId: identifierSchema.nullable(),
+  stepExchangeFileIds: drawingStepFileIdsSchema,
+  reason: reasonSchema
+});
+export const createMechanicalDrawingVersionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  cadSourceFileId: identifierSchema,
+  pdfPreviewFileId: identifierSchema.nullable(),
+  stepExchangeFileIds: drawingStepFileIdsSchema,
+  reason: reasonSchema
+});
+export const publishMechanicalDrawingVersionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const mechanicalDrawingQuerySchema = z.strictObject({
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
+export const createMechanicalDrawingImportBodySchema = z.strictObject({
+  fileIds: z
+    .array(identifierSchema)
+    .min(1)
+    .max(500)
+    .refine((fileIds) => new Set(fileIds).size === fileIds.length, {
+      message: "fileIds 不得重复。"
+    }),
+  reason: reasonSchema
+});
+const confirmMechanicalDrawingImportDecisionSchema = z.discriminatedUnion("action", [
+  z.strictObject({
+    itemId: identifierSchema,
+    action: z.literal("CONFIRM"),
+    drawingNumber: drawingNumberSchema,
+    title: drawingTitleSchema,
+    drawingType: drawingTypeSchema
+  }),
+  z.strictObject({ itemId: identifierSchema, action: z.literal("REJECT") })
+]);
+export const drawingImportBatchPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  batchId: identifierSchema
+});
+export const confirmMechanicalDrawingImportBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  decisions: z
+    .array(confirmMechanicalDrawingImportDecisionSchema)
+    .min(1)
+    .max(500)
+    .refine(
+      (decisions) =>
+        new Set(decisions.map((decision) => decision.itemId)).size === decisions.length,
+      {
+        message: "每个导入项只能提交一次确认决定。"
+      }
+    ),
+  reason: reasonSchema
+});

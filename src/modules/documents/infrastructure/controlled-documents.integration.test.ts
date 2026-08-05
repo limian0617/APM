@@ -440,7 +440,7 @@ describeDatabase("APM-050 PostgreSQL controlled document facts", () => {
     ).rejects.toThrow(/cannot be deleted/u);
     await expect(
       db.$executeRawUnsafe(
-        'TRUNCATE TABLE "document_review_comment_resolutions", "document_review_comments", "document_review_events", "document_reviews", "gate_submission_document_references", "document_version_relations", "controlled_document_versions", "controlled_documents"'
+        'TRUNCATE TABLE "document_review_comment_resolutions", "document_review_comments", "document_review_events", "document_reviews", "gate_submission_document_references", "document_version_relations", "controlled_document_versions", "controlled_documents", "mechanical_drawing_import_item_files", "mechanical_drawing_import_items", "mechanical_drawing_import_batches", "mechanical_drawing_version_files", "mechanical_drawings"'
       )
     ).rejects.toThrow(/cannot be truncated/u);
   });
