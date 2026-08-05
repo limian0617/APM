@@ -49,11 +49,9 @@ describe("APM-034 alert persistence contract", () => {
     }
   });
 
-  it("keeps the APM-034 prerequisite migration in APM-050 to APM-060 CI upgrade coverage", () => {
+  it("keeps the APM-034 prerequisite migration in APM-050 to APM-061 CI upgrade coverage", () => {
     const workflow = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8");
-    expect(workflow).toContain(
-      "Validate APM-023 to APM-050 and APM-050 to APM-060 upgrade migration"
-    );
+    expect(workflow).toContain("Validate APM-050 to APM-061 upgrade migration");
     expect(workflow).toContain("20260804060000_apm_034_alert_governance");
     expect(workflow).toContain("20260805030000_apm_050_controlled_documents");
   });
