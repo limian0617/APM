@@ -39,10 +39,10 @@ describe("APM-040 cockpit projection persistence contract", () => {
     }
   });
 
-  it("moves CI upgrade coverage from the APM-023 source boundary", () => {
+  it("keeps the cockpit migration as the APM-042 upgrade source boundary", () => {
     const workflow = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8");
 
-    expect(workflow).toContain("Validate APM-023 to APM-040 upgrade migration");
-    expect(workflow).toContain("20260805010000_apm_023_planning_baselines");
+    expect(workflow).toContain("Validate APM-040 to APM-042 upgrade migration");
+    expect(workflow).toContain("20260805050000_apm_040_cockpit_projection");
   });
 });
