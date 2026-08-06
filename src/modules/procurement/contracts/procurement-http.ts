@@ -9,6 +9,7 @@ import {
 } from "@/modules/platform-api/contracts/dto";
 import { ProcurementServiceError } from "@/modules/procurement/application/material-requirement-service";
 import { ProcurementSettingsError } from "@/modules/procurement/application/procurement-settings-service";
+import { ProcurementTrackingError } from "@/modules/procurement/application/procurement-tracking-service";
 
 const quantitySchema = z
   .string()
@@ -131,6 +132,48 @@ export const createSupplierReferenceBodySchema = z.strictObject({
     .regex(/^[A-Z0-9][A-Z0-9._-]{0,63}$/u),
   name: z.string().trim().min(1).max(200)
 });
+const trackingExternalReferenceSchema = z.string().trim().min(1).max(191).nullable().optional();
+const trackingDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/u)
+  .nullable()
+  .optional();
+export const createProcurementTrackingLineBodySchema = z.strictObject({
+  requirementId: identifierSchema,
+  requirementRevisionId: identifierSchema,
+  supplierReferenceId: identifierSchema.nullable().optional(),
+  responsibleMembershipId: identifierSchema.nullable().optional(),
+  businessType: businessTypeSchema,
+  orderedQuantity: quantitySchema,
+  requisitionObjectType: trackingExternalReferenceSchema,
+  requisitionExternalId: trackingExternalReferenceSchema,
+  requisitionExternalLineId: trackingExternalReferenceSchema,
+  orderObjectType: trackingExternalReferenceSchema,
+  orderExternalId: trackingExternalReferenceSchema,
+  orderExternalLineId: trackingExternalReferenceSchema,
+  orderedOn: trackingDateSchema,
+  promisedOn: trackingDateSchema,
+  supplierConfirmationStatus: trackingExternalReferenceSchema,
+  externalStatus: trackingExternalReferenceSchema,
+  reason: reasonSchema
+});
+export const updateProcurementTrackingLineBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  orderedQuantity: quantitySchema.optional(),
+  supplierReferenceId: identifierSchema.nullable().optional(),
+  responsibleMembershipId: identifierSchema.nullable().optional(),
+  requisitionObjectType: trackingExternalReferenceSchema,
+  requisitionExternalId: trackingExternalReferenceSchema,
+  requisitionExternalLineId: trackingExternalReferenceSchema,
+  orderObjectType: trackingExternalReferenceSchema,
+  orderExternalId: trackingExternalReferenceSchema,
+  orderExternalLineId: trackingExternalReferenceSchema,
+  orderedOn: trackingDateSchema,
+  promisedOn: trackingDateSchema,
+  supplierConfirmationStatus: trackingExternalReferenceSchema,
+  externalStatus: trackingExternalReferenceSchema,
+  reason: reasonSchema
+});
 export const procurementListQuerySchema = z.strictObject({
   status: z.string().trim().min(1).max(32).optional(),
   cursor: identifierSchema.optional(),
@@ -155,7 +198,9 @@ type ProcurementServiceFailure = { code: string; message: string; status: number
 
 export function procurementServiceErrorResponse(error: unknown): Response | null {
   const failure =
-    error instanceof ProcurementServiceError || error instanceof ProcurementSettingsError
+    error instanceof ProcurementServiceError ||
+    error instanceof ProcurementSettingsError ||
+    error instanceof ProcurementTrackingError
       ? error
       : isProcurementServiceFailure(error)
         ? error

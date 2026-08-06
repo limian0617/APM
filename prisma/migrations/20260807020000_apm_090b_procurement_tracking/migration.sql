@@ -1,4 +1,9 @@
 -- APM-090B: procurement tracking projections and ERP synchronization watermarks.
+ALTER TYPE "AuditAction" ADD VALUE 'PROCUREMENT_TRACKING_CREATED';
+ALTER TYPE "AuditAction" ADD VALUE 'PROCUREMENT_TRACKING_UPDATED';
+ALTER TYPE "AuditAction" ADD VALUE 'PROCUREMENT_TRACKING_PROJECTED';
+ALTER TYPE "AuditObjectType" ADD VALUE 'PROCUREMENT_TRACKING_LINE';
+
 CREATE TYPE "ProcurementSyncStatus" AS ENUM ('IDLE', 'RUNNING', 'SUCCEEDED', 'FAILED', 'STALE');
 
 CREATE TABLE "procurement_tracking_lines" (

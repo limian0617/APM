@@ -13,11 +13,13 @@ export {
   createMaterialReferenceBodySchema,
   createMaterialRequirementBodySchema,
   createSupplierReferenceBodySchema,
+  createProcurementTrackingLineBodySchema,
   procurementCommandSchema,
   procurementListQuerySchema,
   procurementSettingsBodySchema,
   requirementCommandBodySchema,
-  reviseMaterialRequirementBodySchema
+  reviseMaterialRequirementBodySchema,
+  updateProcurementTrackingLineBodySchema
 } from "@/modules/procurement/contracts/procurement-http";
 
 export const settingPathSchema = z.strictObject({ key: identifierSchema });
@@ -290,6 +292,10 @@ export const jobPathSchema = z.strictObject({ jobId: identifierSchema });
 export const replayJobBodySchema = z.strictObject({ reason: reasonSchema });
 
 export const projectPathSchema = z.strictObject({ projectId: identifierSchema });
+export const procurementTrackingLinePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  trackingLineId: identifierSchema
+});
 export const cockpitRefreshBodySchema = z.strictObject({ reason: reasonSchema });
 export const resourceLoadRefreshBodySchema = z.strictObject({ reason: reasonSchema });
 export const planningBaselinePathSchema = z.strictObject({

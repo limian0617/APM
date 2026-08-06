@@ -44,4 +44,31 @@ describe("APM-090B procurement source port", () => {
       })
     ).rejects.toMatchObject({ code: "PROC_EXTERNAL_ID_REQUIRED", status: 422 });
   });
+
+  it("rejects an older source version and a conflicting replay", async () => {
+    const source = new MemoryErpProjectionSource();
+    const base: ProcurementProjectionEnvelope = {
+      sourceSystem: "ERP-TEST",
+      objectType: "PURCHASE_ORDER_LINE",
+      externalId: "PO-2",
+      externalLineId: "1",
+      sourceVersion: "2",
+      sourceHash: "hash-2",
+      occurredAt: new Date().toISOString(),
+      payload: {}
+    };
+    await source.upsertProjection(base);
+    await expect(
+      source.upsertProjection({ ...base, sourceVersion: "1", sourceHash: "hash-1" })
+    ).rejects.toMatchObject({
+      code: "PROC_SOURCE_VERSION_OUT_OF_ORDER",
+      status: 409
+    });
+    await expect(
+      source.upsertProjection({ ...base, sourceHash: "different" })
+    ).rejects.toMatchObject({
+      code: "PROC_SOURCE_VERSION_CONFLICT",
+      status: 409
+    });
+  });
 });

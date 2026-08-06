@@ -81,6 +81,15 @@ function assertProjectionEnvelope(input: ProcurementProjectionEnvelope) {
   }
 }
 
+function compareSourceVersion(left: string, right: string): number {
+  if (/^\d+$/u.test(left) && /^\d+$/u.test(right)) {
+    const a = BigInt(left);
+    const b = BigInt(right);
+    return a === b ? 0 : a > b ? 1 : -1;
+  }
+  return left === right ? 0 : left > right ? 1 : -1;
+}
+
 export interface ProcurementSourcePort {
   readonly mode: "LOCAL" | "ERP";
   upsertProjection(input: ProcurementProjectionEnvelope): Promise<ProjectionResult>;
@@ -97,12 +106,25 @@ export class MemoryErpProjectionSource implements ProcurementSourcePort {
       "|"
     );
     const existing = this.projections.get(key);
-    if (
-      existing &&
-      existing.sourceVersion === input.sourceVersion &&
-      existing.sourceHash === input.sourceHash
-    ) {
-      return { accepted: true, idempotent: true, sourceVersion: existing.sourceVersion };
+    if (existing) {
+      const versionOrder = compareSourceVersion(input.sourceVersion, existing.sourceVersion);
+      if (versionOrder < 0) {
+        throw new ProcurementSourceError(
+          "PROC_SOURCE_VERSION_OUT_OF_ORDER",
+          "ERP 投影版本早于当前水位。",
+          409
+        );
+      }
+      if (versionOrder === 0 && existing.sourceHash === input.sourceHash) {
+        return { accepted: true, idempotent: true, sourceVersion: existing.sourceVersion };
+      }
+      if (versionOrder === 0) {
+        throw new ProcurementSourceError(
+          "PROC_SOURCE_VERSION_CONFLICT",
+          "相同 ERP 版本绑定了不同内容。",
+          409
+        );
+      }
     }
     this.projections.set(key, { ...input, payload: { ...input.payload } });
     return { accepted: true, idempotent: false, sourceVersion: input.sourceVersion };
