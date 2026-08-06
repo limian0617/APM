@@ -818,6 +818,51 @@ export const RESIDUAL_ITEM_AUDIT_FIELDS = [
   "version"
 ] as const;
 
+export const PROCUREMENT_SETTINGS_AUDIT_FIELDS = [
+  "projectId",
+  "mode",
+  "sourceSystem",
+  "version"
+] as const;
+
+export const MATERIAL_REFERENCE_AUDIT_FIELDS = [
+  "projectId",
+  "materialReferenceId",
+  "source",
+  "externalId",
+  "code",
+  "name",
+  "trackingUnit",
+  "status",
+  "version"
+] as const;
+
+export const SUPPLIER_REFERENCE_AUDIT_FIELDS = [
+  "projectId",
+  "supplierReferenceId",
+  "source",
+  "externalId",
+  "code",
+  "name",
+  "status",
+  "version"
+] as const;
+
+export const MATERIAL_REQUIREMENT_AUDIT_FIELDS = [
+  "projectId",
+  "requirementId",
+  "revisionId",
+  "revision",
+  "materialReferenceId",
+  "quantity",
+  "trackingUnit",
+  "requiredOn",
+  "predictedAssemblyStartOn",
+  "businessType",
+  "status",
+  "version"
+] as const;
+
 export const AUDIT_QUERY_FIELDS = [
   "objectType",
   "objectId",

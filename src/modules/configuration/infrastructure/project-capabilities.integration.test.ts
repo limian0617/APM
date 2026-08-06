@@ -256,7 +256,8 @@ describeDatabase("APM-013 PostgreSQL project capabilities", () => {
       CUSTOMER_PROGRESS_SHARING: true,
       AI_ISSUE_INTAKE: true,
       UPH_ANALYSIS: true,
-      INCENTIVE_MANAGEMENT: false
+      INCENTIVE_MANAGEMENT: false,
+      PROCUREMENT_COLLABORATION: false
     };
     for (const code of CAPABILITY_CODE_VALUES) {
       await setCompanyState(code, states[code], `reset-${projectSequence}`);
