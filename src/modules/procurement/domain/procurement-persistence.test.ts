@@ -7,6 +7,10 @@ const migrationPath = resolve(
   process.cwd(),
   "prisma/migrations/20260807010000_apm_090a_procurement_foundation/migration.sql"
 );
+const trackingMigrationPath = resolve(
+  process.cwd(),
+  "prisma/migrations/20260807020000_apm_090b_procurement_tracking/migration.sql"
+);
 
 describe("APM-090A procurement persistence", () => {
   it("declares the foundation models and protects immutable requirement revisions", () => {
@@ -54,5 +58,28 @@ describe("APM-090A procurement persistence", () => {
     expect(migration.indexOf("IF TG_OP = 'DELETE' THEN")).toBeLessThan(
       migration.indexOf("IF NEW.\"business_type\" = 'DRAWING_CUSTOM' THEN")
     );
+  });
+
+  it("declares tracking projections, external mappings and sync watermarks", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = existsSync(trackingMigrationPath)
+      ? readFileSync(trackingMigrationPath, "utf8")
+      : "";
+    for (const model of ["ProcurementTrackingLine", "ExternalMapping", "ProcurementSyncState"]) {
+      expect(schema).toContain(`model ${model}`);
+    }
+    for (const table of [
+      "procurement_tracking_lines",
+      "procurement_external_mappings",
+      "procurement_sync_states"
+    ]) {
+      expect(migration).toContain(`\"${table}\"`);
+    }
+    expect(migration).toContain(
+      'UNIQUE ("source_system", "object_type", "external_id", "external_line_id")'
+    );
+    expect(migration).toContain('UNIQUE ("source_system", "object_type")');
+    expect(migration).toContain('CHECK ("ordered_quantity" > 0)');
+    expect(migration).toContain("ON DELETE RESTRICT");
   });
 });

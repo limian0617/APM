@@ -538,6 +538,14 @@ enum ProjectMaterialRequirementRevisionStatus {
   CANCELED
 }
 
+enum ProcurementSyncStatus {
+  IDLE
+  RUNNING
+  SUCCEEDED
+  FAILED
+  STALE
+}
+
 enum JobStatus {
   PENDING
   RUNNING
@@ -1393,6 +1401,8 @@ model User {
   materialRequirementsUpdated           ProjectMaterialRequirement[]         @relation("MaterialRequirementUpdatedBy")
   materialRequirementRevisionsCreated   ProjectMaterialRequirementRevision[] @relation("MaterialRequirementRevisionCreatedBy")
   materialRequirementRevisionsConfirmed ProjectMaterialRequirementRevision[] @relation("MaterialRequirementRevisionConfirmedBy")
+  procurementTrackingLinesCreated      ProcurementTrackingLine[]          @relation("ProcurementTrackingLineCreatedBy")
+  procurementTrackingLinesUpdated      ProcurementTrackingLine[]          @relation("ProcurementTrackingLineUpdatedBy")
   responsibilityPackagesCreated         ResponsibilityPackage[]           @relation("ResponsibilityPackageCreatedBy")
   responsibilityPackagesUpdated         ResponsibilityPackage[]           @relation("ResponsibilityPackageUpdatedBy")
   responsibilityPackageEventsActed      ResponsibilityPackageEvent[]      @relation("ResponsibilityPackageEventActor")
@@ -1559,6 +1569,8 @@ model Project {
   materialReferences               MaterialReference[]
   supplierReferences               SupplierReference[]
   materialRequirements             ProjectMaterialRequirement[]
+  procurementTrackingLines        ProcurementTrackingLine[]
+  procurementExternalMappings     ExternalMapping[]
   materialRequirementRevisions     ProjectMaterialRequirementRevision[]
   responsibilityPackages        ResponsibilityPackage[]
   projectMilestones             ProjectMilestone[]
@@ -1888,6 +1900,7 @@ model SupplierReference {
   project              Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
   createdBy            User                    @relation("SupplierReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy            User                    @relation("SupplierReferenceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  procurementTrackingLines ProcurementTrackingLine[]
 
   @@unique([id, projectId])
   @@unique([projectId, code])
@@ -1911,6 +1924,7 @@ model ProjectMaterialRequirement {
   revisions         ProjectMaterialRequirementRevision[] @relation("MaterialRequirementRevisions")
   createdBy         User                                 @relation("MaterialRequirementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy         User                                 @relation("MaterialRequirementUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  procurementTrackingLines ProcurementTrackingLine[]
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -1964,6 +1978,7 @@ model ProjectMaterialRequirementRevision {
   supersedesRevision            ProjectMaterialRequirementRevision?      @relation("MaterialRequirementRevisionSupersession", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
   supersededByRevision          ProjectMaterialRequirementRevision?      @relation("MaterialRequirementRevisionSupersession")
   createdBy                     User                                     @relation("MaterialRequirementRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  procurementTrackingLines      ProcurementTrackingLine[]
 
   @@unique([requirementId, revision])
   @@unique([id, projectId])
@@ -1974,6 +1989,92 @@ model ProjectMaterialRequirementRevision {
   @@index([responsibilityPackageId, projectId])
   @@index([taskId, projectId])
   @@map("project_material_requirement_revisions")
+}
+
+model ProcurementTrackingLine {
+  id                      String                  @id @default(cuid())
+  projectId               String                  @map("project_id")
+  requirementId           String                  @map("requirement_id")
+  requirementRevisionId   String                  @map("requirement_revision_id")
+  supplierReferenceId     String?                 @map("supplier_reference_id")
+  responsibleMembershipId String?                 @map("responsible_membership_id")
+  businessType            ProcurementBusinessType @map("business_type")
+  source                  ProcurementSource
+  requisitionObjectType   String?                 @map("requisition_object_type")
+  requisitionExternalId   String?                 @map("requisition_external_id")
+  requisitionExternalLineId String?               @map("requisition_external_line_id")
+  orderObjectType         String?                 @map("order_object_type")
+  orderExternalId         String?                 @map("order_external_id")
+  orderExternalLineId     String?                 @map("order_external_line_id")
+  orderedQuantity         Decimal                 @map("ordered_quantity") @db.Decimal(18, 6)
+  orderedOn               DateTime?               @map("ordered_on") @db.Date
+  promisedOn              DateTime?               @map("promised_on") @db.Date
+  supplierConfirmationStatus String?              @map("supplier_confirmation_status")
+  externalStatus          String?                 @map("external_status")
+  sourceVersion           String?                 @map("source_version")
+  sourceHash              String?                 @map("source_hash")
+  syncedAt                DateTime?               @map("synced_at")
+  version                 Int                     @default(1)
+  createdById             String                  @map("created_by_id")
+  updatedById             String                  @map("updated_by_id")
+  createdAt               DateTime                @default(now()) @map("created_at")
+  updatedAt               DateTime                @updatedAt @map("updated_at")
+  project                 Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requirement             ProjectMaterialRequirement @relation(fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
+  requirementRevision     ProjectMaterialRequirementRevision @relation(fields: [requirementRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  supplierReference       SupplierReference?     @relation(fields: [supplierReferenceId, projectId], references: [id, projectId], onDelete: Restrict)
+  responsibleMembership   ProjectMember?         @relation(fields: [responsibleMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy               User                    @relation("ProcurementTrackingLineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy               User                    @relation("ProcurementTrackingLineUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@index([projectId, requirementId, createdAt])
+  @@index([projectId, promisedOn])
+  @@index([supplierReferenceId, projectId])
+  @@map("procurement_tracking_lines")
+}
+
+model ExternalMapping {
+  id                String   @id @default(cuid())
+  sourceSystem      String   @map("source_system")
+  objectType        String   @map("object_type")
+  externalId        String   @map("external_id")
+  externalLineId    String   @map("external_line_id")
+  apmObjectType     String   @map("apm_object_type")
+  apmObjectId       String   @map("apm_object_id")
+  projectId         String   @map("project_id")
+  sourceVersion     String?  @map("source_version")
+  sourceHash        String?  @map("source_hash")
+  syncedAt          DateTime @map("synced_at")
+  version           Int      @default(1)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceSystem, objectType, externalId, externalLineId])
+  @@unique([id, projectId])
+  @@index([projectId, apmObjectType, apmObjectId])
+  @@index([sourceSystem, objectType, syncedAt])
+  @@map("procurement_external_mappings")
+}
+
+model ProcurementSyncState {
+  id                String               @id @default(cuid())
+  sourceSystem      String               @map("source_system")
+  objectType        String               @map("object_type")
+  cursor            String?
+  lastSuccessfulAt  DateTime?            @map("last_successful_at")
+  lastAttemptedAt   DateTime?            @map("last_attempted_at")
+  status            ProcurementSyncStatus @default(IDLE)
+  failureCode       String?              @map("failure_code")
+  failureMessage    String?              @map("failure_message")
+  replayRequestedAt DateTime?            @map("replay_requested_at")
+  version           Int                  @default(1)
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+  createdAt         DateTime             @default(now()) @map("created_at")
+
+  @@unique([sourceSystem, objectType])
+  @@map("procurement_sync_states")
 }
 
 model PublicLibraryDocument {
@@ -3644,6 +3745,7 @@ model ProjectMember {
   verifiedIssues              Issue[]                 @relation("IssueVerifierMembership")
   ownedResidualItems          ResidualItem[]             @relation("ResidualItemOwnerMembership")
   verifiedResidualItems       ResidualItem[]             @relation("ResidualItemVerifierMembership")
+  procurementTrackingLines    ProcurementTrackingLine[]
 
   @@unique([id, projectId])
   @@index([projectId, leftAt])
