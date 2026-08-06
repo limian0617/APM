@@ -9,6 +9,17 @@ import {
   reasonSchema
 } from "./dto";
 
+export {
+  createMaterialReferenceBodySchema,
+  createMaterialRequirementBodySchema,
+  createSupplierReferenceBodySchema,
+  procurementCommandSchema,
+  procurementListQuerySchema,
+  procurementSettingsBodySchema,
+  requirementCommandBodySchema,
+  reviseMaterialRequirementBodySchema
+} from "@/modules/procurement/contracts/procurement-http";
+
 export const settingPathSchema = z.strictObject({ key: identifierSchema });
 export const settingBodySchema = z.strictObject({
   value: z.number().int(),

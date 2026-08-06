@@ -9,7 +9,7 @@ import {
 describe("APM-013 project capability rules", () => {
   it("defaults missing template rules to deny all stable capabilities", () => {
     const policies = resolveTemplateCapabilityPolicy([]);
-    expect(policies).toHaveLength(5);
+    expect(policies).toHaveLength(6);
     expect(
       policies.every(
         ({ templateAllowed, templateRequired }) => !templateAllowed && !templateRequired
