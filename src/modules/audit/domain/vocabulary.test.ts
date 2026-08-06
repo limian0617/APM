@@ -5,10 +5,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   AUDIT_ACTIONS,
+  AUDIT_ACTION_VALUES,
   AUDIT_OBJECT_TYPES,
+  AUDIT_OBJECT_TYPE_VALUES,
   DELIVERY_UNIT_STAGE_AUDIT_FIELDS,
   GATE_APPROVAL_AUDIT_FIELDS,
   GATE_SUBMISSION_AUDIT_FIELDS,
+  PROCUREMENT_AUDIT_FIELDS,
   PROJECT_STAGE_AUDIT_FIELDS,
   STAGE_RELEASE_AUTHORIZATION_AUDIT_FIELDS
 } from "./vocabulary";
@@ -161,5 +164,66 @@ describe("Gate audit vocabulary", () => {
       expect(schema).toContain(value);
       expect(migration).toContain(`ADD VALUE '${value}'`);
     }
+  });
+});
+
+describe("procurement audit vocabulary", () => {
+  it("exposes the APM-090A procurement facts without sensitive ERP finance fields", () => {
+    expect(AUDIT_ACTIONS).toMatchObject({
+      PROCUREMENT_SETTINGS_CONFIGURED: "PROCUREMENT_SETTINGS_CONFIGURED",
+      MATERIAL_REFERENCE_CREATED: "MATERIAL_REFERENCE_CREATED",
+      SUPPLIER_REFERENCE_CREATED: "SUPPLIER_REFERENCE_CREATED",
+      MATERIAL_REQUIREMENT_DRAFTED: "MATERIAL_REQUIREMENT_DRAFTED",
+      MATERIAL_REQUIREMENT_CONFIRMED: "MATERIAL_REQUIREMENT_CONFIRMED",
+      MATERIAL_REQUIREMENT_REVISED: "MATERIAL_REQUIREMENT_REVISED",
+      MATERIAL_REQUIREMENT_CANCELED: "MATERIAL_REQUIREMENT_CANCELED"
+    });
+    expect(AUDIT_OBJECT_TYPES).toMatchObject({
+      PROJECT_PROCUREMENT_SETTINGS: "PROJECT_PROCUREMENT_SETTINGS",
+      MATERIAL_REFERENCE: "MATERIAL_REFERENCE",
+      SUPPLIER_REFERENCE: "SUPPLIER_REFERENCE",
+      PROJECT_MATERIAL_REQUIREMENT: "PROJECT_MATERIAL_REQUIREMENT",
+      PROJECT_MATERIAL_REQUIREMENT_REVISION: "PROJECT_MATERIAL_REQUIREMENT_REVISION"
+    });
+    expect(AUDIT_ACTION_VALUES).toEqual(
+      expect.arrayContaining([
+        "PROCUREMENT_SETTINGS_CONFIGURED",
+        "MATERIAL_REFERENCE_CREATED",
+        "SUPPLIER_REFERENCE_CREATED",
+        "MATERIAL_REQUIREMENT_DRAFTED",
+        "MATERIAL_REQUIREMENT_CONFIRMED",
+        "MATERIAL_REQUIREMENT_REVISED",
+        "MATERIAL_REQUIREMENT_CANCELED"
+      ])
+    );
+    expect(AUDIT_OBJECT_TYPE_VALUES).toEqual(
+      expect.arrayContaining([
+        "PROJECT_PROCUREMENT_SETTINGS",
+        "MATERIAL_REFERENCE",
+        "SUPPLIER_REFERENCE",
+        "PROJECT_MATERIAL_REQUIREMENT",
+        "PROJECT_MATERIAL_REQUIREMENT_REVISION"
+      ])
+    );
+    expect(PROCUREMENT_AUDIT_FIELDS).toEqual(
+      expect.arrayContaining([
+        "projectId",
+        "materialReferenceId",
+        "supplierReferenceId",
+        "requirementId",
+        "revisionId",
+        "quantity",
+        "trackingUnit",
+        "requiredOn",
+        "businessType",
+        "status",
+        "source",
+        "version",
+        "reason"
+      ])
+    );
+    expect(PROCUREMENT_AUDIT_FIELDS).not.toEqual(
+      expect.arrayContaining(["price", "bankAccount", "taxNumber", "payment"])
+    );
   });
 });
