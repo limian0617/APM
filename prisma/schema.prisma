@@ -307,6 +307,7 @@ model FileObject {
   publicLibrarySourceVersions PublicLibraryDocumentVersion[] @relation("PublicLibraryVersionSourceFile")
   mechanicalDrawingVersionFiles    MechanicalDrawingVersionFile[]    @relation("DrawingVersionFile")
   mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[] @relation("DrawingImportItemFile")
+  procurementFulfillmentEvents     ProcurementFulfillmentEvent[]
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -544,6 +545,18 @@ enum ProcurementSyncStatus {
   SUCCEEDED
   FAILED
   STALE
+}
+
+enum ProcurementFulfillmentEventType {
+  PURCHASE_ARRIVED
+  OUTSOURCED_DISPATCHED
+  OUTSOURCED_COMPLETED
+  OUTSOURCED_RETURNED
+  ACCEPTED
+  MARKED_USABLE
+  REJECTED
+  RETURNED
+  REVERSED
 }
 
 enum JobStatus {
@@ -1241,6 +1254,8 @@ enum AuditAction {
   PROCUREMENT_TRACKING_CREATED
   PROCUREMENT_TRACKING_UPDATED
   PROCUREMENT_TRACKING_PROJECTED
+  PROCUREMENT_FULFILLMENT_RECORDED
+  PROCUREMENT_FULFILLMENT_REVERSED
   RND_PROJECT_CREATED
   RND_PROJECT_STATUS_CHANGED
   TECHNICAL_ASSET_CREATED
@@ -1316,6 +1331,7 @@ enum AuditObjectType {
   PROJECT_MATERIAL_REQUIREMENT
   PROJECT_MATERIAL_REQUIREMENT_REVISION
   PROCUREMENT_TRACKING_LINE
+  PROCUREMENT_FULFILLMENT_EVENT
   RND_PROJECT
   RND_PROJECT_EVENT
   TECHNICAL_ASSET
@@ -1407,6 +1423,7 @@ model User {
   materialRequirementRevisionsConfirmed ProjectMaterialRequirementRevision[] @relation("MaterialRequirementRevisionConfirmedBy")
   procurementTrackingLinesCreated      ProcurementTrackingLine[]          @relation("ProcurementTrackingLineCreatedBy")
   procurementTrackingLinesUpdated      ProcurementTrackingLine[]          @relation("ProcurementTrackingLineUpdatedBy")
+  procurementFulfillmentEventsCreated  ProcurementFulfillmentEvent[]       @relation("ProcurementFulfillmentEventCreatedBy")
   responsibilityPackagesCreated         ResponsibilityPackage[]           @relation("ResponsibilityPackageCreatedBy")
   responsibilityPackagesUpdated         ResponsibilityPackage[]           @relation("ResponsibilityPackageUpdatedBy")
   responsibilityPackageEventsActed      ResponsibilityPackageEvent[]      @relation("ResponsibilityPackageEventActor")
@@ -1575,6 +1592,7 @@ model Project {
   materialRequirements             ProjectMaterialRequirement[]
   procurementTrackingLines        ProcurementTrackingLine[]
   procurementExternalMappings     ExternalMapping[]
+  procurementFulfillmentEvents   ProcurementFulfillmentEvent[]
   materialRequirementRevisions     ProjectMaterialRequirementRevision[]
   responsibilityPackages        ResponsibilityPackage[]
   projectMilestones             ProjectMilestone[]
@@ -1929,6 +1947,7 @@ model ProjectMaterialRequirement {
   createdBy         User                                 @relation("MaterialRequirementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy         User                                 @relation("MaterialRequirementUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   procurementTrackingLines ProcurementTrackingLine[]
+  fulfillmentEvents       ProcurementFulfillmentEvent[]
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -1983,6 +2002,7 @@ model ProjectMaterialRequirementRevision {
   supersededByRevision          ProjectMaterialRequirementRevision?      @relation("MaterialRequirementRevisionSupersession")
   createdBy                     User                                     @relation("MaterialRequirementRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   procurementTrackingLines      ProcurementTrackingLine[]
+  fulfillmentEvents             ProcurementFulfillmentEvent[]
 
   @@unique([requirementId, revision])
   @@unique([id, projectId])
@@ -2030,6 +2050,7 @@ model ProcurementTrackingLine {
   responsibleMembership   ProjectMember?         @relation(fields: [responsibleMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
   createdBy               User                    @relation("ProcurementTrackingLineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy               User                    @relation("ProcurementTrackingLineUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  fulfillmentEvents       ProcurementFulfillmentEvent[]
 
   @@unique([id, projectId])
   @@index([projectId, requirementId, createdAt])
@@ -2079,6 +2100,40 @@ model ProcurementSyncState {
 
   @@unique([sourceSystem, objectType])
   @@map("procurement_sync_states")
+}
+
+model ProcurementFulfillmentEvent {
+  id                    String                           @id @default(cuid())
+  projectId             String                           @map("project_id")
+  requirementId         String                           @map("requirement_id")
+  requirementRevisionId String                           @map("requirement_revision_id")
+  trackingLineId        String?                          @map("tracking_line_id")
+  eventType             ProcurementFulfillmentEventType  @map("event_type")
+  quantity              Decimal                          @db.Decimal(18, 6)
+  trackingUnit          String                           @map("tracking_unit")
+  businessOccurredAt    DateTime                         @map("business_occurred_at")
+  recordedAt            DateTime                         @default(now()) @map("recorded_at")
+  source                ProcurementSource
+  externalEventKey      String?                          @map("external_event_key")
+  externalDocumentRef   String?                          @map("external_document_ref")
+  evidenceFileId        String?                          @map("evidence_file_id")
+  reversesEventId       String?                          @unique @map("reverses_event_id")
+  reason                String
+  createdById           String                           @map("created_by_id")
+  project               Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requirement           ProjectMaterialRequirement       @relation(fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
+  requirementRevision   ProjectMaterialRequirementRevision @relation(fields: [requirementRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  trackingLine          ProcurementTrackingLine?        @relation(fields: [trackingLineId, projectId], references: [id, projectId], onDelete: Restrict)
+  evidenceFile          FileObject?                      @relation(fields: [evidenceFileId, projectId], references: [id, projectId], onDelete: Restrict)
+  reversesEvent         ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventReversal", fields: [reversesEventId], references: [id], onDelete: Restrict)
+  reversedBy             ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventReversal")
+  createdBy             User                             @relation("ProcurementFulfillmentEventCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([source, externalEventKey])
+  @@unique([id, projectId])
+  @@index([projectId, requirementId, businessOccurredAt])
+  @@index([trackingLineId, businessOccurredAt])
+  @@map("procurement_fulfillment_events")
 }
 
 model PublicLibraryDocument {

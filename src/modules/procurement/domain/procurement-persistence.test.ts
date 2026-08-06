@@ -11,6 +11,10 @@ const trackingMigrationPath = resolve(
   process.cwd(),
   "prisma/migrations/20260807020000_apm_090b_procurement_tracking/migration.sql"
 );
+const eventsMigrationPath = resolve(
+  process.cwd(),
+  "prisma/migrations/20260807030000_apm_091a_procurement_events/migration.sql"
+);
 
 describe("APM-090A procurement persistence", () => {
   it("declares the foundation models and protects immutable requirement revisions", () => {
@@ -80,6 +84,33 @@ describe("APM-090A procurement persistence", () => {
     );
     expect(migration).toContain('UNIQUE ("source_system", "object_type")');
     expect(migration).toContain('CHECK ("ordered_quantity" > 0)');
+    expect(migration).toContain("ON DELETE RESTRICT");
+  });
+
+  it("declares immutable fulfillment events and their source identity", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = existsSync(eventsMigrationPath)
+      ? readFileSync(eventsMigrationPath, "utf8")
+      : "";
+    expect(schema).toContain("enum ProcurementFulfillmentEventType");
+    expect(schema).toContain("model ProcurementFulfillmentEvent");
+    for (const field of [
+      "eventType",
+      "quantity",
+      "businessOccurredAt",
+      "recordedAt",
+      "externalEventKey",
+      "evidenceFileId",
+      "reversesEventId",
+      "createdById"
+    ]) {
+      expect(schema).toContain(field);
+    }
+    expect(migration).toContain('"procurement_fulfillment_events"');
+    expect(migration).toContain('UNIQUE ("source", "external_event_key")');
+    expect(migration).toContain("BEFORE UPDATE OR DELETE");
+    expect(migration).toContain("BEFORE TRUNCATE");
+    expect(migration).toContain('CHECK ("quantity" > 0)');
     expect(migration).toContain("ON DELETE RESTRICT");
   });
 });
