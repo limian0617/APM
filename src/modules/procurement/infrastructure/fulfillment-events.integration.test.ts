@@ -11,12 +11,18 @@ import {
   confirmMaterialRequirement
 } from "@/modules/procurement/application/material-requirement-service";
 import { configureProjectProcurement } from "@/modules/procurement/application/procurement-settings-service";
+import {
+  appendProcurementFulfillmentEvent,
+  reverseProcurementFulfillmentEvent
+} from "@/modules/procurement/application/fulfillment-event-service";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
 const actorId = `event-admin-${suffix}`;
 const projectId = `event-project-${suffix}`;
 let eventId = "";
+let requirementId = "";
+let requirementRevisionId = "";
 
 function context(operationId: string): AuditContext {
   return {
@@ -104,6 +110,8 @@ describeDatabase("APM-091A PostgreSQL fulfillment event immutability", () => {
       actorId,
       auditContext: context("confirm")
     });
+    requirementId = confirmed.requirement.id;
+    requirementRevisionId = confirmed.requirement.currentRevision!.id;
     const event = await db.procurementFulfillmentEvent.create({
       data: {
         projectId,
@@ -129,5 +137,118 @@ describeDatabase("APM-091A PostgreSQL fulfillment event immutability", () => {
       db.$executeRaw`DELETE FROM procurement_fulfillment_events WHERE id = ${eventId}`
     ).rejects.toThrow();
     await expect(db.$executeRaw`TRUNCATE procurement_fulfillment_events`).rejects.toThrow();
+  });
+
+  it("rejects an invalid unit and an outsourced event for a standard requirement in PostgreSQL", async () => {
+    const base = {
+      projectId,
+      requirementId,
+      requirementRevisionId,
+      quantity: new Prisma.Decimal("1"),
+      businessOccurredAt: new Date("2026-08-07T00:00:00Z"),
+      source: "LOCAL" as const,
+      reason: "数据库约束测试",
+      createdById: actorId
+    };
+    await expect(
+      db.procurementFulfillmentEvent.create({
+        data: { ...base, eventType: "PURCHASE_ARRIVED", trackingUnit: "M" }
+      })
+    ).rejects.toThrow();
+    await expect(
+      db.procurementFulfillmentEvent.create({
+        data: { ...base, eventType: "OUTSOURCED_DISPATCHED", trackingUnit: "PCS" }
+      })
+    ).rejects.toThrow();
+  });
+
+  it("records acceptance facts and one reversal with audit and outbox records", async () => {
+    const arrival = await appendProcurementFulfillmentEvent({
+      projectId,
+      requirementId,
+      requirementRevisionId,
+      eventType: "PURCHASE_ARRIVED",
+      quantity: "1",
+      trackingUnit: "PCS",
+      businessOccurredAt: "2026-08-07T00:00:00.000Z",
+      reason: "补充到货",
+      actorId,
+      auditContext: context("arrival"),
+      readinessPolicy: { arrivalAutoUsable: true, inspectionRequired: false }
+    });
+    expect(arrival.events).toHaveLength(2);
+    expect(arrival.events[1]).toMatchObject({
+      eventType: "MARKED_USABLE",
+      quantity: "1",
+      derivedFromEventId: arrival.events[0]!.id
+    });
+    expect(arrival.auditIds).toHaveLength(2);
+    expect(arrival.outboxEventIds).toHaveLength(2);
+
+    const accepted = await appendProcurementFulfillmentEvent({
+      projectId,
+      requirementId,
+      requirementRevisionId,
+      eventType: "ACCEPTED",
+      quantity: "2",
+      trackingUnit: "PCS",
+      businessOccurredAt: "2026-08-07T01:00:00.000Z",
+      reason: "验收合格",
+      actorId,
+      auditContext: context("accepted")
+    });
+    const reversed = await reverseProcurementFulfillmentEvent({
+      projectId,
+      eventId: accepted.events[0]!.id,
+      version: accepted.resourceVersion,
+      reason: "录入错误，冲销验收",
+      actorId,
+      auditContext: context("reverse")
+    });
+    expect(reversed.events[0]).toMatchObject({
+      eventType: "REVERSED",
+      quantity: accepted.events[0]!.quantity,
+      trackingUnit: "PCS",
+      reversesEventId: accepted.events[0]!.id
+    });
+    expect(reversed.auditIds).toHaveLength(1);
+    expect(reversed.outboxEventIds).toHaveLength(1);
+
+    const reversedAutomaticArrival = await reverseProcurementFulfillmentEvent({
+      projectId,
+      eventId: arrival.events[0]!.id,
+      version: reversed.resourceVersion,
+      reason: "冲销自动可用的到货",
+      actorId,
+      auditContext: context("reverse-automatic-arrival")
+    });
+    expect(reversedAutomaticArrival.events).toHaveLength(2);
+    expect(reversedAutomaticArrival.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "REVERSED",
+          reversesEventId: arrival.events[0]!.id
+        }),
+        expect.objectContaining({
+          eventType: "REVERSED",
+          reversesEventId: arrival.events[1]!.id
+        })
+      ])
+    );
+    expect(reversedAutomaticArrival.auditIds).toHaveLength(2);
+    expect(reversedAutomaticArrival.outboxEventIds).toHaveLength(2);
+
+    await expect(
+      reverseProcurementFulfillmentEvent({
+        projectId,
+        eventId: accepted.events[0]!.id,
+        version: reversed.resourceVersion,
+        reason: "重复冲销",
+        actorId,
+        auditContext: context("reverse-again")
+      })
+    ).rejects.toThrow(
+      expect.objectContaining({ code: "PROC_EVENT_ALREADY_REVERSED", status: 409 })
+    );
   });
 });

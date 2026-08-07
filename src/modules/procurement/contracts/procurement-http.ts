@@ -8,6 +8,7 @@ import {
   reasonSchema
 } from "@/modules/platform-api/contracts/dto";
 import { ProcurementServiceError } from "@/modules/procurement/application/material-requirement-service";
+import { FulfillmentEventServiceError } from "@/modules/procurement/application/fulfillment-event-service";
 import { ProcurementSettingsError } from "@/modules/procurement/application/procurement-settings-service";
 import { ProcurementTrackingError } from "@/modules/procurement/application/procurement-tracking-service";
 
@@ -174,6 +175,44 @@ export const updateProcurementTrackingLineBodySchema = z.strictObject({
   externalStatus: trackingExternalReferenceSchema,
   reason: reasonSchema
 });
+const fulfillmentEventTypeSchema = z.enum([
+  "PURCHASE_ARRIVED",
+  "OUTSOURCED_DISPATCHED",
+  "OUTSOURCED_COMPLETED",
+  "OUTSOURCED_RETURNED",
+  "ACCEPTED",
+  "MARKED_USABLE",
+  "REJECTED",
+  "RETURNED"
+]);
+const occurredAtSchema = z.string().datetime({ offset: true });
+export const appendFulfillmentEventBodySchema = z.strictObject({
+  requirementId: identifierSchema,
+  requirementRevisionId: identifierSchema,
+  trackingLineId: identifierSchema.nullable().optional(),
+  eventType: fulfillmentEventTypeSchema,
+  quantity: quantitySchema,
+  trackingUnit: unitSchema,
+  businessOccurredAt: occurredAtSchema,
+  externalEventKey: identifierSchema.nullable().optional(),
+  externalDocumentRef: z.string().trim().min(1).max(191).nullable().optional(),
+  evidenceFileId: identifierSchema.nullable().optional(),
+  reason: reasonSchema
+});
+export const reverseFulfillmentEventBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const fulfillmentEventQuerySchema = z.strictObject({
+  requirementId: identifierSchema.optional(),
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
 export const procurementListQuerySchema = z.strictObject({
   status: z.string().trim().min(1).max(32).optional(),
   cursor: identifierSchema.optional(),
@@ -200,7 +239,8 @@ export function procurementServiceErrorResponse(error: unknown): Response | null
   const failure =
     error instanceof ProcurementServiceError ||
     error instanceof ProcurementSettingsError ||
-    error instanceof ProcurementTrackingError
+    error instanceof ProcurementTrackingError ||
+    error instanceof FulfillmentEventServiceError
       ? error
       : isProcurementServiceFailure(error)
         ? error

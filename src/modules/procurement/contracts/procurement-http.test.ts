@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appendFulfillmentEventBodySchema,
   createMaterialRequirementBodySchema,
   procurementCommandSchema,
   procurementServiceErrorResponse,
-  parseMaterialRequirementBody
+  parseMaterialRequirementBody,
+  reverseFulfillmentEventBodySchema
 } from "./procurement-http";
 
 describe("APM-090A procurement HTTP contracts", () => {
@@ -50,5 +52,38 @@ describe("APM-090A procurement HTTP contracts", () => {
     await expect(response?.json()).resolves.toMatchObject({
       error: { code: "PROC_CAPABILITY_DISABLED" }
     });
+  });
+
+  it("accepts only appendable fulfillment events with controlled timestamps", () => {
+    const accepted = appendFulfillmentEventBodySchema.safeParse({
+      requirementId: "requirement-1",
+      requirementRevisionId: "revision-1",
+      eventType: "PURCHASE_ARRIVED",
+      quantity: "2",
+      trackingUnit: "PCS",
+      businessOccurredAt: "2026-08-07T00:00:00.000Z",
+      reason: "到货登记"
+    });
+    expect(accepted.success).toBe(true);
+    expect(
+      appendFulfillmentEventBodySchema.safeParse({
+        requirementId: "requirement-1",
+        requirementRevisionId: "revision-1",
+        eventType: "REVERSED",
+        quantity: "2",
+        trackingUnit: "PCS",
+        businessOccurredAt: "2026-08-07",
+        reason: "绕过反向接口"
+      }).success
+    ).toBe(false);
+  });
+
+  it("requires a versioned reverse command with a reason", () => {
+    expect(
+      reverseFulfillmentEventBodySchema.safeParse({ version: 1, reason: "录入错误" }).success
+    ).toBe(true);
+    expect(reverseFulfillmentEventBodySchema.safeParse({ version: 0, reason: "" }).success).toBe(
+      false
+    );
   });
 });

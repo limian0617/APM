@@ -15,6 +15,14 @@ const eventsMigrationPath = resolve(
   process.cwd(),
   "prisma/migrations/20260807030000_apm_091a_procurement_events/migration.sql"
 );
+const fulfillmentIntegrityMigrationPath = resolve(
+  process.cwd(),
+  "prisma/migrations/20260807030100_apm_091a_fulfillment_integrity/migration.sql"
+);
+const fulfillmentDerivationMigrationPath = resolve(
+  process.cwd(),
+  "prisma/migrations/20260807030200_apm_091a_fulfillment_derivations/migration.sql"
+);
 
 describe("APM-090A procurement persistence", () => {
   it("declares the foundation models and protects immutable requirement revisions", () => {
@@ -112,5 +120,31 @@ describe("APM-090A procurement persistence", () => {
     expect(migration).toContain("BEFORE TRUNCATE");
     expect(migration).toContain('CHECK ("quantity" > 0)');
     expect(migration).toContain("ON DELETE RESTRICT");
+  });
+
+  it("enforces fulfillment event project relations and business types in PostgreSQL", () => {
+    const migration = existsSync(fulfillmentIntegrityMigrationPath)
+      ? readFileSync(fulfillmentIntegrityMigrationPath, "utf8")
+      : "";
+    expect(migration).toContain("validate_procurement_fulfillment_event_integrity");
+    expect(migration).toContain("BEFORE INSERT");
+    expect(migration).toContain('NEW."tracking_unit" <> revision."tracking_unit"');
+    expect(migration).toContain('NEW."requirement_id"');
+    expect(migration).toContain('NEW."evidence_file_id"');
+    expect(migration).toContain('NEW."reverses_event_id"');
+    expect(migration).toContain("OUTSOURCED_PROCESS");
+  });
+
+  it("persists an automatic usable event's immutable source arrival relation", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = existsSync(fulfillmentDerivationMigrationPath)
+      ? readFileSync(fulfillmentDerivationMigrationPath, "utf8")
+      : "";
+
+    expect(schema).toContain("derivedFromEventId");
+    expect(schema).toContain("ProcurementFulfillmentEventDerivation");
+    expect(migration).toContain('"derived_from_event_id"');
+    expect(migration).toContain("procurement_fulfillment_events_derived_from_event_fkey");
+    expect(migration).toContain("MARKED_USABLE");
   });
 });

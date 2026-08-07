@@ -2118,6 +2118,7 @@ model ProcurementFulfillmentEvent {
   externalDocumentRef   String?                          @map("external_document_ref")
   evidenceFileId        String?                          @map("evidence_file_id")
   reversesEventId       String?                          @unique @map("reverses_event_id")
+  derivedFromEventId    String?                          @unique @map("derived_from_event_id")
   reason                String
   createdById           String                           @map("created_by_id")
   project               Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -2127,6 +2128,8 @@ model ProcurementFulfillmentEvent {
   evidenceFile          FileObject?                      @relation(fields: [evidenceFileId, projectId], references: [id, projectId], onDelete: Restrict)
   reversesEvent         ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventReversal", fields: [reversesEventId], references: [id], onDelete: Restrict)
   reversedBy             ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventReversal")
+  derivedFromEvent       ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventDerivation", fields: [derivedFromEventId], references: [id], onDelete: Restrict)
+  derivedAutoUsableEvent ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventDerivation")
   createdBy             User                             @relation("ProcurementFulfillmentEventCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
   @@unique([source, externalEventKey])

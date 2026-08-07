@@ -404,6 +404,7 @@ export const ALERT_AUDIT_FIELDS = [
 
 export const PROCUREMENT_AUDIT_FIELDS = [
   "projectId",
+  "fulfillmentEventId",
   "materialReferenceId",
   "supplierReferenceId",
   "requirementId",
@@ -413,6 +414,14 @@ export const PROCUREMENT_AUDIT_FIELDS = [
   "requiredOn",
   "businessType",
   "trackingLineId",
+  "eventType",
+  "businessOccurredAt",
+  "recordedAt",
+  "externalEventKey",
+  "externalDocumentRef",
+  "evidenceFileId",
+  "reversesEventId",
+  "derivedFromEventId",
   "responsibleMembershipId",
   "promisedOn",
   "supplierConfirmationStatus",

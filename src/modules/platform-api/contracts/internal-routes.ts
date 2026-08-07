@@ -14,9 +14,12 @@ export {
   createMaterialRequirementBodySchema,
   createSupplierReferenceBodySchema,
   createProcurementTrackingLineBodySchema,
+  appendFulfillmentEventBodySchema,
+  fulfillmentEventQuerySchema,
   procurementCommandSchema,
   procurementListQuerySchema,
   procurementSettingsBodySchema,
+  reverseFulfillmentEventBodySchema,
   requirementCommandBodySchema,
   reviseMaterialRequirementBodySchema,
   updateProcurementTrackingLineBodySchema
@@ -295,6 +298,10 @@ export const projectPathSchema = z.strictObject({ projectId: identifierSchema })
 export const procurementTrackingLinePathSchema = z.strictObject({
   projectId: identifierSchema,
   trackingLineId: identifierSchema
+});
+export const procurementFulfillmentEventPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  eventId: identifierSchema
 });
 export const cockpitRefreshBodySchema = z.strictObject({ reason: reasonSchema });
 export const resourceLoadRefreshBodySchema = z.strictObject({ reason: reasonSchema });
