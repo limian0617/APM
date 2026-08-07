@@ -559,6 +559,23 @@ enum ProcurementFulfillmentEventType {
   REVERSED
 }
 
+enum ProcurementReadinessScopeType {
+  PROJECT
+  DELIVERY_UNIT
+  MACHINE
+  MODULE
+  REQUIREMENT
+}
+
+enum ProcurementReadinessStatus {
+  READY
+  BLOCKED
+  EMPTY
+  INVALID_INPUT
+  STALE
+  FAILED
+}
+
 enum JobStatus {
   PENDING
   RUNNING
@@ -955,6 +972,12 @@ enum AlertSourceType {
   MILESTONE_OVERDUE
   GATE_HARD_FAILURE
   RESIDUAL_ITEM_OVERDUE
+  PROCUREMENT_NOT_ORDERED
+  PROCUREMENT_LATE
+  PROCUREMENT_PENDING_ACCEPTANCE
+  PROCUREMENT_CRITICAL_SHORTAGE
+  PROCUREMENT_CHANGE_BLOCKED
+  PROCUREMENT_DATA_STALE
 }
 
 enum AlertRiskLevel {
@@ -1424,6 +1447,7 @@ model User {
   procurementTrackingLinesCreated      ProcurementTrackingLine[]          @relation("ProcurementTrackingLineCreatedBy")
   procurementTrackingLinesUpdated      ProcurementTrackingLine[]          @relation("ProcurementTrackingLineUpdatedBy")
   procurementFulfillmentEventsCreated  ProcurementFulfillmentEvent[]       @relation("ProcurementFulfillmentEventCreatedBy")
+  procurementReadinessPoliciesCreated  ProcurementReadinessPolicyVersion[] @relation("ProcurementReadinessPolicyCreatedBy")
   responsibilityPackagesCreated         ResponsibilityPackage[]           @relation("ResponsibilityPackageCreatedBy")
   responsibilityPackagesUpdated         ResponsibilityPackage[]           @relation("ResponsibilityPackageUpdatedBy")
   responsibilityPackageEventsActed      ResponsibilityPackageEvent[]      @relation("ResponsibilityPackageEventActor")
@@ -1593,6 +1617,8 @@ model Project {
   procurementTrackingLines        ProcurementTrackingLine[]
   procurementExternalMappings     ExternalMapping[]
   procurementFulfillmentEvents   ProcurementFulfillmentEvent[]
+  procurementReadinessPolicyVersions ProcurementReadinessPolicyVersion[]
+  procurementReadinessResults     ProcurementReadinessResult[]
   materialRequirementRevisions     ProjectMaterialRequirementRevision[]
   responsibilityPackages        ResponsibilityPackage[]
   projectMilestones             ProjectMilestone[]
@@ -1843,18 +1869,21 @@ model MechanicalDrawing {
 }
 
 model ProjectProcurementSettings {
-  projectId      String          @id @map("project_id")
-  mode           ProcurementMode
-  sourceSystem   String?         @map("source_system")
-  version        Int             @default(1)
-  configuredById String          @map("configured_by_id")
-  configuredAt   DateTime        @default(now()) @map("configured_at")
-  updatedById    String          @map("updated_by_id")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
-  project        Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  configuredBy   User            @relation("ProcurementSettingsConfiguredBy", fields: [configuredById], references: [id], onDelete: Restrict)
-  updatedBy      User            @relation("ProcurementSettingsUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  projectId                       String                           @id @map("project_id")
+  mode                            ProcurementMode
+  sourceSystem                    String?                          @map("source_system")
+  currentReadinessPolicyVersionId String?                          @map("current_readiness_policy_version_id")
+  version                         Int                              @default(1)
+  configuredById                  String                           @map("configured_by_id")
+  configuredAt                    DateTime                         @default(now()) @map("configured_at")
+  updatedById                     String                           @map("updated_by_id")
+  updatedAt                       DateTime                         @updatedAt @map("updated_at")
+  project                         Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  currentReadinessPolicyVersion   ProcurementReadinessPolicyVersion? @relation("ProjectCurrentReadinessPolicyVersion", fields: [currentReadinessPolicyVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  configuredBy                    User                             @relation("ProcurementSettingsConfiguredBy", fields: [configuredById], references: [id], onDelete: Restrict)
+  updatedBy                       User                             @relation("ProcurementSettingsUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
+  @@unique([currentReadinessPolicyVersionId, projectId])
   @@index([mode, configuredAt])
   @@map("project_procurement_settings")
 }
@@ -2137,6 +2166,63 @@ model ProcurementFulfillmentEvent {
   @@index([projectId, requirementId, businessOccurredAt])
   @@index([trackingLineId, businessOccurredAt])
   @@map("procurement_fulfillment_events")
+}
+
+model ProcurementReadinessPolicyVersion {
+  id                        String                       @id @default(cuid())
+  projectId                 String                       @map("project_id")
+  version                   Int
+  inspectionRequired        Boolean                      @map("inspection_required")
+  arrivalAutoUsable         Boolean                      @map("arrival_auto_usable")
+  criticalRuleJson          Json                         @map("critical_rule_json")
+  dueGraceDays              Int                          @map("due_grace_days")
+  gateThresholdJson         Json                         @map("gate_threshold_json")
+  formulaVersion            String                       @map("formula_version")
+  createdById               String                       @map("created_by_id")
+  reason                    String
+  createdAt                 DateTime                     @default(now()) @map("created_at")
+  project                   Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                 User                         @relation("ProcurementReadinessPolicyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  currentForProjectSettings ProjectProcurementSettings?  @relation("ProjectCurrentReadinessPolicyVersion")
+  results                   ProcurementReadinessResult[]
+
+  @@unique([projectId, version])
+  @@unique([id, projectId])
+  @@index([projectId, createdAt])
+  @@index([createdById, createdAt])
+  @@map("procurement_readiness_policy_versions")
+}
+
+model ProcurementReadinessResult {
+  id                     String                            @id @default(cuid())
+  projectId              String                            @map("project_id")
+  scopeType              ProcurementReadinessScopeType     @map("scope_type")
+  scopeId                String                            @map("scope_id")
+  policyVersionId        String                            @map("policy_version_id")
+  formulaVersion         String                            @map("formula_version")
+  inputWatermark         String                            @map("input_watermark")
+  status                 ProcurementReadinessStatus
+  totalLines             Int                               @map("total_lines")
+  readyLines             Int                               @map("ready_lines")
+  readinessRate          Decimal                           @map("readiness_rate") @db.Decimal(18, 6)
+  criticalTotalLines     Int                               @map("critical_total_lines")
+  criticalReadyLines     Int                               @map("critical_ready_lines")
+  criticalReadinessRate  Decimal                           @map("critical_readiness_rate") @db.Decimal(18, 6)
+  gapLines               Int                               @map("gap_lines")
+  overdueLines           Int                               @map("overdue_lines")
+  pendingAcceptanceLines Int                               @map("pending_acceptance_lines")
+  blockingCriticalLines  Int                               @map("blocking_critical_lines")
+  sourceMode             ProcurementMode                   @map("source_mode")
+  sourceSyncedAt         DateTime?                         @map("source_synced_at")
+  calculatedAt           DateTime                          @map("calculated_at")
+  project                Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  policyVersion          ProcurementReadinessPolicyVersion @relation(fields: [policyVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([projectId, scopeType, scopeId, inputWatermark, formulaVersion])
+  @@unique([id, projectId])
+  @@index([projectId, scopeType, scopeId, calculatedAt])
+  @@index([policyVersionId, projectId])
+  @@map("procurement_readiness_results")
 }
 
 model PublicLibraryDocument {

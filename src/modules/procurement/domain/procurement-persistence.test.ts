@@ -23,6 +23,10 @@ const fulfillmentDerivationMigrationPath = resolve(
   process.cwd(),
   "prisma/migrations/20260807030200_apm_091a_fulfillment_derivations/migration.sql"
 );
+const readinessMigrationPath = resolve(
+  process.cwd(),
+  "prisma/migrations/20260807040000_apm_091b_procurement_readiness/migration.sql"
+);
 
 describe("APM-090A procurement persistence", () => {
   it("declares the foundation models and protects immutable requirement revisions", () => {
@@ -146,5 +150,175 @@ describe("APM-090A procurement persistence", () => {
     expect(migration).toContain('"derived_from_event_id"');
     expect(migration).toContain("procurement_fulfillment_events_derived_from_event_fkey");
     expect(migration).toContain("MARKED_USABLE");
+  });
+
+  it("persists immutable project-scoped readiness policies and results", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = existsSync(readinessMigrationPath)
+      ? readFileSync(readinessMigrationPath, "utf8")
+      : "";
+    const readinessPolicyStart = schema.indexOf("model ProcurementReadinessPolicyVersion");
+    const readinessResultStart = schema.indexOf("model ProcurementReadinessResult");
+    const settingsStart = schema.indexOf("model ProjectProcurementSettings");
+    const policyDefinition = schema.slice(
+      readinessPolicyStart,
+      schema.indexOf("\nmodel ", readinessPolicyStart + 1)
+    );
+    const resultDefinition = schema.slice(
+      readinessResultStart,
+      schema.indexOf("\nmodel ", readinessResultStart + 1)
+    );
+    const settingsDefinition = schema.slice(
+      settingsStart,
+      schema.indexOf("\nmodel ", settingsStart + 1)
+    );
+
+    expect(schema).toContain("enum ProcurementReadinessScopeType");
+    expect(schema).toContain("enum ProcurementReadinessStatus");
+    expect(schema).toContain("model ProcurementReadinessPolicyVersion");
+    expect(schema).toContain("model ProcurementReadinessResult");
+
+    for (const field of [
+      "projectId",
+      "version",
+      "inspectionRequired",
+      "arrivalAutoUsable",
+      "criticalRuleJson",
+      "dueGraceDays",
+      "gateThresholdJson",
+      "formulaVersion",
+      "createdById",
+      "reason",
+      "createdAt"
+    ]) {
+      expect(policyDefinition).toContain(field);
+    }
+    expect(policyDefinition).toContain("@@unique([projectId, version])");
+    expect(policyDefinition).toContain("@@unique([id, projectId])");
+
+    for (const field of [
+      "projectId",
+      "scopeType",
+      "scopeId",
+      "policyVersionId",
+      "formulaVersion",
+      "inputWatermark",
+      "status",
+      "totalLines",
+      "readyLines",
+      "readinessRate",
+      "criticalTotalLines",
+      "criticalReadyLines",
+      "criticalReadinessRate",
+      "gapLines",
+      "overdueLines",
+      "pendingAcceptanceLines",
+      "blockingCriticalLines",
+      "sourceMode",
+      "sourceSyncedAt",
+      "calculatedAt"
+    ]) {
+      expect(resultDefinition).toContain(field);
+    }
+    expect(resultDefinition).toContain(
+      "@@unique([projectId, scopeType, scopeId, inputWatermark, formulaVersion])"
+    );
+
+    expect(settingsDefinition).toContain("currentReadinessPolicyVersionId");
+    expect(settingsDefinition).toContain("@@unique([currentReadinessPolicyVersionId, projectId])");
+
+    const readinessStatusDefinition = schema.slice(
+      schema.indexOf("enum ProcurementReadinessStatus"),
+      schema.indexOf("\n}\n", schema.indexOf("enum ProcurementReadinessStatus"))
+    );
+    for (const status of ["READY", "BLOCKED", "EMPTY", "INVALID_INPUT", "STALE", "FAILED"]) {
+      expect(readinessStatusDefinition).toContain(status);
+    }
+    const readinessScopeDefinition = schema.slice(
+      schema.indexOf("enum ProcurementReadinessScopeType"),
+      schema.indexOf("\n}\n", schema.indexOf("enum ProcurementReadinessScopeType"))
+    );
+    for (const scopeType of ["PROJECT", "DELIVERY_UNIT", "MACHINE", "MODULE", "REQUIREMENT"]) {
+      expect(readinessScopeDefinition).toContain(scopeType);
+    }
+
+    const alertSourceDefinition = schema.slice(
+      schema.indexOf("enum AlertSourceType"),
+      schema.indexOf("\n}\n", schema.indexOf("enum AlertSourceType"))
+    );
+    const procurementAlertSources =
+      alertSourceDefinition.match(/^\s+(PROCUREMENT_[A-Z_]+)$/gmu)?.map((value) => value.trim()) ??
+      [];
+    expect(procurementAlertSources).toEqual([
+      "PROCUREMENT_NOT_ORDERED",
+      "PROCUREMENT_LATE",
+      "PROCUREMENT_PENDING_ACCEPTANCE",
+      "PROCUREMENT_CRITICAL_SHORTAGE",
+      "PROCUREMENT_CHANGE_BLOCKED",
+      "PROCUREMENT_DATA_STALE"
+    ]);
+
+    for (const table of [
+      "procurement_readiness_policy_versions",
+      "procurement_readiness_results"
+    ]) {
+      expect(migration).toContain(`\"${table}\"`);
+    }
+    expect(migration).toContain('UNIQUE ("project_id", "version")');
+    expect(migration).toContain(
+      'UNIQUE ("project_id", "scope_type", "scope_id", "input_watermark", "formula_version")'
+    );
+    expect(migration).toContain(
+      'FOREIGN KEY ("current_readiness_policy_version_id", "project_id") REFERENCES "procurement_readiness_policy_versions"("id", "project_id")'
+    );
+    expect(migration).toContain(
+      'FOREIGN KEY ("policy_version_id", "project_id") REFERENCES "procurement_readiness_policy_versions"("id", "project_id")'
+    );
+    expect(migration).toContain('CHECK (NOT "inspection_required" OR NOT "arrival_auto_usable")');
+    expect(migration).toContain("procurement_readiness_results_line_counts_check");
+    for (const constraint of [
+      '"critical_total_lines" <= "total_lines"',
+      '"critical_ready_lines" <= "ready_lines"',
+      '"gap_lines" <= "total_lines"',
+      '"overdue_lines" <= "total_lines"',
+      '"pending_acceptance_lines" <= "total_lines"'
+    ]) {
+      expect(migration).toContain(constraint);
+    }
+    expect(migration).toContain("procurement_readiness_results_rates_check");
+    expect(migration).toMatch(
+      /CASE WHEN "total_lines" = 0 THEN "readiness_rate" = 0\s+ELSE "readiness_rate" = trunc\("ready_lines"::NUMERIC \/ "total_lines", 6\) END/u
+    );
+    expect(migration).toMatch(
+      /CASE WHEN "critical_total_lines" = 0 THEN "critical_readiness_rate" = 0\s+ELSE "critical_readiness_rate" = trunc\("critical_ready_lines"::NUMERIC \/ "critical_total_lines", 6\) END/u
+    );
+    expect(migration).toContain("procurement_readiness_results_empty_status_check");
+    for (const zeroFact of [
+      '"total_lines" = 0',
+      '"ready_lines" = 0',
+      '"readiness_rate" = 0',
+      '"critical_total_lines" = 0',
+      '"critical_ready_lines" = 0',
+      '"critical_readiness_rate" = 0',
+      '"gap_lines" = 0',
+      '"overdue_lines" = 0',
+      '"pending_acceptance_lines" = 0',
+      '"blocking_critical_lines" = 0'
+    ]) {
+      expect(migration).toContain(zeroFact);
+    }
+    expect(migration).toContain("procurement_readiness_results_ready_status_check");
+    for (const readyFact of [
+      '"total_lines" > 0',
+      '"ready_lines" = "total_lines"',
+      '"critical_ready_lines" = "critical_total_lines"',
+      '"gap_lines" = 0',
+      '"blocking_critical_lines" = 0'
+    ]) {
+      expect(migration).toContain(readyFact);
+    }
+    expect(migration).toContain("BEFORE UPDATE OR DELETE");
+    expect(migration).toContain("BEFORE TRUNCATE");
+    expect(migration).toContain("ON DELETE RESTRICT");
   });
 });

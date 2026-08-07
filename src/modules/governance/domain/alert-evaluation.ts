@@ -122,4 +122,6 @@ export function evaluateAlertCandidates(
         ];
       });
   }
+
+  return [];
 }

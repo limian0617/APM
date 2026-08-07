@@ -30,6 +30,24 @@ describe("APM-034 alert policy", () => {
     expect(() => validateAlertRuleConfig("UNREGISTERED", {})).toThrow(AlertValidationError);
   });
 
+  it("registers procurement readiness sources with the existing empty condition rule", () => {
+    const procurementSources = [
+      "PROCUREMENT_NOT_ORDERED",
+      "PROCUREMENT_LATE",
+      "PROCUREMENT_PENDING_ACCEPTANCE",
+      "PROCUREMENT_CRITICAL_SHORTAGE",
+      "PROCUREMENT_CHANGE_BLOCKED",
+      "PROCUREMENT_DATA_STALE"
+    ];
+
+    expect(
+      Object.values(ALERT_SOURCE_TYPES).filter((source) => source.startsWith("PROCUREMENT_"))
+    ).toEqual(procurementSources);
+    for (const source of procurementSources) {
+      expect(validateAlertRuleConfig(source, {})).toEqual({});
+    }
+  });
+
   it("builds a stable source key scoped by the registered source type", () => {
     expect(buildAlertSourceKey(ALERT_SOURCE_TYPES.GATE_HARD_FAILURE, " gate-check-1 ")).toBe(
       "GATE_HARD_FAILURE:gate-check-1"

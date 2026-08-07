@@ -81,4 +81,15 @@ describe("APM-034 alert source evaluation", () => {
       )
     ).toMatchObject([{ sourceKey: "GATE_HARD_FAILURE:check-result", message: "安全检查失败" }]);
   });
+
+  it("emits no candidates for registered procurement sources before procurement evaluation exists", () => {
+    const procurementSources = Object.values(ALERT_SOURCE_TYPES).filter((source) =>
+      source.startsWith("PROCUREMENT_")
+    );
+
+    expect(procurementSources).toHaveLength(6);
+    for (const sourceType of procurementSources) {
+      expect(evaluateAlertCandidates({ sourceType, condition: {} }, now, {})).toEqual([]);
+    }
+  });
 });
