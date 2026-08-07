@@ -10,6 +10,7 @@ import {
   createMaterialRequirementDraft,
   confirmMaterialRequirement
 } from "@/modules/procurement/application/material-requirement-service";
+import { configureReadinessPolicy } from "@/modules/procurement/application/readiness-service";
 import { configureProjectProcurement } from "@/modules/procurement/application/procurement-settings-service";
 import {
   appendProcurementFulfillmentEvent,
@@ -80,6 +81,17 @@ describeDatabase("APM-091A PostgreSQL fulfillment event immutability", () => {
       reason: "事件测试启用本地模式",
       actorId,
       auditContext: context("settings")
+    });
+    await configureReadinessPolicy({
+      projectId,
+      inspectionRequired: false,
+      arrivalAutoUsable: true,
+      criticalRule: {},
+      dueGraceDays: 0,
+      gateThreshold: {},
+      reason: "事件测试配置到货自动可用",
+      actorId,
+      auditContext: context("readiness-policy")
     });
     const material = await createMaterialReference({
       projectId,
@@ -173,8 +185,7 @@ describeDatabase("APM-091A PostgreSQL fulfillment event immutability", () => {
       businessOccurredAt: "2026-08-07T00:00:00.000Z",
       reason: "补充到货",
       actorId,
-      auditContext: context("arrival"),
-      readinessPolicy: { arrivalAutoUsable: true, inspectionRequired: false }
+      auditContext: context("arrival")
     });
     expect(arrival.events).toHaveLength(2);
     expect(arrival.events[1]).toMatchObject({

@@ -23,6 +23,8 @@ import {
   validateFulfillmentEvent
 } from "@/modules/procurement/domain/fulfillment-event";
 
+import { appendReadinessRecalculationRequest } from "./readiness-service";
+
 export class FulfillmentEventServiceError extends Error {
   constructor(
     readonly code: string,
@@ -50,8 +52,6 @@ export type AppendFulfillmentEventInput = {
   reason: unknown;
   actorId: string;
   auditContext: AuditContext;
-  // APM-091B will provide this only from a published readiness-policy version.
-  readinessPolicy?: { arrivalAutoUsable: boolean; inspectionRequired: boolean };
 };
 
 export type ReverseFulfillmentEventInput = {
@@ -230,7 +230,10 @@ async function assertWritableContext(client: Prisma.TransactionClient, projectId
       }
     }),
     client.companyCapability.findUnique({ where: { code: "PROCUREMENT_COLLABORATION" } }),
-    client.projectProcurementSettings.findUnique({ where: { projectId } })
+    client.projectProcurementSettings.findUnique({
+      where: { projectId },
+      include: { currentReadinessPolicyVersion: true }
+    })
   ]);
   if (!project) {
     throw new FulfillmentEventServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
@@ -453,6 +456,12 @@ async function recordEventChange(
     idempotencyKey: `${input.event.id}:${input.action}`,
     payload: { ...value, action: input.action, auditId: audit.id }
   });
+  await appendReadinessRecalculationRequest(client, {
+    projectId: input.event.projectId,
+    cause: `procurement-fulfillment-${input.action}`,
+    idempotencyKey: input.event.id,
+    traceId: input.auditContext.traceId
+  });
   return { auditId: audit.id, outboxEventId: outbox.id };
 }
 
@@ -594,8 +603,7 @@ export async function appendProcurementFulfillmentEvent(
       }
     });
 
-    const policy = input.readinessPolicy ?? {
-      // No policy version exists until APM-091B. Preserve the conservative acceptance default.
+    const policy = context.settings.currentReadinessPolicyVersion ?? {
       arrivalAutoUsable: false,
       inspectionRequired: true
     };

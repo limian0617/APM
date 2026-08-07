@@ -16,6 +16,8 @@ import {
 } from "@/modules/procurement/contracts/procurement-source";
 import { deriveProcurementDisplayStatus } from "@/modules/procurement/domain/procurement-status";
 
+import { appendReadinessRecalculationRequest } from "./readiness-service";
+
 export class ProcurementTrackingError extends Error {
   constructor(
     readonly code: string,
@@ -273,6 +275,12 @@ async function recordTrackingChange(
       version: input.line.version,
       auditId: audit.id
     }
+  });
+  await appendReadinessRecalculationRequest(client, {
+    projectId: input.line.projectId,
+    cause: `procurement-tracking-${input.action}`,
+    idempotencyKey: `${input.line.id}:v${input.line.version}`,
+    traceId: input.context.traceId
   });
   return { auditId: audit.id, outboxEventId: event.id };
 }

@@ -20,6 +20,8 @@ import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { validateRequirementDraft } from "@/modules/procurement/domain/procurement-policy";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 
+import { appendReadinessRecalculationRequest } from "./readiness-service";
+
 export class ProcurementServiceError extends Error {
   constructor(
     readonly code: string,
@@ -774,6 +776,12 @@ export async function confirmMaterialRequirement(
       idempotencyKey: `${requirementId}:v${updated.version}`,
       payload: { ...value, auditId: audit.id }
     });
+    await appendReadinessRecalculationRequest(client, {
+      projectId,
+      cause: "material-requirement-confirmed",
+      idempotencyKey: `${requirementId}:v${updated.version}`,
+      traceId: input.auditContext.traceId
+    });
     return {
       requirement: updated,
       resourceVersion: updated.version,
@@ -860,6 +868,12 @@ export async function reviseMaterialRequirement(
       idempotencyKey: `${requirementId}:v${updated.version}`,
       payload: { ...value, auditId: audit.id }
     });
+    await appendReadinessRecalculationRequest(client, {
+      projectId,
+      cause: "material-requirement-revised",
+      idempotencyKey: `${requirementId}:v${updated.version}`,
+      traceId: input.auditContext.traceId
+    });
     return {
       requirement: updated,
       resourceVersion: updated.version,
@@ -917,6 +931,12 @@ export async function cancelMaterialRequirement(
       aggregateId: requirementId,
       idempotencyKey: `${requirementId}:v${updated.version}`,
       payload: { ...value, auditId: audit.id }
+    });
+    await appendReadinessRecalculationRequest(client, {
+      projectId,
+      cause: "material-requirement-canceled",
+      idempotencyKey: `${requirementId}:v${updated.version}`,
+      traceId: input.auditContext.traceId
     });
     return {
       requirement: updated,
