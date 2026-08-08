@@ -967,7 +967,8 @@ a {
 .procurement-tree,
 .procurement-table-section,
 .procurement-timeline,
-.procurement-readiness-tree {
+.procurement-readiness-tree,
+.procurement-change-impact-list {
   min-width: 0;
   margin-top: 22px;
   border-top: 2px solid #c8d4de;
@@ -981,7 +982,8 @@ a {
 .procurement-exception-list ul,
 .procurement-tree ul,
 .procurement-timeline ol,
-.procurement-readiness-tree ul {
+.procurement-readiness-tree ul,
+.procurement-change-impact-list ul {
   display: grid;
   gap: 0;
   margin: 0;
@@ -992,7 +994,8 @@ a {
 .procurement-exception-list li,
 .procurement-tree li,
 .procurement-timeline li,
-.procurement-readiness-tree li {
+.procurement-readiness-tree li,
+.procurement-change-impact-list > ul > li {
   border-top: 1px solid #d9e0e8;
   padding: 11px 0;
 }
@@ -1125,6 +1128,78 @@ a {
   outline-offset: 2px;
 }
 
+.procurement-command:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.procurement-change-impact-list > ul > li {
+  display: grid;
+  gap: 10px;
+}
+
+.procurement-change-impact-list > ul > li > div {
+  display: grid;
+  gap: 4px;
+  color: #27394a;
+}
+
+.procurement-change-impact-list > ul > li > div > span,
+.procurement-change-impact-list p {
+  margin: 0;
+  color: #526476;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.procurement-change-impact-list > ul > li > ul {
+  gap: 10px;
+  padding-left: 16px;
+}
+
+.procurement-change-impact-list > ul > li > ul > li {
+  border-left: 2px solid #c8d4de;
+  padding: 8px 0 8px 12px;
+}
+
+.procurement-change-resolution-form {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.procurement-change-resolution-form label {
+  display: grid;
+  gap: 4px;
+  color: #526476;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.procurement-change-resolution-form input,
+.procurement-change-resolution-form select {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid #aebdca;
+  border-radius: 4px;
+  padding: 7px 8px;
+  background: #fff;
+  color: #27394a;
+  font: inherit;
+}
+
+.procurement-change-resolution-form input:focus-visible,
+.procurement-change-resolution-form select:focus-visible {
+  outline: 2px solid #16718d;
+  outline-offset: 2px;
+}
+
+.procurement-change-resolution-form .procurement-command {
+  margin-top: 0;
+}
+
 @media (max-width: 760px) {
   .procurement-page {
     padding: 20px 16px 36px;
@@ -1181,6 +1256,10 @@ a {
   .procurement-source-timestamps {
     grid-template-columns: 1fr;
   }
+
+  .procurement-change-resolution-form {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 430px) {
@@ -1198,6 +1277,10 @@ a {
 
   .procurement-state-panel {
     padding: 20px;
+  }
+
+  .procurement-change-resolution-form {
+    grid-template-columns: 1fr;
   }
 }
 

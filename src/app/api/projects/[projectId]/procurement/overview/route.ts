@@ -25,14 +25,10 @@ async function getOverview(request: Request, context: RouteContext) {
     const overview = await readProjectProcurementOverview({ projectId: path.projectId });
     const readiness = overview.readiness;
     return Response.json({
-      projectId: path.projectId,
       view: query.view,
       status: readiness?.status ?? "EMPTY",
-      mode: readiness?.sourceMode ?? null,
-      readiness,
-      stale: overview.stale,
-      sourceSyncedAt: readiness?.sourceSyncedAt ?? null,
-      calculatedAt: readiness?.calculatedAt ?? null
+      ...overview,
+      readiness
     });
   } catch (error) {
     return apiContractErrorResponse(error) ?? Promise.reject(error);

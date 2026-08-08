@@ -42,6 +42,25 @@ describe("GET /api/projects/[projectId]/procurement/overview", () => {
     });
     readinessService.readProjectProcurementOverview.mockResolvedValue({
       projectId: "project-1",
+      projectName: "装配线升级项目",
+      projectCode: "APM-001",
+      mode: "ERP",
+      overallReadinessRate: "0.75",
+      criticalReadinessRate: "0.5",
+      criticalGapLines: 2,
+      notOrderedCount: 3,
+      overdueCount: 4,
+      pendingAcceptanceCount: 5,
+      changePendingCount: 6,
+      blockingCount: 7,
+      sourceSyncedAt: "2026-08-07T01:00:00.000Z",
+      calculatedAt: "2026-08-07T02:00:00.000Z",
+      sourceTimestamps: {
+        requirements: "2026-08-07T00:00:00.000Z",
+        tracking: "2026-08-07T00:30:00.000Z",
+        fulfillment: "2026-08-07T01:00:00.000Z",
+        readiness: "2026-08-07T02:00:00.000Z"
+      },
       stale: true,
       readiness: {
         projectId: "project-1",
@@ -62,9 +81,27 @@ describe("GET /api/projects/[projectId]/procurement/overview", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       projectId: "project-1",
+      projectName: "装配线升级项目",
+      projectCode: "APM-001",
       status: "STALE",
       mode: "ERP",
-      stale: true
+      stale: true,
+      overallReadinessRate: "0.75",
+      criticalReadinessRate: "0.5",
+      criticalGapLines: 2,
+      notOrderedCount: 3,
+      overdueCount: 4,
+      pendingAcceptanceCount: 5,
+      changePendingCount: 6,
+      blockingCount: 7,
+      sourceSyncedAt: "2026-08-07T01:00:00.000Z",
+      calculatedAt: "2026-08-07T02:00:00.000Z",
+      sourceTimestamps: {
+        requirements: "2026-08-07T00:00:00.000Z",
+        tracking: "2026-08-07T00:30:00.000Z",
+        fulfillment: "2026-08-07T01:00:00.000Z",
+        readiness: "2026-08-07T02:00:00.000Z"
+      }
     });
   });
 });

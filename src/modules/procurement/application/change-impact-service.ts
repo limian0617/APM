@@ -1,6 +1,6 @@
 import { Prisma, type ProcurementMode } from "@prisma/client";
 
-import { inTransaction } from "@/lib/db";
+import { db, inTransaction } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   AUDIT_ACTIONS,
@@ -62,6 +62,16 @@ function isDisposition(value: unknown): value is ProcurementChangeImpactDisposit
   );
 }
 
+function impactVersion(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new ProcurementChangeImpactServiceError(
+      "PROC_CHANGE_VERSION_INVALID",
+      "version 必须是正整数。"
+    );
+  }
+  return value as number;
+}
+
 export function validateChangeImpactResolution(input: {
   obligationType: ProcurementChangeImpactObligationType;
   disposition: unknown;
@@ -105,7 +115,20 @@ export function assertImpactResolutionAllowed(input: {
   currentStatus: "OPEN" | "RESOLVED";
   requestedStatus: unknown;
   allObligationsResolved: boolean;
+  expectedVersion?: number;
+  currentVersion?: number;
 }) {
+  if (
+    input.expectedVersion !== undefined &&
+    input.currentVersion !== undefined &&
+    input.expectedVersion !== input.currentVersion
+  ) {
+    throw new ProcurementChangeImpactServiceError(
+      "PROC_CHANGE_VERSION_CONFLICT",
+      "采购变更影响已发生变化，请刷新后重试。",
+      409
+    );
+  }
   if (input.currentStatus !== "OPEN" || input.requestedStatus !== "RESOLVED") {
     throw new ProcurementChangeImpactServiceError(
       "PROC_CHANGE_STATUS_TRANSITION_INVALID",
@@ -299,11 +322,184 @@ export async function detectAndRecordProcurementChangeImpact(
   return { impact, detected, auditId: audit.id, outboxEventId: outbox.id };
 }
 
+export type ProcurementChangeImpactListQuery = Readonly<{
+  projectId: string;
+  status?: "OPEN" | "RESOLVED";
+  limit?: number;
+}>;
+
+function changeImpactReadSelect() {
+  return {
+    id: true,
+    projectId: true,
+    requirementId: true,
+    previousRevisionId: true,
+    nextRevisionId: true,
+    type: true,
+    changedFieldsJson: true,
+    status: true,
+    version: true,
+    detectedAt: true,
+    resolvedAt: true,
+    obligations: {
+      orderBy: { id: "asc" as const },
+      select: {
+        id: true,
+        type: true,
+        subjectId: true,
+        createdAt: true,
+        resolution: {
+          select: {
+            id: true,
+            disposition: true,
+            evidenceReference: true,
+            reason: true,
+            confirmedAt: true,
+            confirmedById: true
+          }
+        }
+      }
+    }
+  };
+}
+
+export async function listProcurementChangeImpacts(input: ProcurementChangeImpactListQuery) {
+  const projectId = requiredText(input.projectId, "projectId", 191);
+  const limit = input.limit === undefined ? 100 : input.limit;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    throw new ProcurementChangeImpactServiceError(
+      "PROC_CHANGE_LIST_LIMIT_INVALID",
+      "limit 必须是 1 到 100 的整数。"
+    );
+  }
+  const impacts = await db.procurementChangeImpact.findMany({
+    where: { projectId, ...(input.status ? { status: input.status } : {}) },
+    orderBy: [{ status: "asc" }, { detectedAt: "desc" }, { id: "desc" }],
+    take: limit,
+    select: changeImpactReadSelect()
+  });
+  return { projectId, impacts };
+}
+
+export async function readProcurementChangeImpactDetail(input: {
+  projectId: string;
+  impactId: string;
+}) {
+  const projectId = requiredText(input.projectId, "projectId", 191);
+  const impactId = requiredText(input.impactId, "impactId", 191);
+  const impact = await db.procurementChangeImpact.findFirst({
+    where: { id: impactId, projectId },
+    select: changeImpactReadSelect()
+  });
+  if (!impact) {
+    throw new ProcurementChangeImpactServiceError(
+      "PROC_CHANGE_IMPACT_NOT_FOUND",
+      "采购变更影响不存在或不属于当前项目。",
+      404
+    );
+  }
+  return impact;
+}
+
+type LockedChangeImpact = Readonly<{
+  id: string;
+  projectId: string;
+  previousRevisionId: string;
+  nextRevisionId: string | null;
+  changedFieldsJson: Prisma.JsonValue;
+  status: "OPEN" | "RESOLVED";
+  version: number;
+}>;
+
+async function closeImpactWhenAllObligationsResolved(
+  client: Prisma.TransactionClient,
+  input: {
+    impact: LockedChangeImpact;
+    actorId: string;
+    auditContext: AuditContext;
+    reason: string;
+  }
+) {
+  const obligations = await client.procurementChangeImpactObligation.findMany({
+    where: { projectId: input.impact.projectId, impactId: input.impact.id },
+    include: { resolution: true },
+    orderBy: { id: "asc" }
+  });
+  if (
+    input.impact.status === "RESOLVED" ||
+    !isChangeImpactResolved(
+      obligations.map((obligation) => ({ resolved: obligation.resolution !== null }))
+    )
+  ) {
+    return {
+      impact: input.impact,
+      closed: false,
+      auditId: null,
+      outboxEventId: null
+    };
+  }
+  assertImpactResolutionAllowed({
+    currentStatus: input.impact.status,
+    requestedStatus: "RESOLVED",
+    allObligationsResolved: true
+  });
+  const resolvedAt = await databaseNow(client);
+  const impact = await client.procurementChangeImpact.update({
+    where: { id: input.impact.id },
+    data: {
+      status: "RESOLVED",
+      version: { increment: 1 },
+      resolvedById: input.actorId,
+      resolvedAt
+    },
+    include: { obligations: { include: { resolution: true } } }
+  });
+  const audit = await writeAudit(client, {
+    action: AUDIT_ACTIONS.PROCUREMENT_CHANGE_IMPACT_RESOLVED,
+    objectType: AUDIT_OBJECT_TYPES.PROCUREMENT_CHANGE_IMPACT,
+    objectId: impact.id,
+    context: {
+      ...input.auditContext,
+      projectId: input.impact.projectId,
+      actorId: input.actorId,
+      reason: input.reason
+    },
+    after: {
+      value: impactAuditValue({
+        impactId: impact.id,
+        projectId: input.impact.projectId,
+        previousRevisionId: impact.previousRevisionId,
+        nextRevisionId: impact.nextRevisionId,
+        changedFields: Array.isArray(impact.changedFieldsJson)
+          ? impact.changedFieldsJson.filter((value): value is string => typeof value === "string")
+          : [],
+        version: impact.version,
+        reason: input.reason
+      }),
+      allowedFields: PROCUREMENT_AUDIT_FIELDS
+    }
+  });
+  const outbox = await appendOutboxEvent(client, {
+    eventType: "procurement.change-impact.resolved",
+    aggregateType: "PROCUREMENT_CHANGE_IMPACT",
+    aggregateId: impact.id,
+    idempotencyKey: `${impact.id}:resolved:v${impact.version}`,
+    payload: {
+      projectId: input.impact.projectId,
+      procurementChangeImpactId: impact.id,
+      auditId: audit.id
+    },
+    traceId: input.auditContext.traceId
+  });
+  return { impact, closed: true, auditId: audit.id, outboxEventId: outbox.id };
+}
+
 export async function resolveProcurementChangeImpact(
   input: {
     projectId: string;
     impactId: string;
     obligationId: string;
+    version: unknown;
     disposition: unknown;
     evidenceReference: unknown;
     reason: unknown;
@@ -313,6 +509,12 @@ export async function resolveProcurementChangeImpact(
   transaction?: Prisma.TransactionClient
 ) {
   return inTransaction(transaction, async (client) => {
+    const expectedVersion = impactVersion(input.version);
+    await client.$queryRaw`
+      SELECT "id" FROM "procurement_change_impacts"
+      WHERE "id" = ${input.impactId} AND "project_id" = ${input.projectId}
+      FOR UPDATE
+    `;
     const impact = await client.procurementChangeImpact.findFirst({
       where: { id: input.impactId, projectId: input.projectId },
       include: { obligations: { include: { resolution: true } } }
@@ -322,13 +524,6 @@ export async function resolveProcurementChangeImpact(
         "PROC_CHANGE_IMPACT_NOT_FOUND",
         "采购变更影响不存在或不属于当前项目。",
         404
-      );
-    }
-    if (impact.status !== "OPEN") {
-      throw new ProcurementChangeImpactServiceError(
-        "PROC_CHANGE_ALREADY_RESOLVED",
-        "采购变更影响已经解决。",
-        409
       );
     }
     const obligation = impact.obligations.find((candidate) => candidate.id === input.obligationId);
@@ -360,9 +555,38 @@ export async function resolveProcurementChangeImpact(
         403
       );
     }
+    if (obligation.resolution) {
+      const closure = await closeImpactWhenAllObligationsResolved(client, {
+        impact,
+        actorId: input.actorId,
+        auditContext: input.auditContext,
+        reason: requiredText(input.reason, "reason")
+      });
+      return {
+        resolution: obligation.resolution,
+        idempotent: true,
+        impact: closure.impact,
+        resolvedAuditId: closure.auditId,
+        resolvedOutboxId: closure.outboxEventId
+      };
+    }
+    if (impact.status !== "OPEN") {
+      throw new ProcurementChangeImpactServiceError(
+        "PROC_CHANGE_ALREADY_RESOLVED",
+        "采购变更影响已经解决。",
+        409
+      );
+    }
+    assertImpactResolutionAllowed({
+      currentStatus: impact.status,
+      requestedStatus: "RESOLVED",
+      allObligationsResolved: true,
+      expectedVersion,
+      currentVersion: impact.version
+    });
     const erpProjection =
       obligation.type === "ERP_PROJECTION"
-        ? await readErpProjectionFact(client, input.projectId, impact.previousRevisionId)
+        ? await readErpProjectionFact(client, input.projectId, impact.id)
         : undefined;
     const validated = validateChangeImpactResolution({
       obligationType: obligation.type,
@@ -371,9 +595,6 @@ export async function resolveProcurementChangeImpact(
       reason: input.reason,
       erpProjection
     });
-    if (obligation.resolution) {
-      return { resolution: obligation.resolution, idempotent: true, impact };
-    }
     const resolution = await client.procurementChangeImpactResolution.create({
       data: {
         projectId: input.projectId,
@@ -412,73 +633,12 @@ export async function resolveProcurementChangeImpact(
         allowedFields: PROCUREMENT_AUDIT_FIELDS
       }
     });
-    const resolved = isChangeImpactResolved(
-      impact.obligations.map((candidate) => ({
-        resolved: candidate.id === obligation.id || candidate.resolution !== null
-      }))
-    );
-    let resolvedImpact = impact;
-    let resolvedAuditId: string | null = null;
-    let resolvedOutboxId: string | null = null;
-    if (resolved) {
-      assertImpactResolutionAllowed({
-        currentStatus: impact.status,
-        requestedStatus: "RESOLVED",
-        allObligationsResolved: true
-      });
-      const resolvedAt = await databaseNow(client);
-      resolvedImpact = await client.procurementChangeImpact.update({
-        where: { id: impact.id },
-        data: {
-          status: "RESOLVED",
-          version: { increment: 1 },
-          resolvedById: input.actorId,
-          resolvedAt
-        },
-        include: { obligations: { include: { resolution: true } } }
-      });
-      const resolvedAudit = await writeAudit(client, {
-        action: AUDIT_ACTIONS.PROCUREMENT_CHANGE_IMPACT_RESOLVED,
-        objectType: AUDIT_OBJECT_TYPES.PROCUREMENT_CHANGE_IMPACT,
-        objectId: impact.id,
-        context: {
-          ...input.auditContext,
-          projectId: input.projectId,
-          actorId: input.actorId,
-          reason: validated.reason
-        },
-        after: {
-          value: impactAuditValue({
-            impactId: impact.id,
-            projectId: input.projectId,
-            previousRevisionId: impact.previousRevisionId,
-            nextRevisionId: impact.nextRevisionId,
-            changedFields: Array.isArray(impact.changedFieldsJson)
-              ? impact.changedFieldsJson.filter(
-                  (value): value is string => typeof value === "string"
-                )
-              : [],
-            version: resolvedImpact.version,
-            reason: validated.reason
-          }),
-          allowedFields: PROCUREMENT_AUDIT_FIELDS
-        }
-      });
-      resolvedAuditId = resolvedAudit.id;
-      const resolvedOutbox = await appendOutboxEvent(client, {
-        eventType: "procurement.change-impact.resolved",
-        aggregateType: "PROCUREMENT_CHANGE_IMPACT",
-        aggregateId: impact.id,
-        idempotencyKey: `${impact.id}:resolved:v${resolvedImpact.version}`,
-        payload: {
-          projectId: input.projectId,
-          procurementChangeImpactId: impact.id,
-          auditId: resolvedAudit.id
-        },
-        traceId: input.auditContext.traceId
-      });
-      resolvedOutboxId = resolvedOutbox.id;
-    }
+    const closure = await closeImpactWhenAllObligationsResolved(client, {
+      impact,
+      actorId: input.actorId,
+      auditContext: input.auditContext,
+      reason: validated.reason
+    });
     const evidenceOutbox = await appendOutboxEvent(client, {
       eventType: "procurement.change-impact.evidence-recorded",
       aggregateType: "PROCUREMENT_CHANGE_IMPACT",
@@ -495,7 +655,7 @@ export async function resolveProcurementChangeImpact(
     });
     await appendReadinessRecalculationRequest(client, {
       projectId: input.projectId,
-      cause: resolved
+      cause: closure.closed
         ? "procurement-change-impact-resolved"
         : "procurement-change-impact-evidence-recorded",
       idempotencyKey: resolution.id,
@@ -503,12 +663,12 @@ export async function resolveProcurementChangeImpact(
     });
     return {
       resolution,
-      impact: resolvedImpact,
+      impact: closure.impact,
       idempotent: false,
       auditId: evidenceAudit.id,
       outboxEventId: evidenceOutbox.id,
-      resolvedAuditId,
-      resolvedOutboxId
+      resolvedAuditId: closure.auditId,
+      resolvedOutboxId: closure.outboxEventId
     };
   });
 }
@@ -516,31 +676,21 @@ export async function resolveProcurementChangeImpact(
 async function readErpProjectionFact(
   client: Prisma.TransactionClient,
   projectId: string,
-  previousRevisionId: string
+  impactId: string
 ) {
-  const [tracking, event] = await Promise.all([
-    client.procurementTrackingLine.findFirst({
-      where: {
-        projectId,
-        requirementRevisionId: previousRevisionId,
-        source: "ERP",
-        sourceVersion: { not: null }
-      },
-      select: { sourceVersion: true }
-    }),
-    client.procurementFulfillmentEvent.findFirst({
-      where: {
-        projectId,
-        requirementRevisionId: previousRevisionId,
-        source: "ERP",
-        externalEventKey: { not: null }
-      },
-      select: { externalEventKey: true }
-    })
-  ]);
+  const projection = await client.externalMapping.findFirst({
+    where: {
+      projectId,
+      apmObjectType: "PROCUREMENT_CHANGE_IMPACT",
+      apmObjectId: impactId,
+      sourceVersion: { not: null },
+      sourceHash: { not: null }
+    },
+    select: { sourceVersion: true }
+  });
   return {
-    confirmed: tracking?.sourceVersion !== null || event?.externalEventKey !== null,
-    sourceVersion: tracking?.sourceVersion ?? event?.externalEventKey ?? null
+    confirmed: projection?.sourceVersion !== null,
+    sourceVersion: projection?.sourceVersion ?? null
   };
 }
 

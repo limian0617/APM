@@ -211,6 +211,7 @@ describe("APM-031 Gate service rules", () => {
           criticalGapLines: 0,
           gapLines: 0,
           affectedRequirementIds: [],
+          changeFactsAvailability: "AVAILABLE",
           gateThreshold: { warningGapLines: 1, hardFailureGapLines: 2 }
         }
       },

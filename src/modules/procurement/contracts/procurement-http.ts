@@ -224,6 +224,39 @@ export const procurementListQuerySchema = z.strictObject({
     .pipe(z.number().int().min(1).max(100))
 });
 
+export const procurementChangeImpactPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  impactId: identifierSchema
+});
+export const procurementChangeImpactObligationPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  impactId: identifierSchema,
+  obligationId: identifierSchema
+});
+export const procurementChangeImpactQuerySchema = z.strictObject({
+  status: z.enum(["OPEN", "RESOLVED"]).optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 100 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
+export const procurementChangeImpactResolutionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  disposition: z.enum([
+    "OWNER_PLAN_CONFIRMED",
+    "SUPPLIER_ACCEPTED",
+    "ERP_PROJECTED",
+    "CANCELED",
+    "REWORK",
+    "RETURNED",
+    "CONTINUE_USE"
+  ]),
+  evidenceReference: z.string().trim().min(1).max(1024),
+  reason: reasonSchema
+});
+
 export function parseMaterialRequirementBody(input: unknown) {
   const result = createMaterialRequirementBodySchema.safeParse(input);
   if (!result.success) return null;

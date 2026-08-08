@@ -8,6 +8,7 @@ import {
   parseMaterialRequirementBody,
   reverseFulfillmentEventBodySchema
 } from "./procurement-http";
+import * as procurementHttp from "./procurement-http";
 
 describe("APM-090A procurement HTTP contracts", () => {
   it("rejects unknown fields and invalid decimal, unit and date values", () => {
@@ -85,5 +86,28 @@ describe("APM-090A procurement HTTP contracts", () => {
     expect(reverseFulfillmentEventBodySchema.safeParse({ version: 0, reason: "" }).success).toBe(
       false
     );
+  });
+
+  it("requires a strict versioned procurement-change disposition command", () => {
+    const contract = procurementHttp as unknown as Record<string, any>;
+    const schema = contract.procurementChangeImpactResolutionBodySchema;
+    expect(schema).toBeDefined();
+    expect(
+      schema.safeParse({
+        version: 2,
+        disposition: "OWNER_PLAN_CONFIRMED",
+        evidenceReference: "record:change-1",
+        reason: "采购负责人已确认处置"
+      }).success
+    ).toBe(true);
+    expect(
+      schema.safeParse({
+        version: 2,
+        disposition: "OWNER_PLAN_CONFIRMED",
+        evidenceReference: "record:change-1",
+        reason: "采购负责人已确认处置",
+        bypass: true
+      }).success
+    ).toBe(false);
   });
 });

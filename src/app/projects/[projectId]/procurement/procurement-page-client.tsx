@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import {
@@ -20,13 +20,49 @@ type ProcurementPageClientProps = {
   initialState: ProcurementPageState | null;
 };
 
+export type ChangeImpactResolutionInput = Readonly<{
+  impactId: string;
+  obligationId: string;
+  version: number;
+  disposition: string;
+  evidenceReference: string;
+  reason: string;
+}>;
+
 type ProcurementPageContentProps = {
   projectId: string;
   state: ProcurementPageState;
   view: ProcurementPageView;
   fixture?: string | null;
   onRetry: () => void;
+  onResolveChangeImpact?: (input: ChangeImpactResolutionInput) => Promise<void>;
 };
+
+type ChangeImpactIdempotencyKeyStore = Map<string, string>;
+
+export function createChangeImpactIdempotencyKeyStore(): ChangeImpactIdempotencyKeyStore {
+  return new Map();
+}
+
+export function idempotencyKeyForChangeImpactResolution(
+  keys: ChangeImpactIdempotencyKeyStore,
+  input: ChangeImpactResolutionInput
+): string {
+  const fingerprint = JSON.stringify([
+    input.impactId,
+    input.obligationId,
+    input.version,
+    input.disposition,
+    input.evidenceReference,
+    input.reason
+  ]);
+  const existing = keys.get(fingerprint);
+  if (existing) return existing;
+
+  const key = `procurement-change-impact-${globalThis.crypto.randomUUID()}`;
+  keys.set(fingerprint, key);
+  return key;
+}
 
 function isProcurementDataState(state: ProcurementPageState): state is ProcurementDataState {
   return state.status === "ready" || state.status === "stale" || state.status === "partial-denied";
@@ -69,6 +105,12 @@ function list(value: unknown): readonly Record<string, unknown>[] {
         (item): item is Record<string, unknown> =>
           typeof item === "object" && item !== null && !Array.isArray(item)
       )
+    : [];
+}
+
+function stringList(value: unknown): readonly string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
     : [];
 }
 
@@ -199,18 +241,20 @@ function MetricLink({
   label,
   value,
   view,
-  scopeId
+  scopeId,
+  fixture
 }: {
   projectId: string;
   label: string;
   value: unknown;
   view: ProcurementPageView;
   scopeId?: string;
+  fixture?: string | null;
 }) {
   return (
     <a
       className="procurement-metric"
-      href={safeProcurementDrilldown(projectId, { view, scopeId }) ?? undefined}
+      href={safeProcurementDrilldown(projectId, { view, scopeId, fixture }) ?? undefined}
     >
       <span>{label}</span>
       <strong>{number(value)}</strong>
@@ -223,6 +267,10 @@ function TimestampList({
 }: {
   state: Extract<ProcurementPageState, { status: "ready" | "stale" | "partial-denied" }>;
 }) {
+  const sourceTimestamps =
+    state.overview.sourceTimestamps && typeof state.overview.sourceTimestamps === "object"
+      ? (state.overview.sourceTimestamps as Record<string, unknown>)
+      : {};
   return (
     <dl className="procurement-source-timestamps" aria-label="采购来源时间">
       <div>
@@ -241,16 +289,34 @@ function TimestampList({
         <dt>输入水位</dt>
         <dd>{text(state.readiness.inputWatermark)}</dd>
       </div>
+      <div>
+        <dt>需求来源</dt>
+        <dd>{dateTime(sourceTimestamps.requirements)}</dd>
+      </div>
+      <div>
+        <dt>跟踪来源</dt>
+        <dd>{dateTime(sourceTimestamps.tracking)}</dd>
+      </div>
+      <div>
+        <dt>履约来源</dt>
+        <dd>{dateTime(sourceTimestamps.fulfillment)}</dd>
+      </div>
+      <div>
+        <dt>变更影响来源</dt>
+        <dd>{dateTime(sourceTimestamps.changeImpacts)}</dd>
+      </div>
     </dl>
   );
 }
 
 function OverviewView({
   projectId,
-  state
+  state,
+  fixture
 }: {
   projectId: string;
   state: Extract<ProcurementPageState, { status: "ready" | "stale" | "partial-denied" }>;
+  fixture?: string | null;
 }) {
   const overview = state.overview;
   return (
@@ -261,36 +327,42 @@ function OverviewView({
           label="关键缺料"
           value={overview.criticalGapLines ?? overview.blockingCount}
           view="readiness"
+          fixture={fixture}
         />
         <MetricLink
           projectId={projectId}
           label="逾期未到"
           value={overview.overdueCount}
           view="tracking"
+          fixture={fixture}
         />
         <MetricLink
           projectId={projectId}
           label="待验收"
           value={overview.pendingAcceptanceCount}
           view="arrivals"
+          fixture={fixture}
         />
         <MetricLink
           projectId={projectId}
           label="未下单"
           value={overview.notOrderedCount}
           view="tracking"
+          fixture={fixture}
         />
         <MetricLink
           projectId={projectId}
           label="变更待处理"
           value={overview.changePendingCount}
           view="readiness"
+          fixture={fixture}
         />
         <MetricLink
           projectId={projectId}
           label="阻塞装配"
           value={overview.blockingCount}
           view="readiness"
+          fixture={fixture}
         />
       </section>
       <section className="procurement-exception-list" aria-label="采购异常与待处理">
@@ -456,10 +528,12 @@ function ArrivalsView({
 
 function ReadinessView({
   projectId,
-  state
+  state,
+  onResolveChangeImpact
 }: {
   projectId: string;
   state: Extract<ProcurementPageState, { status: "ready" | "stale" | "partial-denied" }>;
+  onResolveChangeImpact?: ProcurementPageContentProps["onResolveChangeImpact"];
 }) {
   const scopes = list(state.readiness.scopes);
   return (
@@ -481,13 +555,242 @@ function ReadinessView({
               >
                 <span>{text(scope.scopeType)}</span>
                 <strong>
-                  {number(scope.readyLineCount)}/{number(scope.lineCount)} 行
+                  {number(scope.readyLines)}/{number(scope.totalLines)} 行
                 </strong>
               </a>
             </li>
           );
         })}
       </ul>
+      <ChangeImpactArea state={state} onResolveChangeImpact={onResolveChangeImpact} />
+    </section>
+  );
+}
+
+function ChangeImpactArea({
+  state,
+  onResolveChangeImpact
+}: {
+  state: Extract<ProcurementPageState, { status: "ready" | "stale" | "partial-denied" }>;
+  onResolveChangeImpact?: ProcurementPageContentProps["onResolveChangeImpact"];
+}) {
+  const area = state.changeImpacts;
+  if (area?.status === "loading") {
+    return (
+      <p className="procurement-empty-inline" role="status" aria-live="polite">
+        重大采购变更加载中。
+      </p>
+    );
+  }
+  if (area?.status === "error") {
+    return (
+      <p className="procurement-restricted-notice" role="alert" aria-live="assertive">
+        重大采购变更暂时不可用，请刷新后重试。
+      </p>
+    );
+  }
+  if (area?.status === "restricted") {
+    return (
+      <p className="procurement-restricted-notice" role="status" aria-live="polite">
+        重大采购变更区域受限，无法显示数量、影响对象或处置证据。
+      </p>
+    );
+  }
+  if (!area) {
+    return (
+      <p className="procurement-empty-inline" role="status" aria-live="polite">
+        重大采购变更状态尚未确认。
+      </p>
+    );
+  }
+  return (
+    <ChangeImpactPanel
+      impacts={list(area.data.impacts)}
+      onResolveChangeImpact={onResolveChangeImpact}
+    />
+  );
+}
+
+const CHANGE_FIELD_LABELS: Record<string, string> = {
+  materialReferenceId: "物料",
+  quantity: "数量",
+  trackingUnit: "单位",
+  businessType: "业务类型",
+  deliveryUnitId: "交付单元",
+  moduleId: "模块",
+  responsibilityPackageId: "责任包",
+  taskId: "任务",
+  requiredOn: "需求日期",
+  predictedAssemblyStartOn: "预计装配开始",
+  drawingId: "图纸",
+  drawingVersionId: "图纸版本",
+  outsourcedProcess: "委外工序",
+  canceled: "取消"
+};
+
+function dispositionsForObligation(type: string): readonly string[] {
+  switch (type) {
+    case "PROCUREMENT_OWNER":
+      return ["OWNER_PLAN_CONFIRMED"];
+    case "SUPPLIER":
+      return ["SUPPLIER_ACCEPTED"];
+    case "ERP_PROJECTION":
+      return ["ERP_PROJECTED"];
+    default:
+      return ["CANCELED", "REWORK", "RETURNED", "CONTINUE_USE"];
+  }
+}
+
+function dispositionLabel(value: string): string {
+  const labels: Record<string, string> = {
+    OWNER_PLAN_CONFIRMED: "采购负责人已确认",
+    SUPPLIER_ACCEPTED: "供应商已接受",
+    ERP_PROJECTED: "ERP 投影已确认",
+    CANCELED: "取消",
+    REWORK: "返工",
+    RETURNED: "退回",
+    CONTINUE_USE: "继续使用"
+  };
+  return labels[value] ?? value;
+}
+
+function ChangeImpactObligationForm({
+  impactId,
+  obligation,
+  version,
+  onResolveChangeImpact
+}: {
+  impactId: string;
+  obligation: Record<string, unknown>;
+  version: number;
+  onResolveChangeImpact?: ProcurementPageContentProps["onResolveChangeImpact"];
+}) {
+  const options = dispositionsForObligation(text(obligation.type));
+  const [disposition, setDisposition] = useState(options[0] ?? "");
+  const [evidenceReference, setEvidenceReference] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const obligationId = text(obligation.id);
+  return (
+    <form
+      className="procurement-change-resolution-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!onResolveChangeImpact || !obligationId) return;
+        setSubmitting(true);
+        setError(null);
+        void onResolveChangeImpact({
+          impactId,
+          obligationId,
+          version,
+          disposition,
+          evidenceReference,
+          reason
+        })
+          .catch(() => setError("处置证据提交失败，请刷新后重试。"))
+          .finally(() => setSubmitting(false));
+      }}
+    >
+      <label>
+        处置方式
+        <select value={disposition} onChange={(event) => setDisposition(event.target.value)}>
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {dispositionLabel(option)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        处置证据
+        <input
+          required
+          value={evidenceReference}
+          onChange={(event) => setEvidenceReference(event.target.value)}
+        />
+      </label>
+      <label>
+        处置说明
+        <input required value={reason} onChange={(event) => setReason(event.target.value)} />
+      </label>
+      <button
+        type="submit"
+        className="procurement-command"
+        disabled={!onResolveChangeImpact || submitting}
+      >
+        {submitting ? "提交中" : "提交处置"}
+      </button>
+      {error ? <p role="alert">{error}</p> : null}
+    </form>
+  );
+}
+
+function ChangeImpactPanel({
+  impacts,
+  onResolveChangeImpact
+}: {
+  impacts: readonly Record<string, unknown>[];
+  onResolveChangeImpact?: ProcurementPageContentProps["onResolveChangeImpact"];
+}) {
+  const openImpacts = impacts.filter((impact) => text(impact.status) === "OPEN");
+  return (
+    <section className="procurement-change-impact-list" aria-label="重大采购变更影响">
+      <div className="procurement-section-heading">
+        <h2>未处置重大采购变更</h2>
+        <span>{openImpacts.length} 项</span>
+      </div>
+      {openImpacts.length === 0 ? (
+        <p className="procurement-empty-inline">暂无未处置重大采购变更。</p>
+      ) : (
+        <ul>
+          {openImpacts.map((impact, index) => {
+            const impactId = text(impact.id, `impact-${index}`);
+            const version = number(impact.version, 0);
+            const obligations = list(impact.obligations);
+            return (
+              <li key={impactId}>
+                <div>
+                  <strong>{text(impact.requirementId, impactId)}</strong>
+                  <span>
+                    影响字段：
+                    {stringList(impact.changedFieldsJson)
+                      .map((field) => CHANGE_FIELD_LABELS[field] ?? field)
+                      .join("、") || "未提供"}
+                  </span>
+                </div>
+                <ul>
+                  {obligations.map((obligation, obligationIndex) => {
+                    const resolution = obligation.resolution;
+                    return (
+                      <li key={text(obligation.id, `${impactId}-${obligationIndex}`)}>
+                        <p>
+                          {text(obligation.type)}：{text(obligation.subjectId)}
+                        </p>
+                        {resolution && typeof resolution === "object" ? (
+                          <p>
+                            已处置：
+                            {dispositionLabel(
+                              text((resolution as Record<string, unknown>).disposition)
+                            )}
+                          </p>
+                        ) : (
+                          <ChangeImpactObligationForm
+                            impactId={impactId}
+                            obligation={obligation}
+                            version={version}
+                            onResolveChangeImpact={onResolveChangeImpact}
+                          />
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }
@@ -497,7 +800,8 @@ export function ProcurementPageContent({
   state,
   view,
   fixture,
-  onRetry
+  onRetry,
+  onResolveChangeImpact
 }: ProcurementPageContentProps) {
   if (!isProcurementDataState(state)) {
     return <ProcurementStatePanel state={state} onRetry={onRetry} />;
@@ -514,11 +818,19 @@ export function ProcurementPageContent({
       </header>
       <ViewNavigation projectId={projectId} view={view} fixture={fixture} />
       <SourceBand state={state} />
-      {view === "overview" ? <OverviewView projectId={projectId} state={state} /> : null}
+      {view === "overview" ? (
+        <OverviewView projectId={projectId} state={state} fixture={fixture} />
+      ) : null}
       {view === "requirements" ? <RequirementsView projectId={projectId} state={state} /> : null}
       {view === "tracking" ? <TrackingView projectId={projectId} state={state} /> : null}
       {view === "arrivals" ? <ArrivalsView state={state} /> : null}
-      {view === "readiness" ? <ReadinessView projectId={projectId} state={state} /> : null}
+      {view === "readiness" ? (
+        <ReadinessView
+          projectId={projectId}
+          state={state}
+          onResolveChangeImpact={onResolveChangeImpact}
+        />
+      ) : null}
     </main>
   );
 }
@@ -540,14 +852,16 @@ async function fetchProcurementSource(path: string): Promise<ProcurementFetchRes
 
 async function loadProcurementState(projectId: string): Promise<ProcurementPageState> {
   const root = `/api/projects/${encodeURIComponent(projectId)}`;
-  const [overview, readiness, requirements, tracking, arrivals, suppliers] = await Promise.all([
-    fetchProcurementSource(`${root}/procurement/overview?view=overview`),
-    fetchProcurementSource(`${root}/procurement/readiness?view=readiness`),
-    fetchProcurementSource(`${root}/material-requirements?limit=100`),
-    fetchProcurementSource(`${root}/procurement-tracking-lines?limit=100`),
-    fetchProcurementSource(`${root}/procurement/fulfillment-events?limit=100`),
-    fetchProcurementSource(`${root}/procurement/suppliers?limit=100`)
-  ]);
+  const [overview, readiness, requirements, tracking, arrivals, suppliers, changeImpacts] =
+    await Promise.all([
+      fetchProcurementSource(`${root}/procurement/overview?view=overview`),
+      fetchProcurementSource(`${root}/procurement/readiness?view=readiness`),
+      fetchProcurementSource(`${root}/material-requirements?limit=100`),
+      fetchProcurementSource(`${root}/procurement-tracking-lines?limit=100`),
+      fetchProcurementSource(`${root}/procurement/fulfillment-events?limit=100`),
+      fetchProcurementSource(`${root}/procurement/suppliers?limit=100`),
+      fetchProcurementSource(`${root}/procurement/change-impacts?status=OPEN&limit=100`)
+    ]);
   const overviewBody = overview.kind === "ok" ? overview.body : {};
   const mergedOverview = {
     ...overviewBody,
@@ -559,7 +873,8 @@ async function loadProcurementState(projectId: string): Promise<ProcurementPageS
     projectId,
     overview: overview.kind === "ok" ? { ...overview, body: mergedOverview } : overview,
     readiness,
-    suppliers
+    suppliers,
+    changeImpacts
   });
 }
 
@@ -570,9 +885,38 @@ export function ProcurementPageClient({ projectId, initialState }: ProcurementPa
   const [state, setState] = useState<ProcurementPageState>(
     initialState ?? { projectId, status: "loading" }
   );
+  const changeImpactIdempotencyKeys = useRef(createChangeImpactIdempotencyKeyStore());
   const reload = useCallback(
     async () => setState(await loadProcurementState(projectId)),
     [projectId]
+  );
+  const resolveChangeImpact = useCallback(
+    async (input: ChangeImpactResolutionInput) => {
+      const idempotencyKey = idempotencyKeyForChangeImpactResolution(
+        changeImpactIdempotencyKeys.current,
+        input
+      );
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/procurement/change-impacts/${encodeURIComponent(input.impactId)}/obligations/${encodeURIComponent(input.obligationId)}/resolve`,
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": idempotencyKey
+          },
+          body: JSON.stringify({
+            version: input.version,
+            disposition: input.disposition,
+            evidenceReference: input.evidenceReference,
+            reason: input.reason
+          })
+        }
+      );
+      if (!response.ok) throw new Error("procurement change impact resolution failed");
+      await reload();
+    },
+    [projectId, reload]
   );
   useEffect(() => {
     if (initialState) return;
@@ -591,6 +935,7 @@ export function ProcurementPageClient({ projectId, initialState }: ProcurementPa
       view={view}
       fixture={fixture}
       onRetry={() => void reload()}
+      onResolveChangeImpact={resolveChangeImpact}
     />
   );
 }

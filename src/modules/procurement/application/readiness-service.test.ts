@@ -209,6 +209,66 @@ describe("APM-091B procurement readiness service", () => {
     expect(facts.unresolvedMajorChangeRequirementIds).toEqual(["requirement-1"]);
   });
 
+  it("uses the immutable revision creation time when calculating overview source freshness", async () => {
+    const { client, state } = readinessClient();
+    vi.spyOn(client.projectMaterialRequirement, "findMany").mockImplementation(
+      async (query: unknown) => {
+        const selection = query as {
+          select?: { currentRevision?: { select?: Record<string, unknown> } };
+        };
+        if ("updatedAt" in selection.select?.currentRevision?.select!) {
+          throw new Error("Unknown arg `updatedAt` for currentRevision select");
+        }
+        return state.requirements;
+      }
+    );
+
+    await expect(readProjectProcurementOverview({ projectId: "project-1" })).resolves.toMatchObject(
+      {
+        projectId: "project-1",
+        sourceTimestamps: { requirements: "2026-08-01T00:00:00.000Z" }
+      }
+    );
+  });
+
+  it("fails closed when a change-impact read aborts the Repeatable Read snapshot", async () => {
+    const { client, state } = readinessClient();
+    state.requirements[0].currentRevision.businessType = "DRAWING_CUSTOM";
+    state.requirements[0].currentRevision.drawingId = "drawing-1";
+    state.requirements[0].currentRevision.drawingVersionId = "drawing-version-1";
+    let transactionAborted = false;
+    const changeImpactLookup = vi
+      .spyOn(client.procurementChangeImpact, "findMany")
+      .mockImplementation(async () => {
+        transactionAborted = true;
+        throw new Error("change-impact relation is unavailable");
+      });
+    const drawingLookup = vi
+      .spyOn(client.mechanicalDrawing, "findMany")
+      .mockImplementation(async () => {
+        if (transactionAborted) {
+          throw new Error(
+            "current transaction is aborted, commands ignored until end of transaction block"
+          );
+        }
+        return [];
+      });
+
+    const facts = await readProcurementGateFacts({ projectId: "project-1" });
+
+    expect(facts).toMatchObject({
+      projectId: "project-1",
+      status: "NOT_CALCULATED",
+      changeFactsAvailability: "UNAVAILABLE",
+      readinessResultId: null,
+      gateThreshold: null,
+      scopes: []
+    });
+    expect(facts.unresolvedMajorChangeRequirementIds).toEqual([]);
+    expect(drawingLookup).not.toHaveBeenCalled();
+    expect(changeImpactLookup).toHaveBeenCalledOnce();
+  });
+
   it("appends readiness policy versions and advances only the current pointer", async () => {
     const { client, state } = readinessClient();
     const policy = () =>

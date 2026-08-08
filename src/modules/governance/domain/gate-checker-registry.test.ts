@@ -65,6 +65,7 @@ describe("APM-031 Gate checker registry", () => {
             criticalGapLines: 0,
             gapLines: 0,
             affectedRequirementIds: [],
+            changeFactsAvailability: "AVAILABLE",
             gateThreshold: { warningGapLines: 1, hardFailureGapLines: 2 }
           }
         }
@@ -96,6 +97,7 @@ describe("APM-031 Gate checker registry", () => {
       criticalGapLines: 0,
       gapLines: 0,
       affectedRequirementIds: [],
+      changeFactsAvailability: "AVAILABLE",
       gateThreshold: { warningGapLines: 1, hardFailureGapLines: 2 }
     };
     const failures = [
@@ -122,6 +124,72 @@ describe("APM-031 Gate checker registry", () => {
     }
   });
 
+  it("hard-fails when procurement change facts are unavailable instead of treating them as no impacts", () => {
+    const checker = resolveGateChecker("PROCUREMENT.READINESS", 1);
+    const result = checker?.evaluate({
+      projectId: "project-1",
+      gateCode: "G3",
+      stageCode: "S3",
+      scope: "PROJECT",
+      stageStatus: "AWAITING_GATE",
+      facts: {
+        procurementReadiness: {
+          readinessResultId: "readiness-1",
+          policyVersion: "policy-3",
+          formulaVersion: "PROCUREMENT.READINESS@1",
+          inputWatermark: "watermark-1",
+          calculatedAt: "2026-08-07T00:00:00.000Z",
+          status: "READY",
+          criticalGapLines: 0,
+          gapLines: 0,
+          affectedRequirementIds: [],
+          wrongDrawingVersionRequirementIds: [],
+          unresolvedMajorChangeRequirementIds: [],
+          changeFactsAvailability: "UNAVAILABLE",
+          gateThreshold: { warningGapLines: 1, hardFailureGapLines: 2 }
+        }
+      }
+    });
+
+    expect(result).toMatchObject({
+      status: "HARD_FAILED",
+      code: "PROCUREMENT_CHANGE_FACTS_UNAVAILABLE"
+    });
+  });
+
+  it("prioritizes unavailable change facts over incomplete readiness snapshot fields", () => {
+    const checker = resolveGateChecker("PROCUREMENT.READINESS", 1);
+    const result = checker?.evaluate({
+      projectId: "project-1",
+      gateCode: "G3",
+      stageCode: "S3",
+      scope: "PROJECT",
+      stageStatus: "AWAITING_GATE",
+      facts: {
+        procurementReadiness: {
+          readinessResultId: null,
+          policyVersion: null,
+          formulaVersion: null,
+          inputWatermark: null,
+          calculatedAt: null,
+          status: "NOT_CALCULATED",
+          criticalGapLines: 0,
+          gapLines: 0,
+          affectedRequirementIds: [],
+          wrongDrawingVersionRequirementIds: [],
+          unresolvedMajorChangeRequirementIds: [],
+          changeFactsAvailability: "UNAVAILABLE",
+          gateThreshold: null
+        }
+      }
+    });
+
+    expect(result).toMatchObject({
+      status: "HARD_FAILED",
+      code: "PROCUREMENT_CHANGE_FACTS_UNAVAILABLE"
+    });
+  });
+
   it("uses frozen procurement gap thresholds for warnings and hard failures", () => {
     const checker = resolveGateChecker("PROCUREMENT.READINESS", 1);
     const evaluate = (gapLines: number) =>
@@ -142,6 +210,7 @@ describe("APM-031 Gate checker registry", () => {
             criticalGapLines: 0,
             gapLines,
             affectedRequirementIds: ["ordinary-1"],
+            changeFactsAvailability: "AVAILABLE",
             gateThreshold: { warningGapLines: 1, hardFailureGapLines: 2 }
           }
         }

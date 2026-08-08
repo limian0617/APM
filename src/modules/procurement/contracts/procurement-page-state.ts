@@ -55,6 +55,7 @@ export type ProcurementPageState =
       overview: ProcurementBody;
       readiness: ProcurementBody;
       suppliers?: ProcurementOptionalArea;
+      changeImpacts?: ProcurementOptionalArea;
       timestamps: ProcurementTimestamps;
     })
   | (ProcurementBaseState & {
@@ -62,6 +63,7 @@ export type ProcurementPageState =
       overview: ProcurementBody;
       readiness: ProcurementBody;
       suppliers?: ProcurementOptionalArea;
+      changeImpacts?: ProcurementOptionalArea;
       timestamps: ProcurementTimestamps;
     })
   | (ProcurementBaseState & {
@@ -69,6 +71,15 @@ export type ProcurementPageState =
       overview: ProcurementBody;
       readiness: ProcurementBody;
       suppliers: { status: "restricted" };
+      changeImpacts?: ProcurementOptionalArea;
+      timestamps: ProcurementTimestamps;
+    })
+  | (ProcurementBaseState & {
+      status: "partial-denied";
+      overview: ProcurementBody;
+      readiness: ProcurementBody;
+      suppliers?: ProcurementOptionalArea;
+      changeImpacts: { status: "restricted" };
       timestamps: ProcurementTimestamps;
     });
 
@@ -148,6 +159,7 @@ export function buildProcurementPageState(input: {
   overview?: ProcurementFetchResult;
   readiness?: ProcurementFetchResult;
   suppliers?: ProcurementFetchResult;
+  changeImpacts?: ProcurementFetchResult;
 }): ProcurementPageState {
   const overview = input.overview;
   const readiness = input.readiness;
@@ -190,6 +202,7 @@ export function buildProcurementPageState(input: {
     readiness: timestampFrom(readinessBody)
   } satisfies ProcurementTimestamps;
   const supplierArea = toOptionalArea(input.suppliers);
+  const changeImpactArea = toOptionalArea(input.changeImpacts);
   if (supplierArea?.status === "restricted") {
     return {
       projectId: input.projectId,
@@ -197,6 +210,18 @@ export function buildProcurementPageState(input: {
       overview: overviewBody,
       readiness: readinessBody,
       suppliers: supplierArea,
+      ...(changeImpactArea ? { changeImpacts: changeImpactArea } : {}),
+      timestamps
+    };
+  }
+  if (changeImpactArea?.status === "restricted") {
+    return {
+      projectId: input.projectId,
+      status: "partial-denied",
+      overview: overviewBody,
+      readiness: readinessBody,
+      ...(supplierArea ? { suppliers: supplierArea } : {}),
+      changeImpacts: changeImpactArea,
       timestamps
     };
   }
@@ -218,13 +243,16 @@ export function buildProcurementPageState(input: {
     overview: overviewBody,
     readiness: readinessBody,
     ...(supplierArea ? { suppliers: supplierArea } : {}),
+    ...(changeImpactArea ? { changeImpacts: changeImpactArea } : {}),
     timestamps
   };
 }
 
 export function safeProcurementDrilldown(
   projectId: string,
-  target: { view: ProcurementPageView; scopeId?: string; projectId?: string } | { href: string }
+  target:
+    | { view: ProcurementPageView; scopeId?: string; projectId?: string; fixture?: string | null }
+    | { href: string }
 ): string | null {
   if (!isSafeIdentifier(projectId)) return null;
   if ("href" in target) {
@@ -246,6 +274,8 @@ export function safeProcurementDrilldown(
   if (target.scopeId !== undefined && !isSafeIdentifier(target.scopeId)) return null;
   const params = new URLSearchParams({ view: target.view });
   if (target.scopeId) params.set("scopeId", target.scopeId);
+  const fixture = resolveProcurementFixture(target.fixture);
+  if (fixture) params.set("fixture", fixture);
   return `/projects/${encodeURIComponent(projectId)}/procurement?${params.toString()}`;
 }
 

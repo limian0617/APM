@@ -16,10 +16,7 @@ import {
 } from "@/modules/governance/domain/gate-checker-registry";
 import { payloadHash, type JsonValue } from "@/modules/governance/domain/idempotency";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
-import {
-  readProcurementGateFacts,
-  readProcurementReadinessTree
-} from "@/modules/procurement/application/readiness-service";
+import { readProcurementGateFacts } from "@/modules/procurement/application/readiness-service";
 import type { ProjectStageExecutionStatus } from "@/modules/projects/domain/project-stage";
 
 const GATE_SCOPES = ["PROJECT", "DELIVERY_UNIT", "MODULE"] as const;
@@ -322,10 +319,7 @@ async function freezeProcurementCheckerFacts(input: {
   scope: GateScopeTarget;
   gateThreshold?: JsonValue;
 }): Promise<Readonly<Record<string, JsonValue>>> {
-  const [gateFacts, readinessTree] = await Promise.all([
-    readProcurementGateFacts({ projectId: input.projectId }),
-    readProcurementReadinessTree({ projectId: input.projectId })
-  ]);
+  const gateFacts = await readProcurementGateFacts({ projectId: input.projectId });
   const scopeId =
     input.scope.scope === "PROJECT"
       ? input.projectId
@@ -338,10 +332,10 @@ async function freezeProcurementCheckerFacts(input: {
       : input.scope.scope === "DELIVERY_UNIT"
         ? "DELIVERY_UNIT"
         : "MODULE";
-  const readiness = readinessTree.scopes.find(
+  const readiness = gateFacts.scopes.find(
     (fact) => fact.scopeType === scopeType && fact.scopeId === scopeId
   );
-  const affectedRequirementIds = readinessTree.scopes
+  const affectedRequirementIds = gateFacts.scopes
     .filter((fact) => fact.scopeType === "REQUIREMENT" && fact.status !== "READY")
     .map((fact) => fact.scopeId)
     .sort((left, right) => left.localeCompare(right));
@@ -358,6 +352,7 @@ async function freezeProcurementCheckerFacts(input: {
       affectedRequirementIds,
       wrongDrawingVersionRequirementIds: [...gateFacts.wrongDrawingVersionRequirementIds],
       unresolvedMajorChangeRequirementIds: [...gateFacts.unresolvedMajorChangeRequirementIds],
+      changeFactsAvailability: gateFacts.changeFactsAvailability,
       gateThreshold: input.gateThreshold ?? frozenGateThreshold(gateFacts.gateThreshold) ?? null
     }
   };

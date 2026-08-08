@@ -13,7 +13,7 @@ type PageProps = {
 
 const fixtureTimestamp = "2026-08-08T03:00:00.000Z";
 
-function developmentProcurementFixture(
+export function developmentProcurementFixture(
   projectId: string,
   fixture: string | undefined
 ): ProcurementPageState | null {
@@ -44,20 +44,46 @@ function developmentProcurementFixture(
     projectCode: "APM-DEMO-090",
     mode: "LOCAL",
     status: overviewStatus,
-    overallReadinessRate: 0.75,
-    criticalReadinessRate: 0.5,
+    overallReadinessRate: "0.75",
+    criticalReadinessRate: "0.5",
+    criticalGapLines: 1,
     notOrderedCount: 2,
     overdueCount: 1,
     pendingAcceptanceCount: 1,
     changePendingCount: 1,
     blockingCount: 1,
     sourceSyncedAt: fixtureTimestamp,
+    calculatedAt: fixtureTimestamp,
+    sourceTimestamps: {
+      requirements: fixtureTimestamp,
+      tracking: fixtureTimestamp,
+      fulfillment: fixtureTimestamp,
+      changeImpacts: fixtureTimestamp,
+      readiness: fixtureTimestamp
+    },
     requirements: [{ id: "req-1", name: "伺服电机", status: "CONFIRMED" }],
     tracking: [
       { id: "track-1", requirementId: "req-1", status: "ORDERED", promisedOn: "2026-08-20" }
     ],
     arrivals: [
       { id: "event-1", eventType: "PURCHASE_ARRIVED", businessOccurredAt: fixtureTimestamp }
+    ],
+    changeImpacts: [
+      {
+        id: "impact-demo-1",
+        status: "OPEN",
+        version: 1,
+        requirementId: "req-1",
+        changedFieldsJson: ["quantity", "drawingVersionId"],
+        obligations: [
+          {
+            id: "obligation-demo-1",
+            type: "PROCUREMENT_OWNER",
+            subjectId: "member-demo-1",
+            resolution: null
+          }
+        ]
+      }
     ]
   };
   const readiness = {
@@ -67,12 +93,16 @@ function developmentProcurementFixture(
     inputWatermark: "wm-demo",
     calculatedAt: fixtureTimestamp,
     sourceSyncedAt: fixtureTimestamp,
-    scopes: [{ scopeType: "PROJECT", scopeId: projectId, lineCount: 4, readyLineCount: 3 }]
+    scopes: [{ scopeType: "PROJECT", scopeId: projectId, totalLines: 4, readyLines: 3 }]
   };
   return buildProcurementPageState({
     projectId,
     overview: toProcurementFetchResult({ status: 200, body: overview }),
     readiness: toProcurementFetchResult({ status: 200, body: readiness }),
+    changeImpacts: toProcurementFetchResult({
+      status: 200,
+      body: { impacts: overview.changeImpacts }
+    }),
     suppliers:
       allowed === "partial-denied"
         ? toProcurementFetchResult({ status: 403, body: { supplierId: "redacted" } })

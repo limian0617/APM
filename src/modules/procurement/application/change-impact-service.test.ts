@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+import * as changeImpactService from "./change-impact-service";
 
 import {
   assertImpactResolutionAllowed,
   isChangeImpactResolved,
+  resolveProcurementChangeImpact,
   validateChangeImpactResolution
 } from "./change-impact-service";
 import { PROCUREMENT_CHANGE_IMPACT_DISPOSITIONS } from "@/modules/procurement/domain/change-impact";
@@ -74,6 +77,85 @@ describe("APM-091B procurement change impact resolution rules", () => {
     ).toMatchObject({ disposition: "ERP_PROJECTED" });
   });
 
+  it("rejects an ERP obligation when only a legacy ERP tracking projection exists", async () => {
+    const legacyTrackingLookup = vi.fn().mockResolvedValue({ sourceVersion: "legacy-v1" });
+    const stableImpactProjectionLookup = vi.fn().mockResolvedValue(null);
+    const createResolution = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("ERP resolution must not be created without an impact projection")
+      );
+    const transaction = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      procurementChangeImpact: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "impact-1",
+          projectId: "project-1",
+          previousRevisionId: "revision-before",
+          nextRevisionId: "revision-after",
+          status: "OPEN",
+          version: 1,
+          changedFieldsJson: ["quantity"],
+          obligations: [
+            {
+              id: "obligation-erp",
+              type: "ERP_PROJECTION",
+              subjectId: "project",
+              resolution: null
+            }
+          ]
+        })
+      },
+      projectMember: {
+        findFirst: vi.fn().mockResolvedValue({ id: "membership-1", projectRole: "PROCUREMENT" })
+      },
+      procurementTrackingLine: { findFirst: legacyTrackingLookup },
+      procurementFulfillmentEvent: { findFirst: vi.fn().mockResolvedValue(null) },
+      externalMapping: { findFirst: stableImpactProjectionLookup },
+      procurementChangeImpactResolution: { create: createResolution }
+    } as never;
+
+    await expect(
+      resolveProcurementChangeImpact(
+        {
+          projectId: "project-1",
+          impactId: "impact-1",
+          obligationId: "obligation-erp",
+          version: 1,
+          disposition: "ERP_PROJECTED",
+          evidenceReference: "erp:change-v2",
+          reason: "ERP 变更结果已投影",
+          actorId: "user-1",
+          auditContext: {
+            actorId: "user-1",
+            requestId: "request-1",
+            traceId: "a".repeat(32),
+            source: "API",
+            sourceIp: null,
+            userAgent: "Vitest",
+            reason: null,
+            projectId: "project-1",
+            departmentId: "engineering",
+            operationId: "resolve-impact-1"
+          }
+        },
+        transaction
+      )
+    ).rejects.toMatchObject({ code: "PROC_CHANGE_ERP_PROJECTION_REQUIRED" });
+    expect(createResolution).not.toHaveBeenCalled();
+    expect(stableImpactProjectionLookup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          projectId: "project-1",
+          apmObjectType: "PROCUREMENT_CHANGE_IMPACT",
+          apmObjectId: "impact-1",
+          sourceVersion: { not: null },
+          sourceHash: { not: null }
+        })
+      })
+    );
+  });
+
   it("allows only explicit dispositions for old tracking and fulfillment facts", () => {
     expect(() =>
       validateChangeImpactResolution({
@@ -111,5 +193,23 @@ describe("APM-091B procurement change impact resolution rules", () => {
         allObligationsResolved: true
       })
     ).not.toThrow();
+  });
+
+  it("rejects a stale aggregate version before recording an obligation disposition", () => {
+    expect(() =>
+      assertImpactResolutionAllowed({
+        currentStatus: "OPEN",
+        requestedStatus: "RESOLVED",
+        allObligationsResolved: true,
+        expectedVersion: 3,
+        currentVersion: 4
+      })
+    ).toThrow(expect.objectContaining({ code: "PROC_CHANGE_VERSION_CONFLICT", status: 409 }));
+  });
+
+  it("exposes project-scoped list and detail read ports for the procurement impact views", () => {
+    const service = changeImpactService as unknown as Record<string, unknown>;
+    expect(service.listProcurementChangeImpacts).toBeTypeOf("function");
+    expect(service.readProcurementChangeImpactDetail).toBeTypeOf("function");
   });
 });

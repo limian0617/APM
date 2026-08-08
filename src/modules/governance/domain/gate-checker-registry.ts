@@ -90,6 +90,7 @@ type ProcurementReadinessFacts = Readonly<{
   affectedRequirementIds: readonly string[];
   wrongDrawingVersionRequirementIds: readonly string[];
   unresolvedMajorChangeRequirementIds: readonly string[];
+  changeFactsAvailability: "AVAILABLE" | "UNAVAILABLE" | null;
   gateThreshold: Readonly<{
     warningGapLines: number | null;
     hardFailureGapLines: number | null;
@@ -164,6 +165,11 @@ function procurementReadinessFacts(value: unknown): ProcurementReadinessFacts | 
     affectedRequirementIds,
     wrongDrawingVersionRequirementIds,
     unresolvedMajorChangeRequirementIds,
+    changeFactsAvailability:
+      input.changeFactsAvailability === "AVAILABLE" ||
+      input.changeFactsAvailability === "UNAVAILABLE"
+        ? input.changeFactsAvailability
+        : null,
     gateThreshold
   };
 }
@@ -178,7 +184,8 @@ function procurementEvidence(facts: ProcurementReadinessFacts | null) {
     criticalGapLines: facts?.criticalGapLines ?? null,
     affectedRequirementIds: [...(facts?.affectedRequirementIds ?? [])],
     wrongDrawingVersionRequirementIds: [...(facts?.wrongDrawingVersionRequirementIds ?? [])],
-    unresolvedMajorChangeRequirementIds: [...(facts?.unresolvedMajorChangeRequirementIds ?? [])]
+    unresolvedMajorChangeRequirementIds: [...(facts?.unresolvedMajorChangeRequirementIds ?? [])],
+    changeFactsAvailability: facts?.changeFactsAvailability ?? null
   };
 }
 
@@ -208,6 +215,15 @@ const procurementReadinessChecker: GateChecker = {
         null
       );
     }
+    const unavailableChangeFactsFailure = () =>
+      procurementFailure(
+        "PROCUREMENT_CHANGE_FACTS_UNAVAILABLE",
+        "采购重大变更事实不可用，不能放行 Gate。",
+        facts
+      );
+    if (facts.changeFactsAvailability === "UNAVAILABLE") {
+      return unavailableChangeFactsFailure();
+    }
     if (
       !facts.readinessResultId ||
       !facts.policyVersion ||
@@ -222,6 +238,9 @@ const procurementReadinessChecker: GateChecker = {
         "冻结的采购齐套事实不完整。",
         facts
       );
+    }
+    if (facts.changeFactsAvailability !== "AVAILABLE") {
+      return unavailableChangeFactsFailure();
     }
     if (facts.status !== "READY" && facts.status !== "BLOCKED") {
       return procurementFailure(
