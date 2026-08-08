@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateAlertCandidates } from "./alert-evaluation";
+import { buildProcurementChangeBlockedFacts, evaluateAlertCandidates } from "./alert-evaluation";
 import { ALERT_SOURCE_TYPES } from "./alert-policy";
 
 const now = new Date("2026-08-04T00:00:00.000Z");
 
 describe("APM-034 alert source evaluation", () => {
+  it("builds procurement change blockers only from open impact facts", () => {
+    expect(
+      buildProcurementChangeBlockedFacts([
+        { id: "impact-open", requirementId: "requirement-1", status: "OPEN", type: "REVISED" },
+        {
+          id: "impact-resolved",
+          requirementId: "requirement-2",
+          status: "RESOLVED",
+          type: "CANCELED"
+        }
+      ])
+    ).toEqual([{ requirementId: "requirement-1", impact: "REVISED" }]);
+  });
+
   it("emits only critical tasks delayed beyond the configured whole-day threshold", () => {
     const candidates = evaluateAlertCandidates(
       { sourceType: ALERT_SOURCE_TYPES.CRITICAL_TASK_DELAY, condition: { thresholdDays: 2 } },
@@ -82,14 +96,77 @@ describe("APM-034 alert source evaluation", () => {
     ).toMatchObject([{ sourceKey: "GATE_HARD_FAILURE:check-result", message: "安全检查失败" }]);
   });
 
-  it("emits no candidates for registered procurement sources before procurement evaluation exists", () => {
-    const procurementSources = Object.values(ALERT_SOURCE_TYPES).filter((source) =>
-      source.startsWith("PROCUREMENT_")
+  it("emits stable candidates for all six procurement exception sources", () => {
+    const procurementFacts = {
+      notOrdered: [{ requirementId: "requirement-not-ordered", isCritical: true }],
+      late: [
+        {
+          requirementId: "requirement-late",
+          promisedOn: "2026-08-01T00:00:00.000Z",
+          requiredOn: "2026-07-30T00:00:00.000Z"
+        }
+      ],
+      pendingAcceptance: [
+        {
+          requirementId: "requirement-pending-acceptance",
+          arrivedQuantity: "10",
+          usableQuantity: "0",
+          assemblyWindowAt: "2026-08-04T00:00:00.000Z"
+        }
+      ],
+      criticalShortage: [{ requirementId: "requirement-critical", criticalGapLines: 1 }],
+      changeBlocked: [{ requirementId: "requirement-change", impact: "ORDERED" }],
+      dataStale: {
+        sourceId: "project",
+        inputWatermark: "watermark-1",
+        calculatedAt: "2026-08-01T00:00:00.000Z"
+      }
+    };
+    const sourceTypes = [
+      ALERT_SOURCE_TYPES.PROCUREMENT_NOT_ORDERED,
+      ALERT_SOURCE_TYPES.PROCUREMENT_LATE,
+      ALERT_SOURCE_TYPES.PROCUREMENT_PENDING_ACCEPTANCE,
+      ALERT_SOURCE_TYPES.PROCUREMENT_CRITICAL_SHORTAGE,
+      ALERT_SOURCE_TYPES.PROCUREMENT_CHANGE_BLOCKED,
+      ALERT_SOURCE_TYPES.PROCUREMENT_DATA_STALE
+    ] as const;
+
+    const candidates = sourceTypes.flatMap((sourceType) =>
+      evaluateAlertCandidates({ sourceType, condition: {} }, now, { procurementFacts })
     );
 
-    expect(procurementSources).toHaveLength(6);
-    for (const sourceType of procurementSources) {
-      expect(evaluateAlertCandidates({ sourceType, condition: {} }, now, {})).toEqual([]);
-    }
+    expect(candidates.every((candidate) => typeof candidate.sourceType === "string")).toBe(true);
+    expect(candidates).toMatchObject([
+      {
+        sourceType: ALERT_SOURCE_TYPES.PROCUREMENT_NOT_ORDERED,
+        sourceKey: "PROCUREMENT_NOT_ORDERED:requirement-not-ordered",
+        snapshot: { requirementId: "requirement-not-ordered", isCritical: true }
+      },
+      {
+        sourceType: ALERT_SOURCE_TYPES.PROCUREMENT_LATE,
+        sourceKey: "PROCUREMENT_LATE:requirement-late",
+        snapshot: { requirementId: "requirement-late", requiredOn: "2026-07-30T00:00:00.000Z" }
+      },
+      {
+        sourceType: ALERT_SOURCE_TYPES.PROCUREMENT_PENDING_ACCEPTANCE,
+        sourceKey: "PROCUREMENT_PENDING_ACCEPTANCE:requirement-pending-acceptance",
+        snapshot: { requirementId: "requirement-pending-acceptance", arrivedQuantity: "10" }
+      },
+      {
+        sourceType: ALERT_SOURCE_TYPES.PROCUREMENT_CRITICAL_SHORTAGE,
+        sourceKey: "PROCUREMENT_CRITICAL_SHORTAGE:requirement-critical",
+        snapshot: { requirementId: "requirement-critical", criticalGapLines: 1 }
+      },
+      {
+        sourceType: ALERT_SOURCE_TYPES.PROCUREMENT_CHANGE_BLOCKED,
+        sourceKey: "PROCUREMENT_CHANGE_BLOCKED:requirement-change",
+        snapshot: { requirementId: "requirement-change", impact: "ORDERED" }
+      },
+      {
+        sourceType: ALERT_SOURCE_TYPES.PROCUREMENT_DATA_STALE,
+        sourceKey: "PROCUREMENT_DATA_STALE:project",
+        snapshot: { inputWatermark: "watermark-1" }
+      }
+    ]);
   });
 });

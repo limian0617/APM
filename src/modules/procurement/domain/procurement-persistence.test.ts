@@ -27,6 +27,10 @@ const readinessMigrationPath = resolve(
   process.cwd(),
   "prisma/migrations/20260807040000_apm_091b_procurement_readiness/migration.sql"
 );
+const changeImpactMigrationPath = resolve(
+  process.cwd(),
+  "prisma/migrations/20260807040200_apm_091b_procurement_change_impacts/migration.sql"
+);
 
 describe("APM-090A procurement persistence", () => {
   it("declares the foundation models and protects immutable requirement revisions", () => {
@@ -318,6 +322,43 @@ describe("APM-090A procurement persistence", () => {
       expect(migration).toContain(readyFact);
     }
     expect(migration).toContain("BEFORE UPDATE OR DELETE");
+    expect(migration).toContain("BEFORE TRUNCATE");
+    expect(migration).toContain("ON DELETE RESTRICT");
+  });
+
+  it("persists server-detected procurement change impacts and append-only disposition evidence", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = existsSync(changeImpactMigrationPath)
+      ? readFileSync(changeImpactMigrationPath, "utf8")
+      : "";
+
+    for (const model of [
+      "ProcurementChangeImpact",
+      "ProcurementChangeImpactObligation",
+      "ProcurementChangeImpactResolution"
+    ]) {
+      expect(schema).toContain(`model ${model}`);
+    }
+    for (const enumName of [
+      "ProcurementChangeImpactType",
+      "ProcurementChangeImpactStatus",
+      "ProcurementChangeImpactObligationType",
+      "ProcurementChangeImpactDisposition"
+    ]) {
+      expect(schema).toContain(`enum ${enumName}`);
+    }
+    for (const table of [
+      "procurement_change_impacts",
+      "procurement_change_impact_obligations",
+      "procurement_change_impact_resolutions"
+    ]) {
+      expect(migration).toContain(`\"${table}\"`);
+    }
+    expect(migration).toContain('UNIQUE ("project_id", "previous_revision_id")');
+    expect(migration).toContain('UNIQUE ("obligation_id")');
+    expect(migration).toContain("prevent_procurement_change_impact_mutation");
+    expect(migration).toContain("procurement_change_impact_obligations_immutable");
+    expect(migration).toContain("procurement_change_impact_resolutions_immutable");
     expect(migration).toContain("BEFORE TRUNCATE");
     expect(migration).toContain("ON DELETE RESTRICT");
   });

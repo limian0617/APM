@@ -26,10 +26,11 @@ describe("project navigation manifest", () => {
     ]);
   });
 
-  it("publishes the real cockpit and execution pages and keeps unfinished entries inert", () => {
+  it("publishes the real cockpit, execution and procurement pages and keeps unfinished entries inert", () => {
     const navigation = buildProjectNavigation("demo project/1");
     const plan = navigation.primary.find((entry) => entry.id === "plan");
     const overview = navigation.primary.find((entry) => entry.id === "overview");
+    const procurement = navigation.primary.find((entry) => entry.id === "procurement");
 
     expect(plan).toMatchObject({
       available: true,
@@ -41,9 +42,15 @@ describe("project navigation manifest", () => {
       available: true,
       href: "/projects/demo%20project%2F1/cockpit?view=overview"
     });
+    expect(procurement).toEqual({
+      id: "procurement",
+      label: "采购",
+      available: true,
+      href: "/projects/demo%20project%2F1/procurement?view=overview"
+    });
     expect(
       navigation.primary
-        .filter((entry) => entry.id !== "plan" && entry.id !== "overview")
+        .filter((entry) => !["plan", "overview", "procurement"].includes(entry.id))
         .every((entry) => !entry.available)
     ).toBe(true);
     expect(navigation.more.every((entry) => !entry.available && !("href" in entry))).toBe(true);
@@ -54,6 +61,9 @@ describe("project navigation manifest", () => {
       selectedProjectNavigation("project-7", "/projects/project-7/cockpit/resource-load")
     ).toBe("overview");
     expect(selectedProjectNavigation("project-7", "/projects/project-7/execution")).toBe("plan");
+    expect(selectedProjectNavigation("project-7", "/projects/project-7/procurement")).toBe(
+      "procurement"
+    );
     expect(selectedProjectNavigation("project-7", "/projects/project-8/execution")).toBeNull();
     expect(selectedProjectNavigation("project-7", "/projects/project-7/unknown")).toBeNull();
   });

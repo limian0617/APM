@@ -11,7 +11,11 @@ import {
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 
-import { evaluateAlertCandidates } from "../domain/alert-evaluation";
+import {
+  buildProcurementChangeBlockedFacts,
+  evaluateAlertCandidates,
+  type ProcurementAlertFacts
+} from "../domain/alert-evaluation";
 import {
   AlertValidationError,
   nextAlertStatus,
@@ -471,6 +475,11 @@ export async function requestProjectAlertScan(
 
 type AlertRuleForScan = Awaited<ReturnType<typeof db.projectAlertRule.findMany>>[number];
 
+function hasPositiveQuantity(value: { toString(): string }): boolean {
+  const normalized = value.toString().trim();
+  return /^\d+(?:\.\d+)?$/u.test(normalized) && /[1-9]/u.test(normalized);
+}
+
 function ruleCondition(value: Prisma.JsonValue): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("预警规则条件无效。 ");
@@ -497,7 +506,16 @@ export async function runProjectAlertScan(input: { projectId: string; scanId: st
           errorMessage: null
         }
       });
-      const [rules, scheduleState, milestones, gateInstances, residualItems] = await Promise.all([
+      const [
+        rules,
+        scheduleState,
+        milestones,
+        gateInstances,
+        residualItems,
+        procurementRequirements,
+        procurementChangeImpacts,
+        readinessResults
+      ] = await Promise.all([
         client.projectAlertRule.findMany({
           where: { projectId: input.projectId, status: "ENABLED" }
         }),
@@ -524,6 +542,51 @@ export async function runProjectAlertScan(input: { projectId: string; scanId: st
         client.residualItem.findMany({
           where: { projectId: input.projectId },
           select: { id: true, dueAt: true, status: true }
+        }),
+        client.projectMaterialRequirement.findMany({
+          where: { projectId: input.projectId },
+          select: {
+            id: true,
+            status: true,
+            currentRevision: {
+              select: {
+                id: true,
+                requiredOn: true,
+                predictedAssemblyStartOn: true,
+                isCritical: true,
+                status: true
+              }
+            },
+            revisions: {
+              select: { id: true, status: true }
+            },
+            procurementTrackingLines: {
+              select: {
+                requirementRevisionId: true,
+                orderedQuantity: true,
+                promisedOn: true
+              }
+            }
+          }
+        }),
+        client.procurementChangeImpact.findMany({
+          where: { projectId: input.projectId, status: "OPEN" },
+          select: { id: true, requirementId: true, status: true, type: true }
+        }),
+        client.procurementReadinessResult.findMany({
+          where: { projectId: input.projectId },
+          orderBy: [{ calculatedAt: "desc" }, { id: "desc" }],
+          select: {
+            scopeType: true,
+            scopeId: true,
+            inputWatermark: true,
+            formulaVersion: true,
+            status: true,
+            pendingAcceptanceLines: true,
+            blockingCriticalLines: true,
+            sourceSyncedAt: true,
+            calculatedAt: true
+          }
         })
       ]);
       const gateFailures = gateInstances.flatMap((instance) =>
@@ -539,6 +602,97 @@ export async function runProjectAlertScan(input: { projectId: string; scanId: st
             include: { task: { select: { plannedFinishAt: true } } }
           })
         : [];
+      const latestReadinessRoot = readinessResults.find(
+        (result) => result.scopeType === "PROJECT" && result.scopeId === input.projectId
+      );
+      const currentReadinessResults = latestReadinessRoot
+        ? readinessResults.filter(
+            (result) =>
+              result.inputWatermark === latestReadinessRoot.inputWatermark &&
+              result.formulaVersion === latestReadinessRoot.formulaVersion
+          )
+        : [];
+      const readinessByRequirement = new Map(
+        currentReadinessResults
+          .filter((result) => result.scopeType === "REQUIREMENT")
+          .map((result) => [result.scopeId, result])
+      );
+      const procurementFacts: ProcurementAlertFacts = {
+        notOrdered: procurementRequirements.flatMap((requirement) => {
+          const revision = requirement.currentRevision;
+          if (requirement.status !== "CONFIRMED" || !revision) return [];
+          const ordered = requirement.procurementTrackingLines.some(
+            (line) =>
+              line.requirementRevisionId === revision.id &&
+              hasPositiveQuantity(line.orderedQuantity)
+          );
+          return ordered
+            ? []
+            : [{ requirementId: requirement.id, isCritical: revision.isCritical }];
+        }),
+        late: procurementRequirements.flatMap((requirement) => {
+          const revision = requirement.currentRevision;
+          if (requirement.status !== "CONFIRMED" || !revision) return [];
+          const deadlines = [revision.requiredOn, revision.predictedAssemblyStartOn]
+            .filter((value): value is Date => value !== null)
+            .sort((left, right) => left.getTime() - right.getTime());
+          const deadline = deadlines[0];
+          if (!deadline) return [];
+          const lateLine = requirement.procurementTrackingLines
+            .filter(
+              (line) =>
+                line.requirementRevisionId === revision.id &&
+                line.promisedOn !== null &&
+                line.promisedOn.getTime() > deadline.getTime()
+            )
+            .sort((left, right) => left.promisedOn!.getTime() - right.promisedOn!.getTime())[0];
+          return lateLine?.promisedOn
+            ? [
+                {
+                  requirementId: requirement.id,
+                  promisedOn: lateLine.promisedOn.toISOString(),
+                  requiredOn: deadline.toISOString()
+                }
+              ]
+            : [];
+        }),
+        pendingAcceptance: procurementRequirements.flatMap((requirement) => {
+          const revision = requirement.currentRevision;
+          const readiness = readinessByRequirement.get(requirement.id);
+          if (
+            requirement.status !== "CONFIRMED" ||
+            !revision ||
+            !readiness ||
+            readiness.pendingAcceptanceLines <= 0 ||
+            !revision.predictedAssemblyStartOn ||
+            revision.predictedAssemblyStartOn.getTime() > now.getTime()
+          ) {
+            return [];
+          }
+          return [
+            {
+              requirementId: requirement.id,
+              arrivedQuantity: null,
+              usableQuantity: null,
+              assemblyWindowAt: revision.predictedAssemblyStartOn.toISOString()
+            }
+          ];
+        }),
+        criticalShortage: currentReadinessResults.flatMap((result) =>
+          result.scopeType === "REQUIREMENT" && result.blockingCriticalLines > 0
+            ? [{ requirementId: result.scopeId, criticalGapLines: result.blockingCriticalLines }]
+            : []
+        ),
+        changeBlocked: buildProcurementChangeBlockedFacts(procurementChangeImpacts),
+        dataStale:
+          latestReadinessRoot?.status === "STALE"
+            ? {
+                sourceId: "project",
+                inputWatermark: latestReadinessRoot.inputWatermark,
+                calculatedAt: latestReadinessRoot.calculatedAt.toISOString()
+              }
+            : null
+      };
       let triggeredCount = 0;
       for (const rule of rules as AlertRuleForScan[]) {
         const candidates = evaluateAlertCandidates(
@@ -554,7 +708,8 @@ export async function runProjectAlertScan(input: { projectId: string; scanId: st
             })),
             milestones,
             gateFailures,
-            residualItems
+            residualItems,
+            procurementFacts
           }
         );
         const [owner, escalation] = await Promise.all([

@@ -21,6 +21,7 @@ import { validateRequirementDraft } from "@/modules/procurement/domain/procureme
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 
 import { appendReadinessRecalculationRequest } from "./readiness-service";
+import { detectAndRecordProcurementChangeImpact } from "./change-impact-service";
 
 export class ProcurementServiceError extends Error {
   constructor(
@@ -853,6 +854,17 @@ export async function reviseMaterialRequirement(
       where: { id: requirement.currentRevision.id },
       data: { status: "SUPERSEDED" }
     });
+    const changeImpact = await detectAndRecordProcurementChangeImpact(client, {
+      projectId,
+      requirementId,
+      previousRevision: requirement.currentRevision,
+      nextRevision: revision,
+      previousStatus: requirement.currentRevision.status,
+      mode: context.settings.mode,
+      actorId: input.actorId,
+      auditContext: input.auditContext,
+      reason
+    });
     const value = requirementAuditValue(updated);
     const audit = await writeAudit(client, {
       action: AUDIT_ACTIONS.MATERIAL_REQUIREMENT_REVISED,
@@ -876,6 +888,7 @@ export async function reviseMaterialRequirement(
     });
     return {
       requirement: updated,
+      changeImpact,
       resourceVersion: updated.version,
       auditId: audit.id,
       outboxEventId: event.id
@@ -912,6 +925,17 @@ export async function cancelMaterialRequirement(
       where: { id: requirement.currentRevision.id },
       data: { status: "CANCELED", reason }
     });
+    const changeImpact = await detectAndRecordProcurementChangeImpact(client, {
+      projectId,
+      requirementId,
+      previousRevision: requirement.currentRevision,
+      nextRevision: null,
+      previousStatus: requirement.currentRevision.status,
+      mode: context.settings.mode,
+      actorId: input.actorId,
+      auditContext: input.auditContext,
+      reason
+    });
     const updated = await client.projectMaterialRequirement.update({
       where: { id: requirementId },
       data: { status: "CANCELED", version: { increment: 1 }, updatedById: input.actorId },
@@ -940,6 +964,7 @@ export async function cancelMaterialRequirement(
     });
     return {
       requirement: updated,
+      changeImpact,
       resourceVersion: updated.version,
       auditId: audit.id,
       outboxEventId: event.id

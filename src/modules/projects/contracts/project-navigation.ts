@@ -45,7 +45,7 @@ export const PROJECT_PRIMARY_NAVIGATION = [
   },
   { id: "deliverables", label: "交付物", path: "deliverables", available: false },
   { id: "issues", label: "问题", path: "issues", available: false },
-  { id: "procurement", label: "采购", path: "procurement", available: false },
+  { id: "procurement", label: "采购", path: "procurement?view=overview", available: true },
   { id: "uph", label: "UPH", path: "uph", available: false },
   { id: "acceptance", label: "FAT/SAT", path: "acceptance", available: false }
 ] as const satisfies readonly ProjectNavigationDefinition<ProjectPrimaryNavigationId>[];
@@ -99,6 +99,9 @@ export function selectedProjectNavigation(
   }
   if (normalized === `${root}/execution` || normalized.startsWith(`${root}/execution/`)) {
     return "plan";
+  }
+  if (normalized === `${root}/procurement` || normalized.startsWith(`${root}/procurement/`)) {
+    return "procurement";
   }
   return null;
 }

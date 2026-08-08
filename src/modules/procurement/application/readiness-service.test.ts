@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/lib/db";
 
@@ -38,6 +38,9 @@ function readinessClient() {
     policyVersions: [],
     settings: null,
     requirements: [],
+    mechanicalDrawings: [],
+    drawingVersions: [],
+    changeImpacts: [],
     events: [],
     trackingLines: [],
     deliveryUnits: [],
@@ -114,6 +117,9 @@ function readinessClient() {
       }
     },
     projectMaterialRequirement: { findMany: async () => state.requirements },
+    mechanicalDrawing: { findMany: async () => state.mechanicalDrawings },
+    controlledDocumentVersion: { findMany: async () => state.drawingVersions },
+    procurementChangeImpact: { findMany: async () => state.changeImpacts },
     procurementFulfillmentEvent: { findMany: async () => state.events },
     procurementTrackingLine: { findMany: async () => state.trackingLines },
     deliveryUnit: { findMany: async () => state.deliveryUnits },
@@ -158,8 +164,21 @@ function readinessClient() {
   vi.spyOn(db, "$transaction").mockImplementation(((
     operation: (transactionClient: typeof client) => unknown
   ) => operation(client)) as never);
+  vi.spyOn(db.projectProcurementSettings, "findUnique").mockResolvedValue(state.settings as never);
+  vi.spyOn(db.projectMaterialRequirement, "findMany").mockResolvedValue(
+    state.requirements as never
+  );
+  vi.spyOn(db.procurementChangeImpact, "findMany").mockResolvedValue(state.changeImpacts as never);
+  vi.spyOn(db.mechanicalDrawing, "findMany").mockResolvedValue(state.mechanicalDrawings as never);
+  vi.spyOn(db.controlledDocumentVersion, "findMany").mockResolvedValue(
+    state.drawingVersions as never
+  );
   return { client, state };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("APM-091B procurement readiness service", () => {
   it("exposes the fixed command and read-port surface", () => {
@@ -169,6 +188,25 @@ describe("APM-091B procurement readiness service", () => {
     expect(readProjectProcurementOverview).toBeTypeOf("function");
     expect(readProcurementReadinessTree).toBeTypeOf("function");
     expect(readProcurementGateFacts).toBeTypeOf("function");
+  });
+
+  it("reads real drawing-version and open-change facts for the procurement Gate port", async () => {
+    const { state } = readinessClient();
+    state.requirements[0].currentRevision.businessType = "DRAWING_CUSTOM";
+    state.requirements[0].currentRevision.drawingId = "drawing-1";
+    state.requirements[0].currentRevision.drawingVersionId = "drawing-version-1";
+    state.mechanicalDrawings.push({ id: "drawing-1", documentId: "document-1" });
+    state.drawingVersions.push({
+      id: "drawing-version-1",
+      documentId: "document-2",
+      status: "PUBLISHED"
+    });
+    state.changeImpacts.push({ requirementId: "requirement-1", status: "OPEN" });
+
+    const facts = await readProcurementGateFacts({ projectId: "project-1" });
+
+    expect(facts.wrongDrawingVersionRequirementIds).toEqual(["requirement-1"]);
+    expect(facts.unresolvedMajorChangeRequirementIds).toEqual(["requirement-1"]);
   });
 
   it("appends readiness policy versions and advances only the current pointer", async () => {

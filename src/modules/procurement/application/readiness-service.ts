@@ -151,13 +151,21 @@ export type ReadinessTreeDto = Readonly<{
 export type ProcurementGateFacts = Readonly<{
   projectId: string;
   status: ReadinessStatus | "NOT_CALCULATED";
+  readinessResultId: string | null;
+  policyVersion: string | null;
   inputWatermark: string | null;
   formulaVersion: string | null;
+  calculatedAt: string | null;
+  criticalGapLines: number;
   blockingCriticalLines: number;
   gapLines: number;
   overdueLines: number;
   pendingAcceptanceLines: number;
   sourceSyncedAt: string | null;
+  affectedRequirementIds: readonly string[];
+  wrongDrawingVersionRequirementIds: readonly string[];
+  unresolvedMajorChangeRequirementIds: readonly string[];
+  gateThreshold: unknown;
 }>;
 
 type ReadinessSnapshot = Readonly<{
@@ -991,28 +999,99 @@ export async function readProcurementGateFacts(
 ): Promise<ProcurementGateFacts> {
   const overview = await readProjectProcurementOverview(input);
   const result = overview.readiness;
-  if (!result) {
-    return {
-      projectId: overview.projectId,
-      status: "NOT_CALCULATED",
-      inputWatermark: null,
-      formulaVersion: null,
-      blockingCriticalLines: 0,
-      gapLines: 0,
-      overdueLines: 0,
-      pendingAcceptanceLines: 0,
-      sourceSyncedAt: null
-    };
-  }
-  return {
+  const [settings, requirements, openImpacts] = await Promise.all([
+    db.projectProcurementSettings.findUnique({
+      where: { projectId: overview.projectId },
+      include: { currentReadinessPolicyVersion: { select: { gateThresholdJson: true } } }
+    }),
+    db.projectMaterialRequirement.findMany({
+      where: { projectId: overview.projectId, status: "CONFIRMED" },
+      select: {
+        id: true,
+        currentRevision: {
+          select: {
+            id: true,
+            businessType: true,
+            drawingId: true,
+            drawingVersionId: true
+          }
+        }
+      }
+    }),
+    db.procurementChangeImpact.findMany({
+      where: { projectId: overview.projectId, status: "OPEN" },
+      select: { requirementId: true }
+    })
+  ]);
+  const drawingRevisionRows = requirements.flatMap((requirement) =>
+    requirement.currentRevision?.businessType === "DRAWING_CUSTOM"
+      ? [{ requirementId: requirement.id, ...requirement.currentRevision }]
+      : []
+  );
+  const drawingIds = drawingRevisionRows
+    .map((row) => row.drawingId)
+    .filter((value): value is string => value !== null);
+  const drawingVersionIds = drawingRevisionRows
+    .map((row) => row.drawingVersionId)
+    .filter((value): value is string => value !== null);
+  const [drawings, drawingVersions] = await Promise.all([
+    drawingIds.length > 0
+      ? db.mechanicalDrawing.findMany({
+          where: { projectId: overview.projectId, id: { in: drawingIds } },
+          select: { id: true, documentId: true }
+        })
+      : Promise.resolve([]),
+    drawingVersionIds.length > 0
+      ? db.controlledDocumentVersion.findMany({
+          where: { projectId: overview.projectId, id: { in: drawingVersionIds } },
+          select: { id: true, documentId: true, status: true }
+        })
+      : Promise.resolve([])
+  ]);
+  const drawingById = new Map(drawings.map((drawing) => [drawing.id, drawing]));
+  const drawingVersionById = new Map(drawingVersions.map((version) => [version.id, version]));
+  const wrongDrawingVersionRequirementIds = drawingRevisionRows
+    .filter((row) => {
+      const drawing = row.drawingId ? drawingById.get(row.drawingId) : undefined;
+      const version = row.drawingVersionId
+        ? drawingVersionById.get(row.drawingVersionId)
+        : undefined;
+      return (
+        !drawing ||
+        !version ||
+        version.status !== "PUBLISHED" ||
+        version.documentId !== drawing.documentId
+      );
+    })
+    .map((row) => row.requirementId)
+    .sort((left, right) => left.localeCompare(right));
+  const affectedRequirementIds = result
+    ? (await readProcurementReadinessTree(input)).scopes
+        .filter((fact) => fact.scopeType === "REQUIREMENT" && fact.status !== "READY")
+        .map((fact) => fact.scopeId)
+        .sort((left, right) => left.localeCompare(right))
+    : [];
+  const unresolvedMajorChangeRequirementIds = [
+    ...new Set(openImpacts.map((impact) => impact.requirementId))
+  ].sort((left, right) => left.localeCompare(right));
+  const base = {
     projectId: overview.projectId,
-    status: result.status,
-    inputWatermark: result.inputWatermark,
-    formulaVersion: result.formulaVersion,
-    blockingCriticalLines: result.blockingCriticalLines,
-    gapLines: result.gapLines,
-    overdueLines: result.overdueLines,
-    pendingAcceptanceLines: result.pendingAcceptanceLines,
-    sourceSyncedAt: result.sourceSyncedAt
-  };
+    status: result?.status ?? "NOT_CALCULATED",
+    readinessResultId: result?.id ?? null,
+    policyVersion: result?.policyVersionId ?? null,
+    inputWatermark: result?.inputWatermark ?? null,
+    formulaVersion: result?.formulaVersion ?? null,
+    calculatedAt: result?.calculatedAt ?? null,
+    criticalGapLines: result?.blockingCriticalLines ?? 0,
+    blockingCriticalLines: result?.blockingCriticalLines ?? 0,
+    gapLines: result?.gapLines ?? 0,
+    overdueLines: result?.overdueLines ?? 0,
+    pendingAcceptanceLines: result?.pendingAcceptanceLines ?? 0,
+    sourceSyncedAt: result?.sourceSyncedAt ?? null,
+    affectedRequirementIds,
+    wrongDrawingVersionRequirementIds,
+    unresolvedMajorChangeRequirementIds,
+    gateThreshold: settings?.currentReadinessPolicyVersion?.gateThresholdJson ?? null
+  } satisfies ProcurementGateFacts;
+  return base;
 }

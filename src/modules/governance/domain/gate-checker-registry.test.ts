@@ -8,7 +8,7 @@ describe("APM-031 Gate checker registry", () => {
       code: "STAGE.AWAITING_GATE",
       version: 1
     });
-    expect(GATE_CHECKER_REGISTRY.size).toBe(2);
+    expect(GATE_CHECKER_REGISTRY.size).toBe(3);
     expect(resolveGateChecker("STAGE.AWAITING_GATE", 2)).toBeUndefined();
   });
 
@@ -41,6 +41,116 @@ describe("APM-031 Gate checker registry", () => {
       status: "HARD_FAILED",
       code: "CHECKER_DEPENDENCY_UNAVAILABLE",
       evidence: { dependency: "DOCUMENTS" }
+    });
+  });
+
+  it("evaluates frozen procurement readiness facts without database access", () => {
+    const checker = resolveGateChecker("PROCUREMENT.READINESS", 1);
+
+    expect(
+      checker?.evaluate({
+        projectId: "project-1",
+        gateCode: "G3",
+        stageCode: "S3",
+        scope: "PROJECT",
+        stageStatus: "AWAITING_GATE",
+        facts: {
+          procurementReadiness: {
+            readinessResultId: "readiness-1",
+            policyVersion: "policy-3",
+            formulaVersion: "PROCUREMENT.READINESS@1",
+            inputWatermark: "watermark-1",
+            calculatedAt: "2026-08-07T00:00:00.000Z",
+            status: "READY",
+            criticalGapLines: 0,
+            gapLines: 0,
+            affectedRequirementIds: [],
+            gateThreshold: { warningGapLines: 1, hardFailureGapLines: 2 }
+          }
+        }
+      })
+    ).toMatchObject({
+      status: "PASSED",
+      code: "PROCUREMENT_READINESS_PASSED",
+      evidence: {
+        readinessResultId: "readiness-1",
+        policyVersion: "policy-3",
+        formulaVersion: "PROCUREMENT.READINESS@1",
+        inputWatermark: "watermark-1",
+        calculatedAt: "2026-08-07T00:00:00.000Z",
+        criticalGapLines: 0,
+        affectedRequirementIds: []
+      }
+    });
+  });
+
+  it("fails closed for missing, invalid, stale, critical, drawing, and major-change procurement facts", () => {
+    const checker = resolveGateChecker("PROCUREMENT.READINESS", 1);
+    const base = {
+      readinessResultId: "readiness-1",
+      policyVersion: "policy-3",
+      formulaVersion: "PROCUREMENT.READINESS@1",
+      inputWatermark: "watermark-1",
+      calculatedAt: "2026-08-07T00:00:00.000Z",
+      status: "READY",
+      criticalGapLines: 0,
+      gapLines: 0,
+      affectedRequirementIds: [],
+      gateThreshold: { warningGapLines: 1, hardFailureGapLines: 2 }
+    };
+    const failures = [
+      undefined,
+      { ...base, status: "NOT_CALCULATED" },
+      { ...base, status: "INVALID_INPUT" },
+      { ...base, status: "STALE" },
+      { ...base, status: "BLOCKED", criticalGapLines: 1, affectedRequirementIds: ["critical-1"] },
+      { ...base, wrongDrawingVersionRequirementIds: ["drawing-1"] },
+      { ...base, unresolvedMajorChangeRequirementIds: ["change-1"] }
+    ];
+
+    for (const procurementReadiness of failures) {
+      expect(
+        checker?.evaluate({
+          projectId: "project-1",
+          gateCode: "G3",
+          stageCode: "S3",
+          scope: "PROJECT",
+          stageStatus: "AWAITING_GATE",
+          facts: procurementReadiness === undefined ? {} : { procurementReadiness }
+        })
+      ).toMatchObject({ status: "HARD_FAILED" });
+    }
+  });
+
+  it("uses frozen procurement gap thresholds for warnings and hard failures", () => {
+    const checker = resolveGateChecker("PROCUREMENT.READINESS", 1);
+    const evaluate = (gapLines: number) =>
+      checker?.evaluate({
+        projectId: "project-1",
+        gateCode: "G3",
+        stageCode: "S3",
+        scope: "PROJECT",
+        stageStatus: "AWAITING_GATE",
+        facts: {
+          procurementReadiness: {
+            readinessResultId: "readiness-1",
+            policyVersion: "policy-3",
+            formulaVersion: "PROCUREMENT.READINESS@1",
+            inputWatermark: "watermark-1",
+            calculatedAt: "2026-08-07T00:00:00.000Z",
+            status: "BLOCKED",
+            criticalGapLines: 0,
+            gapLines,
+            affectedRequirementIds: ["ordinary-1"],
+            gateThreshold: { warningGapLines: 1, hardFailureGapLines: 2 }
+          }
+        }
+      });
+
+    expect(evaluate(1)).toMatchObject({ status: "WARNING", code: "PROCUREMENT_READINESS_WARNING" });
+    expect(evaluate(2)).toMatchObject({
+      status: "HARD_FAILED",
+      code: "PROCUREMENT_READINESS_GAP_HARD_FAILED"
     });
   });
 });

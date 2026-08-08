@@ -576,6 +576,34 @@ enum ProcurementReadinessStatus {
   FAILED
 }
 
+enum ProcurementChangeImpactType {
+  REVISED
+  CANCELED
+}
+
+enum ProcurementChangeImpactStatus {
+  OPEN
+  RESOLVED
+}
+
+enum ProcurementChangeImpactObligationType {
+  PROCUREMENT_OWNER
+  SUPPLIER
+  ERP_PROJECTION
+  OLD_TRACKING
+  OLD_FULFILLMENT
+}
+
+enum ProcurementChangeImpactDisposition {
+  OWNER_PLAN_CONFIRMED
+  SUPPLIER_ACCEPTED
+  ERP_PROJECTED
+  CANCELED
+  REWORK
+  RETURNED
+  CONTINUE_USE
+}
+
 enum JobStatus {
   PENDING
   RUNNING
@@ -1280,6 +1308,9 @@ enum AuditAction {
   PROCUREMENT_FULFILLMENT_RECORDED
   PROCUREMENT_FULFILLMENT_REVERSED
   PROCUREMENT_READINESS_CALCULATED
+  PROCUREMENT_CHANGE_IMPACT_DETECTED
+  PROCUREMENT_CHANGE_IMPACT_EVIDENCE_RECORDED
+  PROCUREMENT_CHANGE_IMPACT_RESOLVED
   RND_PROJECT_CREATED
   RND_PROJECT_STATUS_CHANGED
   TECHNICAL_ASSET_CREATED
@@ -1356,6 +1387,8 @@ enum AuditObjectType {
   PROJECT_MATERIAL_REQUIREMENT_REVISION
   PROCUREMENT_TRACKING_LINE
   PROCUREMENT_FULFILLMENT_EVENT
+  PROCUREMENT_CHANGE_IMPACT
+  PROCUREMENT_CHANGE_IMPACT_RESOLUTION
   RND_PROJECT
   RND_PROJECT_EVENT
   TECHNICAL_ASSET
@@ -1449,6 +1482,9 @@ model User {
   procurementTrackingLinesUpdated      ProcurementTrackingLine[]          @relation("ProcurementTrackingLineUpdatedBy")
   procurementFulfillmentEventsCreated  ProcurementFulfillmentEvent[]       @relation("ProcurementFulfillmentEventCreatedBy")
   procurementReadinessPoliciesCreated  ProcurementReadinessPolicyVersion[] @relation("ProcurementReadinessPolicyCreatedBy")
+  procurementChangeImpactsDetected     ProcurementChangeImpact[]           @relation("ProcurementChangeImpactDetectedBy")
+  procurementChangeImpactsResolved     ProcurementChangeImpact[]           @relation("ProcurementChangeImpactResolvedBy")
+  procurementChangeImpactResolutions   ProcurementChangeImpactResolution[] @relation("ProcurementChangeImpactResolutionConfirmedBy")
   responsibilityPackagesCreated         ResponsibilityPackage[]           @relation("ResponsibilityPackageCreatedBy")
   responsibilityPackagesUpdated         ResponsibilityPackage[]           @relation("ResponsibilityPackageUpdatedBy")
   responsibilityPackageEventsActed      ResponsibilityPackageEvent[]      @relation("ResponsibilityPackageEventActor")
@@ -1620,6 +1656,9 @@ model Project {
   procurementFulfillmentEvents   ProcurementFulfillmentEvent[]
   procurementReadinessPolicyVersions ProcurementReadinessPolicyVersion[]
   procurementReadinessResults     ProcurementReadinessResult[]
+  procurementChangeImpacts        ProcurementChangeImpact[]
+  procurementChangeImpactObligations ProcurementChangeImpactObligation[]
+  procurementChangeImpactResolutions ProcurementChangeImpactResolution[]
   materialRequirementRevisions     ProjectMaterialRequirementRevision[]
   responsibilityPackages        ResponsibilityPackage[]
   projectMilestones             ProjectMilestone[]
@@ -1978,6 +2017,7 @@ model ProjectMaterialRequirement {
   updatedBy         User                                 @relation("MaterialRequirementUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   procurementTrackingLines ProcurementTrackingLine[]
   fulfillmentEvents       ProcurementFulfillmentEvent[]
+  procurementChangeImpacts ProcurementChangeImpact[]
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -2033,6 +2073,8 @@ model ProjectMaterialRequirementRevision {
   createdBy                     User                                     @relation("MaterialRequirementRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   procurementTrackingLines      ProcurementTrackingLine[]
   fulfillmentEvents             ProcurementFulfillmentEvent[]
+  procurementChangeImpactsAsPrevious ProcurementChangeImpact[] @relation("ProcurementChangeImpactPreviousRevision")
+  procurementChangeImpactsAsNext     ProcurementChangeImpact[] @relation("ProcurementChangeImpactNextRevision")
 
   @@unique([requirementId, revision])
   @@unique([id, projectId])
@@ -2224,6 +2266,73 @@ model ProcurementReadinessResult {
   @@index([projectId, scopeType, scopeId, calculatedAt])
   @@index([policyVersionId, projectId])
   @@map("procurement_readiness_results")
+}
+
+model ProcurementChangeImpact {
+  id                String                        @id @default(cuid())
+  projectId         String                        @map("project_id")
+  requirementId     String                        @map("requirement_id")
+  previousRevisionId String                       @map("previous_revision_id")
+  nextRevisionId    String?                       @map("next_revision_id")
+  type              ProcurementChangeImpactType
+  changedFieldsJson Json                          @map("changed_fields_json")
+  status            ProcurementChangeImpactStatus @default(OPEN)
+  version           Int                           @default(1)
+  detectedById      String                        @map("detected_by_id")
+  detectedAt        DateTime                      @default(now()) @map("detected_at")
+  resolvedById      String?                       @map("resolved_by_id")
+  resolvedAt        DateTime?                     @map("resolved_at")
+  project           Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requirement       ProjectMaterialRequirement    @relation(fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
+  previousRevision  ProjectMaterialRequirementRevision @relation("ProcurementChangeImpactPreviousRevision", fields: [previousRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  nextRevision      ProjectMaterialRequirementRevision? @relation("ProcurementChangeImpactNextRevision", fields: [nextRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  detectedBy        User                          @relation("ProcurementChangeImpactDetectedBy", fields: [detectedById], references: [id], onDelete: Restrict)
+  resolvedBy        User?                         @relation("ProcurementChangeImpactResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+  obligations       ProcurementChangeImpactObligation[]
+  resolutions       ProcurementChangeImpactResolution[]
+
+  @@unique([id, projectId])
+  @@unique([projectId, previousRevisionId])
+  @@index([projectId, status, detectedAt])
+  @@index([requirementId, projectId])
+  @@map("procurement_change_impacts")
+}
+
+model ProcurementChangeImpactObligation {
+  id        String                               @id @default(cuid())
+  projectId String                               @map("project_id")
+  impactId  String                               @map("impact_id")
+  type      ProcurementChangeImpactObligationType
+  subjectId String                               @map("subject_id")
+  createdAt DateTime                             @default(now()) @map("created_at")
+  project   Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  impact    ProcurementChangeImpact              @relation(fields: [impactId, projectId], references: [id, projectId], onDelete: Restrict)
+  resolution ProcurementChangeImpactResolution?
+
+  @@unique([id, impactId, projectId])
+  @@unique([impactId, type, subjectId])
+  @@index([projectId, impactId])
+  @@map("procurement_change_impact_obligations")
+}
+
+model ProcurementChangeImpactResolution {
+  id                String                           @id @default(cuid())
+  projectId         String                           @map("project_id")
+  impactId          String                           @map("impact_id")
+  obligationId      String                           @unique @map("obligation_id")
+  disposition       ProcurementChangeImpactDisposition
+  evidenceReference String                           @map("evidence_reference")
+  reason            String
+  confirmedById     String                           @map("confirmed_by_id")
+  confirmedAt       DateTime                         @default(now()) @map("confirmed_at")
+  project           Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  impact            ProcurementChangeImpact          @relation(fields: [impactId, projectId], references: [id, projectId], onDelete: Restrict)
+  obligation        ProcurementChangeImpactObligation @relation(fields: [obligationId, impactId, projectId], references: [id, impactId, projectId], onDelete: Restrict)
+  confirmedBy       User                             @relation("ProcurementChangeImpactResolutionConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
+
+  @@unique([obligationId, impactId, projectId])
+  @@index([projectId, impactId, confirmedAt])
+  @@map("procurement_change_impact_resolutions")
 }
 
 model PublicLibraryDocument {

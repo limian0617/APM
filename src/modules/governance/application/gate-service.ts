@@ -16,6 +16,10 @@ import {
 } from "@/modules/governance/domain/gate-checker-registry";
 import { payloadHash, type JsonValue } from "@/modules/governance/domain/idempotency";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+import {
+  readProcurementGateFacts,
+  readProcurementReadinessTree
+} from "@/modules/procurement/application/readiness-service";
 import type { ProjectStageExecutionStatus } from "@/modules/projects/domain/project-stage";
 
 const GATE_SCOPES = ["PROJECT", "DELIVERY_UNIT", "MODULE"] as const;
@@ -163,6 +167,7 @@ export function evaluateFrozenGateCheckers(
     stageStatus: ProjectStageExecutionStatus;
     scope: GateScopeCode;
     checkerBindings: readonly FrozenGateCheckerBinding[];
+    checkerFacts?: Readonly<Record<string, JsonValue>>;
   },
   resolver: (code: string, version: number) => GateChecker | undefined = resolveGateChecker
 ): GateCheckResultFact[] {
@@ -211,7 +216,8 @@ export function evaluateFrozenGateCheckers(
         gateCode: input.gateCode,
         stageCode: input.stageCode,
         stageStatus: input.stageStatus,
-        scope: input.scope
+        scope: input.scope,
+        facts: input.checkerFacts ?? null
       });
       const evidence = evidenceObject(result.evidence);
       return {
@@ -255,6 +261,7 @@ export function buildGateCheckRun(input: {
   scope: GateScopeTarget;
   stage: { code: string; status: ProjectStageExecutionStatus };
   checkerBindings: readonly FrozenGateCheckerBinding[];
+  checkerFacts?: Readonly<Record<string, JsonValue>>;
   reason: string;
 }) {
   const definitionSnapshot = payloadHash({
@@ -271,18 +278,21 @@ export function buildGateCheckRun(input: {
     moduleId: input.scope.moduleId
   }).value;
   const checkerBindings = payloadHash(input.checkerBindings).value;
+  const checkerFacts = payloadHash(input.checkerFacts ?? {}).value;
   const results = evaluateFrozenGateCheckers({
     projectId: input.projectId,
     gateCode: input.definition.code,
     stageCode: input.stage.code,
     stageStatus: input.stage.status,
     scope: input.scope.scope,
-    checkerBindings: input.checkerBindings
+    checkerBindings: input.checkerBindings,
+    checkerFacts: checkerFacts as Readonly<Record<string, JsonValue>>
   });
   const inputChecksum = payloadHash({
     definitionSnapshot,
     scopeSnapshot,
     checkerBindings,
+    checkerFacts,
     stage: input.stage,
     reason: input.reason
   }).hash;
@@ -293,11 +303,77 @@ export function buildGateCheckRun(input: {
     definitionSnapshot,
     scopeSnapshot,
     checkerBindings,
+    checkerFacts,
     results,
     overallStatus: aggregateGateCheckStatus(results),
     inputChecksum,
     resultChecksum
   };
+}
+
+function needsProcurementFacts(bindings: readonly FrozenGateCheckerBinding[]) {
+  return bindings.some(
+    (binding) => binding.code === "PROCUREMENT.READINESS" && binding.version === 1
+  );
+}
+
+async function freezeProcurementCheckerFacts(input: {
+  projectId: string;
+  scope: GateScopeTarget;
+  gateThreshold?: JsonValue;
+}): Promise<Readonly<Record<string, JsonValue>>> {
+  const [gateFacts, readinessTree] = await Promise.all([
+    readProcurementGateFacts({ projectId: input.projectId }),
+    readProcurementReadinessTree({ projectId: input.projectId })
+  ]);
+  const scopeId =
+    input.scope.scope === "PROJECT"
+      ? input.projectId
+      : input.scope.scope === "DELIVERY_UNIT"
+        ? input.scope.deliveryUnitId
+        : input.scope.moduleId;
+  const scopeType =
+    input.scope.scope === "PROJECT"
+      ? "PROJECT"
+      : input.scope.scope === "DELIVERY_UNIT"
+        ? "DELIVERY_UNIT"
+        : "MODULE";
+  const readiness = readinessTree.scopes.find(
+    (fact) => fact.scopeType === scopeType && fact.scopeId === scopeId
+  );
+  const affectedRequirementIds = readinessTree.scopes
+    .filter((fact) => fact.scopeType === "REQUIREMENT" && fact.status !== "READY")
+    .map((fact) => fact.scopeId)
+    .sort((left, right) => left.localeCompare(right));
+  return {
+    procurementReadiness: {
+      readinessResultId: readiness?.id ?? null,
+      policyVersion: readiness?.policyVersionId ?? gateFacts.policyVersion,
+      formulaVersion: readiness?.formulaVersion ?? gateFacts.formulaVersion,
+      inputWatermark: readiness?.inputWatermark ?? gateFacts.inputWatermark,
+      calculatedAt: readiness?.calculatedAt ?? gateFacts.calculatedAt,
+      status: readiness?.status ?? "NOT_CALCULATED",
+      criticalGapLines: readiness?.blockingCriticalLines ?? gateFacts.criticalGapLines,
+      gapLines: readiness?.gapLines ?? gateFacts.gapLines,
+      affectedRequirementIds,
+      wrongDrawingVersionRequirementIds: [...gateFacts.wrongDrawingVersionRequirementIds],
+      unresolvedMajorChangeRequirementIds: [...gateFacts.unresolvedMajorChangeRequirementIds],
+      gateThreshold: input.gateThreshold ?? frozenGateThreshold(gateFacts.gateThreshold) ?? null
+    }
+  };
+}
+
+function frozenGateThreshold(value: unknown): JsonValue | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const nested = record.gateThreshold ?? record.procurementGateThreshold;
+  if (nested !== undefined) return frozenGateThreshold(nested);
+  const warningGapLines = record.warningGapLines;
+  const hardFailureGapLines = record.hardFailureGapLines;
+  const validThreshold = (candidate: unknown): candidate is number | null =>
+    candidate === null || (Number.isSafeInteger(candidate) && (candidate as number) >= 0);
+  if (!validThreshold(warningGapLines) || !validThreshold(hardFailureGapLines)) return undefined;
+  return { warningGapLines, hardFailureGapLines };
 }
 
 function parseFrozenCheckerBindings(value: unknown): FrozenGateCheckerBinding[] {
@@ -585,6 +661,17 @@ export async function runGateChecks(
       const checkerBindings = parseFrozenCheckerBindings(
         instance.gateDefinition.checkerBindingsJson
       );
+      const checkerFacts = needsProcurementFacts(checkerBindings)
+        ? await freezeProcurementCheckerFacts({
+            projectId: input.projectId,
+            scope: {
+              scope: instance.scope as GateScopeCode,
+              deliveryUnitId: instance.deliveryUnitId,
+              moduleId: instance.moduleId
+            },
+            gateThreshold: frozenGateThreshold(instance.gateDefinition.definitionJson)
+          })
+        : {};
       const run = buildGateCheckRun({
         projectId: input.projectId,
         instanceId: instance.id,
@@ -601,6 +688,7 @@ export async function runGateChecks(
         },
         stage: { code: instance.projectStage.code, status: stageStatus },
         checkerBindings,
+        checkerFacts,
         reason
       });
       const updated = await client.projectGateInstance.updateMany({

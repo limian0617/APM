@@ -25,6 +25,45 @@ export {
   updateProcurementTrackingLineBodySchema
 } from "@/modules/procurement/contracts/procurement-http";
 
+const procurementPageViewSchema = z.enum([
+  "overview",
+  "requirements",
+  "tracking",
+  "arrivals",
+  "readiness"
+]);
+const procurementScopeTypeSchema = z.enum([
+  "PROJECT",
+  "DELIVERY_UNIT",
+  "MACHINE",
+  "MODULE",
+  "REQUIREMENT"
+]);
+const procurementPageCursorSchema = identifierSchema.optional();
+const procurementPageLimitSchema = z
+  .string()
+  .regex(/^\d{1,3}$/u)
+  .optional()
+  .transform((value) => (value === undefined ? 50 : Number(value)))
+  .pipe(z.number().int().min(1).max(100));
+
+export const procurementOverviewQuerySchema = z.strictObject({
+  view: procurementPageViewSchema.default("overview"),
+  scopeType: procurementScopeTypeSchema.optional(),
+  scopeId: identifierSchema.optional(),
+  status: identifierSchema.optional(),
+  cursor: procurementPageCursorSchema,
+  limit: procurementPageLimitSchema
+});
+
+export const procurementReadinessQuerySchema = z.strictObject({
+  view: z.literal("readiness").default("readiness"),
+  scopeType: procurementScopeTypeSchema.optional(),
+  scopeId: identifierSchema.optional(),
+  cursor: procurementPageCursorSchema,
+  limit: procurementPageLimitSchema
+});
+
 export const settingPathSchema = z.strictObject({ key: identifierSchema });
 export const settingBodySchema = z.strictObject({
   value: z.number().int(),

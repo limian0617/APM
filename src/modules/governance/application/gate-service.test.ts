@@ -187,6 +187,63 @@ describe("APM-031 Gate service rules", () => {
     );
   });
 
+  it("includes frozen procurement facts in the checker evidence and input checksum", () => {
+    const input = {
+      projectId: "project-1",
+      instanceId: "instance-1",
+      definition: {
+        code: "G3",
+        name: "Procurement release",
+        projectStageId: "stage-3",
+        definitionJson: { code: "G3", name: "Procurement release" }
+      },
+      scope: { scope: "PROJECT" as const, deliveryUnitId: null, moduleId: null },
+      stage: { code: "S3", status: "AWAITING_GATE" as const },
+      checkerBindings: [{ code: "PROCUREMENT.READINESS", version: 1 }],
+      checkerFacts: {
+        procurementReadiness: {
+          readinessResultId: "readiness-1",
+          policyVersion: "policy-3",
+          formulaVersion: "PROCUREMENT.READINESS@1",
+          inputWatermark: "watermark-1",
+          calculatedAt: "2026-08-07T00:00:00.000Z",
+          status: "READY",
+          criticalGapLines: 0,
+          gapLines: 0,
+          affectedRequirementIds: [],
+          gateThreshold: { warningGapLines: 1, hardFailureGapLines: 2 }
+        }
+      },
+      reason: "Run frozen procurement Gate checks"
+    };
+
+    const first = buildGateCheckRun(input);
+    const changedWatermark = buildGateCheckRun({
+      ...input,
+      checkerFacts: {
+        procurementReadiness: {
+          ...input.checkerFacts.procurementReadiness,
+          inputWatermark: "watermark-2"
+        }
+      }
+    });
+
+    expect(first).toMatchObject({
+      overallStatus: "PASSED",
+      results: [
+        {
+          status: "PASSED",
+          evidence: {
+            readinessResultId: "readiness-1",
+            policyVersion: "policy-3",
+            inputWatermark: "watermark-1"
+          }
+        }
+      ]
+    });
+    expect(changedWatermark.inputChecksum).not.toBe(first.inputChecksum);
+  });
+
   it("uses a typed error suitable for non-leaking HTTP mapping", () => {
     const error = new GateServiceError("GATE_INSTANCE_NOT_FOUND", "not found", 404);
     expect(error).toMatchObject({

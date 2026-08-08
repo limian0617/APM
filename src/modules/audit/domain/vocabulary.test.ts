@@ -93,6 +93,50 @@ describe("stage audit vocabulary", () => {
   });
 });
 
+describe("procurement change impact audit vocabulary", () => {
+  it("keeps detected impacts, disposition evidence, and resolved impacts auditable", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260807040200_apm_091b_procurement_change_impacts/migration.sql"
+      ),
+      "utf8"
+    );
+
+    expect(AUDIT_ACTIONS).toMatchObject({
+      PROCUREMENT_CHANGE_IMPACT_DETECTED: "PROCUREMENT_CHANGE_IMPACT_DETECTED",
+      PROCUREMENT_CHANGE_IMPACT_EVIDENCE_RECORDED: "PROCUREMENT_CHANGE_IMPACT_EVIDENCE_RECORDED",
+      PROCUREMENT_CHANGE_IMPACT_RESOLVED: "PROCUREMENT_CHANGE_IMPACT_RESOLVED"
+    });
+    expect(AUDIT_OBJECT_TYPES).toMatchObject({
+      PROCUREMENT_CHANGE_IMPACT: "PROCUREMENT_CHANGE_IMPACT",
+      PROCUREMENT_CHANGE_IMPACT_RESOLUTION: "PROCUREMENT_CHANGE_IMPACT_RESOLUTION"
+    });
+    expect(PROCUREMENT_AUDIT_FIELDS).toEqual(
+      expect.arrayContaining([
+        "procurementChangeImpactId",
+        "previousRevisionId",
+        "nextRevisionId",
+        "changedFields",
+        "obligationId",
+        "disposition",
+        "evidenceReference"
+      ])
+    );
+    for (const value of [
+      "PROCUREMENT_CHANGE_IMPACT_DETECTED",
+      "PROCUREMENT_CHANGE_IMPACT_EVIDENCE_RECORDED",
+      "PROCUREMENT_CHANGE_IMPACT_RESOLVED",
+      "PROCUREMENT_CHANGE_IMPACT",
+      "PROCUREMENT_CHANGE_IMPACT_RESOLUTION"
+    ]) {
+      expect(schema).toContain(value);
+      expect(migration).toContain("ADD VALUE IF NOT EXISTS '" + value + "'");
+    }
+  });
+});
+
 describe("Gate audit vocabulary", () => {
   it("keeps APM-031 Gate facts aligned across Prisma and the foundation migration", () => {
     const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
