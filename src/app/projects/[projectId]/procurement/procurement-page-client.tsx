@@ -850,7 +850,7 @@ async function fetchProcurementSource(path: string): Promise<ProcurementFetchRes
   }
 }
 
-async function loadProcurementState(projectId: string): Promise<ProcurementPageState> {
+export async function loadProcurementState(projectId: string): Promise<ProcurementPageState> {
   const root = `/api/projects/${encodeURIComponent(projectId)}`;
   const [overview, readiness, requirements, tracking, arrivals, suppliers, changeImpacts] =
     await Promise.all([
