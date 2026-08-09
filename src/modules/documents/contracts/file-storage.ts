@@ -16,6 +16,12 @@ export type StoredObjectFacts = {
 };
 
 export interface ObjectStoragePort {
+  putObject(input: {
+    area: StorageArea;
+    objectKey: string;
+    mimeType: string;
+    body: Uint8Array;
+  }): Promise<void>;
   beginMultipartUpload(input: {
     area: StorageArea;
     objectKey: string;

@@ -13,10 +13,17 @@ import {
   type AcceptanceNonDataState,
   type AcceptancePageState
 } from "@/modules/acceptance/contracts/acceptance-page-state";
+import {
+  buildAcceptanceReportPageState,
+  resolveAcceptanceReportFixture,
+  type AcceptanceReportFetchResult,
+  type AcceptanceReportPageState
+} from "@/modules/acceptance/contracts/acceptance-report-page-state";
 
 type AcceptancePageClientProps = Readonly<{
   projectId: string;
   initialState: AcceptancePageState | null;
+  initialReportState?: AcceptanceReportPageState | null;
 }>;
 
 type AcceptancePageContentProps = Readonly<{
@@ -27,6 +34,9 @@ type AcceptancePageContentProps = Readonly<{
   onRetry: () => void;
   onCommand?: (path: string, body: Record<string, unknown>) => Promise<void>;
   commandError?: string | null;
+  reportState?: AcceptanceReportPageState;
+  onReportCommand?: (path: string, body: Record<string, unknown>) => Promise<void>;
+  reportCommandError?: string | null;
 }>;
 
 export function acceptanceCommandsForBatch(input: {
@@ -49,6 +59,100 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function list(value: unknown): readonly Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+type ConfirmationEvidenceFile = Blob & { name: string; type: string; size: number };
+type BrowserFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+function clientIdempotencyKey(): string {
+  return crypto.randomUUID();
+}
+
+async function readUploadResponse(response: Response): Promise<Record<string, unknown>> {
+  const body = await response.json().catch(() => null);
+  if (response.ok && isRecord(body)) return body;
+  const error = isRecord(body) && isRecord(body.error) ? body.error.message : null;
+  throw new Error(typeof error === "string" ? error : "确认凭证上传未完成。");
+}
+
+/**
+ * Confirmation evidence always enters the existing private file pipeline as
+ * RESTRICTED. A confirmation cannot use the returned id until the server-side
+ * scanner promotes the file to AVAILABLE/CONTROLLED.
+ */
+export async function uploadConfirmationEvidenceFile(input: {
+  projectId: string;
+  file: ConfirmationEvidenceFile;
+  fetchImpl?: BrowserFetch;
+}): Promise<{ fileId: string; status: string }> {
+  const projectId = input.projectId.trim();
+  const originalName = input.file.name.trim();
+  const mimeType = input.file.type.trim().toLowerCase() || "application/octet-stream";
+  if (!projectId || !originalName || input.file.size <= 0) {
+    throw new Error("请选择一个有效的确认凭证文件。");
+  }
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const base = `/api/projects/${encodeURIComponent(projectId)}/files/uploads`;
+  const started = await readUploadResponse(
+    await fetchImpl(base, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": clientIdempotencyKey()
+      },
+      body: JSON.stringify({
+        originalName,
+        mimeType,
+        size: input.file.size,
+        sensitivity: "RESTRICTED"
+      })
+    })
+  );
+  const upload = isRecord(started.upload) ? started.upload : null;
+  const startedFile = isRecord(started.file) ? started.file : null;
+  const sessionId = typeof upload?.sessionId === "string" ? upload.sessionId : null;
+  const expectedParts = typeof upload?.expectedParts === "number" ? upload.expectedParts : null;
+  const partSize = typeof upload?.partSize === "number" ? upload.partSize : null;
+  const fileId = typeof startedFile?.id === "string" ? startedFile.id : null;
+  if (!sessionId || !fileId || !expectedParts || !partSize) {
+    throw new Error("确认凭证上传会话响应无效。");
+  }
+  const parts: Array<{ partNumber: number; etag: string; size: number }> = [];
+  for (let partNumber = 1; partNumber <= expectedParts; partNumber += 1) {
+    const part = await readUploadResponse(
+      await fetchImpl(`${base}/${encodeURIComponent(sessionId)}/parts/${partNumber}`, {
+        method: "POST"
+      })
+    );
+    const uploadUrl = typeof part.uploadUrl === "string" ? part.uploadUrl : null;
+    const expectedSize = typeof part.expectedSize === "number" ? part.expectedSize : null;
+    if (!uploadUrl || !expectedSize || expectedSize <= 0) {
+      throw new Error("确认凭证分片上传地址无效。");
+    }
+    const start = (partNumber - 1) * partSize;
+    const uploaded = await fetchImpl(uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": mimeType },
+      body: input.file.slice(start, start + expectedSize)
+    });
+    const etag = uploaded.headers.get("etag");
+    if (!uploaded.ok || !etag) throw new Error("确认凭证分片上传失败。");
+    parts.push({ partNumber, etag, size: expectedSize });
+  }
+  const completed = await readUploadResponse(
+    await fetchImpl(`${base}/${encodeURIComponent(sessionId)}/complete`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": clientIdempotencyKey()
+      },
+      body: JSON.stringify({ mimeType, size: input.file.size, parts })
+    })
+  );
+  const completedFile = isRecord(completed.file) ? completed.file : null;
+  const completedFileId = typeof completedFile?.id === "string" ? completedFile.id : fileId;
+  const status = typeof completedFile?.status === "string" ? completedFile.status : "PENDING_SCAN";
+  return { fileId: completedFileId, status };
 }
 
 function text(value: unknown, fallback = "未提供") {
@@ -91,6 +195,10 @@ function issueStatusLabel(value: unknown) {
 function issueHref(projectId: string, issueId: unknown) {
   if (typeof issueId !== "string" || !issueId.trim()) return null;
   return `/projects/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(issueId)}`;
+}
+
+export function acceptanceReportDownloadHref(projectId: string, reportId: string) {
+  return `/api/projects/${encodeURIComponent(projectId)}/acceptance/reports/${encodeURIComponent(reportId)}/download`;
 }
 
 function belongsToProject(batch: Record<string, unknown>, projectId: string) {
@@ -704,6 +812,292 @@ function BatchCreationForm({
   );
 }
 
+function reportStatusLabel(status: unknown) {
+  if (status === "GENERATING") return "生成中";
+  if (status === "FAILED") return "生成失败，可重试";
+  if (status === "READY") return "已就绪";
+  if (status === "PUBLISHED") return "已发布";
+  if (status === "SUPERSEDED") return "已被新版本取代";
+  return "状态未知";
+}
+
+function confirmationDecisionLabel(decision: unknown) {
+  if (decision === "ACCEPTED") return "已确认";
+  if (decision === "ACCEPTED_WITH_RESERVATIONS") return "附条件确认";
+  if (decision === "REJECTED") return "已拒绝";
+  return "未确认";
+}
+
+function ReportList({
+  projectId,
+  state,
+  acceptanceState,
+  selectedBatchId,
+  onCommand,
+  commandError
+}: {
+  projectId: string;
+  state: AcceptanceReportPageState;
+  acceptanceState: AcceptancePageState;
+  selectedBatchId: string | null;
+  onCommand: (path: string, body: Record<string, unknown>) => Promise<void>;
+  commandError?: string | null;
+}) {
+  if (!("reports" in state)) {
+    const message =
+      state.status === "loading"
+        ? "报告状态加载中…"
+        : state.status === "denied"
+          ? "无权查看受控验收报告。"
+          : "报告状态暂不可用。";
+    return (
+      <section className="acceptance-reports" aria-busy={state.status === "loading"}>
+        <h2>受控验收报告</h2>
+        <p role={state.status === "error" ? "alert" : "status"}>{message}</p>
+      </section>
+    );
+  }
+  const detail = isAcceptancePageDataState(acceptanceState) && acceptanceState.batchDetail;
+  const batch = detail && isRecord(detail.batch) ? detail.batch : null;
+  const batchId = batch && typeof batch.id === "string" ? batch.id : null;
+  const batchVersion = batch && typeof batch.version === "number" ? batch.version : null;
+  const canGenerate =
+    state.allowedActions.includes("GENERATE_REPORT") &&
+    batch?.status === "LOCKED" &&
+    batchId === selectedBatchId;
+  return (
+    <section className="acceptance-reports" aria-label="受控 FAT/SAT 验收报告">
+      <div className="acceptance-section-heading">
+        <h2>受控验收报告</h2>
+        <span>{state.status === "stale" ? "数据已过期" : `${state.reports.length} 个版本`}</span>
+      </div>
+      {commandError ? (
+        <p className="acceptance-command-error" role="alert">
+          {commandError}
+        </p>
+      ) : null}
+      {canGenerate && batchId && batchVersion !== null ? (
+        <button
+          className="acceptance-command"
+          type="button"
+          onClick={() =>
+            void onCommand(`/api/projects/${encodeURIComponent(projectId)}/acceptance/reports`, {
+              batchId,
+              version: batchVersion,
+              supersedesReportId: null
+            })
+          }
+        >
+          生成验收报告
+        </button>
+      ) : null}
+      {state.reports.length === 0 ? (
+        <p className="acceptance-empty-inline">暂无受控报告；只有 LOCKED 批次可以生成正式报告。</p>
+      ) : (
+        <ul className="acceptance-report-list">
+          {state.reports.map((report, index) => {
+            const reportId =
+              typeof report.id === "string" && report.projectId === projectId ? report.id : null;
+            const status = report.status;
+            const confirmations = list(report.confirmations);
+            return (
+              <li key={reportId ?? `report-${index}`}>
+                <div className="acceptance-report-summary">
+                  <strong>
+                    {text(report.reportNumber, "受控验收报告")} · v{text(report.reportVersion)}
+                  </strong>
+                  <span>
+                    {text(report.acceptanceType)} · {text(report.scopeType)} /{" "}
+                    {text(report.scopeId)} · {reportStatusLabel(status)}
+                  </span>
+                  <small>报告快照 SHA-256：{text(report.snapshotChecksum)}</small>
+                  <small>最终 PDF 完整 SHA-256：{text(report.pdfSha256)}</small>
+                  {reportId && ["READY", "PUBLISHED"].includes(String(status)) ? (
+                    <a href={acceptanceReportDownloadHref(projectId, reportId)}>下载受控 PDF</a>
+                  ) : null}
+                </div>
+                <div className="acceptance-confirmation-summary">
+                  <span>
+                    客户确认：
+                    {confirmations.length
+                      ? confirmationDecisionLabel(confirmations[0]?.decision)
+                      : "未确认"}
+                  </span>
+                  {confirmations.map((confirmation, confirmationIndex) => (
+                    <small key={text(confirmation.id, `confirmation-${confirmationIndex}`)}>
+                      {confirmationDecisionLabel(confirmation.decision)} ·{" "}
+                      {text(confirmation.recordedAt)} ·{" "}
+                      {confirmation.status === "SUPERSEDED" ? "已取代" : "当前"}
+                    </small>
+                  ))}
+                </div>
+                {reportId &&
+                state.allowedActions.includes("RECORD_CONFIRMATION") &&
+                ["READY", "PUBLISHED"].includes(String(status)) ? (
+                  <ConfirmationForm
+                    projectId={projectId}
+                    reportId={reportId}
+                    report={report}
+                    onCommand={onCommand}
+                  />
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="acceptance-signature-disclaimer">
+        确认凭证仅作为项目验收证据，不等同于法律电子签名。
+      </p>
+    </section>
+  );
+}
+
+function ConfirmationForm({
+  projectId,
+  reportId,
+  report,
+  onCommand
+}: {
+  projectId: string;
+  reportId: string;
+  report: Record<string, unknown>;
+  onCommand: (path: string, body: Record<string, unknown>) => Promise<void>;
+}) {
+  const [decision, setDecision] = useState("ACCEPTED");
+  const [organization, setOrganization] = useState("");
+  const [representative, setRepresentative] = useState("");
+  const [title, setTitle] = useState("");
+  const [channel, setChannel] = useState("SIGNED_DOCUMENT");
+  const [confirmedAt, setConfirmedAt] = useState("");
+  const [comment, setComment] = useState("");
+  const [evidence, setEvidence] = useState("");
+  const [evidenceUploadState, setEvidenceUploadState] = useState<string | null>(null);
+  return (
+    <form
+      className="acceptance-confirmation-form"
+      aria-label="记录客户验收确认"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onCommand(
+          `/api/projects/${encodeURIComponent(projectId)}/acceptance/reports/${encodeURIComponent(reportId)}/confirmations`,
+          {
+            version: typeof report.reportVersion === "number" ? report.reportVersion : 1,
+            reportChecksum: report.snapshotChecksum,
+            decision,
+            customerOrganization: organization,
+            customerRepresentative: representative,
+            representativeTitle: title,
+            confirmationChannel: channel,
+            customerConfirmedAt: new Date(confirmedAt).toISOString(),
+            comment,
+            evidenceFileIds: evidence
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean)
+          }
+        );
+      }}
+    >
+      <label>
+        决定
+        <select value={decision} onChange={(event) => setDecision(event.target.value)}>
+          <option value="ACCEPTED">接受</option>
+          <option value="ACCEPTED_WITH_RESERVATIONS">附条件接受</option>
+          <option value="REJECTED">拒绝</option>
+        </select>
+      </label>
+      <label>
+        客户组织
+        <input
+          required
+          value={organization}
+          onChange={(event) => setOrganization(event.target.value)}
+        />
+      </label>
+      <label>
+        客户代表
+        <input
+          required
+          value={representative}
+          onChange={(event) => setRepresentative(event.target.value)}
+        />
+      </label>
+      <label>
+        职务
+        <input required value={title} onChange={(event) => setTitle(event.target.value)} />
+      </label>
+      <label>
+        渠道
+        <select value={channel} onChange={(event) => setChannel(event.target.value)}>
+          <option value="SIGNED_DOCUMENT">签字件</option>
+          <option value="EMAIL">邮件</option>
+          <option value="MEETING_MINUTES">会议纪要</option>
+          <option value="OTHER">其他</option>
+        </select>
+      </label>
+      <label>
+        客户确认时间
+        <input
+          required
+          type="datetime-local"
+          value={confirmedAt}
+          onChange={(event) => setConfirmedAt(event.target.value)}
+        />
+      </label>
+      <label>
+        意见
+        <textarea value={comment} onChange={(event) => setComment(event.target.value)} />
+      </label>
+      <label>
+        上传确认凭证
+        <input
+          type="file"
+          disabled={evidenceUploadState === "正在上传确认凭证…"}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (!file) return;
+            setEvidenceUploadState("正在上传确认凭证…");
+            void uploadConfirmationEvidenceFile({ projectId, file })
+              .then((uploaded) => {
+                setEvidence((current) =>
+                  [
+                    ...new Set([
+                      ...current.split(",").map((value) => value.trim()),
+                      uploaded.fileId
+                    ])
+                  ]
+                    .filter(Boolean)
+                    .join(",")
+                );
+                setEvidenceUploadState(
+                  uploaded.status === "PENDING_SCAN"
+                    ? `已上传 ${uploaded.fileId}，等待服务端扫描完成后才能记录确认。`
+                    : `已上传 ${uploaded.fileId}。`
+                );
+              })
+              .catch((error: unknown) => {
+                setEvidenceUploadState(
+                  error instanceof Error ? error.message : "确认凭证上传未完成。"
+                );
+              });
+          }}
+        />
+      </label>
+      {evidenceUploadState ? (
+        <small className="acceptance-evidence-upload-state">{evidenceUploadState}</small>
+      ) : null}
+      <label>
+        已扫描的凭证文件ID（逗号分隔）
+        <input required value={evidence} onChange={(event) => setEvidence(event.target.value)} />
+      </label>
+      <button className="acceptance-command" type="submit">
+        记录确认
+      </button>
+    </form>
+  );
+}
+
 export function AcceptancePageContent({
   projectId,
   state,
@@ -711,9 +1105,20 @@ export function AcceptancePageContent({
   fixture,
   onRetry,
   onCommand,
-  commandError
+  commandError,
+  reportState,
+  onReportCommand,
+  reportCommandError
 }: AcceptancePageContentProps) {
   const executeCommand = onCommand ?? (async () => undefined);
+  const reportViewState = reportState ?? {
+    projectId,
+    status: "empty" as const,
+    reports: [],
+    allowedActions: [],
+    fetchedAt: null
+  };
+  const executeReportCommand = onReportCommand ?? (async () => undefined);
   if (!isAcceptancePageDataState(state))
     return <AcceptanceStatePanel state={state} onRetry={onRetry} />;
   return (
@@ -773,6 +1178,14 @@ export function AcceptancePageContent({
         />
       </div>
       <BatchDetail projectId={projectId} state={state} onCommand={executeCommand} />
+      <ReportList
+        projectId={projectId}
+        state={reportViewState}
+        acceptanceState={state}
+        selectedBatchId={selectedBatchId}
+        onCommand={executeReportCommand}
+        commandError={reportCommandError}
+      />
     </main>
   );
 }
@@ -789,6 +1202,22 @@ async function fetchAcceptanceSource(path: string): Promise<AcceptanceFetchResul
     });
   } catch {
     return toAcceptanceFetchResult({ status: 0 });
+  }
+}
+
+async function fetchAcceptanceReportSource(path: string): Promise<AcceptanceReportFetchResult> {
+  try {
+    const response = await fetch(path, { cache: "no-store" });
+    const body = await response.json().catch(() => undefined);
+    return {
+      status: response.status,
+      body,
+      fetchedAt: new Date().toISOString(),
+      stale: false,
+      retryable: response.status === 502 || response.status === 503 || response.status === 504
+    };
+  } catch {
+    return { status: 0, fetchedAt: null, stale: false, retryable: true };
   }
 }
 
@@ -821,23 +1250,54 @@ export async function loadAcceptancePageState(
   return buildAcceptancePageState({ projectId, templates, batches, batchDetail });
 }
 
-export function AcceptancePageClient({ projectId, initialState }: AcceptancePageClientProps) {
+export async function loadAcceptanceReportPageState(
+  projectId: string
+): Promise<AcceptanceReportPageState> {
+  const result = await fetchAcceptanceReportSource(
+    `/api/projects/${encodeURIComponent(projectId)}/acceptance/reports`
+  );
+  return buildAcceptanceReportPageState({ projectId, result });
+}
+
+export function AcceptancePageClient({
+  projectId,
+  initialState,
+  initialReportState
+}: AcceptancePageClientProps) {
   const searchParams = useSearchParams();
   const requestedBatchId = searchParams.get("batch");
   const fixture = resolveAcceptanceFixture(searchParams.get("fixture"), process.env.NODE_ENV);
+  const reportFixture = resolveAcceptanceReportFixture(
+    searchParams.get("fixture"),
+    process.env.NODE_ENV
+  );
   const [state, setState] = useState<AcceptancePageState>(
     initialState ?? { projectId, status: "loading" }
   );
-  const [commandError, setCommandError] = useState<string | null>(null);
-  const reload = useCallback(
-    async () => setState(await loadAcceptancePageState(projectId, requestedBatchId)),
-    [projectId, requestedBatchId]
+  const [reportState, setReportState] = useState<AcceptanceReportPageState>(
+    initialReportState ?? { projectId, status: "loading" }
   );
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [reportCommandError, setReportCommandError] = useState<string | null>(
+    reportFixture === "conflict" ? "报告或确认已被其他成员更新，请刷新后重试。" : null
+  );
+  const reload = useCallback(async () => {
+    const [next, nextReports] = await Promise.all([
+      loadAcceptancePageState(projectId, requestedBatchId),
+      loadAcceptanceReportPageState(projectId)
+    ]);
+    setState(next);
+    setReportState(nextReports);
+  }, [projectId, requestedBatchId]);
   useEffect(() => {
     if (initialState) return;
     let cancelled = false;
-    void loadAcceptancePageState(projectId, requestedBatchId).then((next) => {
+    void Promise.all([
+      loadAcceptancePageState(projectId, requestedBatchId),
+      loadAcceptanceReportPageState(projectId)
+    ]).then(([next, nextReports]) => {
       if (!cancelled) setState(next);
+      if (!cancelled) setReportState(nextReports);
     });
     return () => {
       cancelled = true;
@@ -888,6 +1348,34 @@ export function AcceptancePageClient({ projectId, initialState }: AcceptancePage
     },
     [reload]
   );
+  const runReportCommand = useCallback(
+    async (path: string, body: Record<string, unknown>) => {
+      setReportCommandError(null);
+      try {
+        const response = await fetch(path, {
+          method: "POST",
+          cache: "no-store",
+          headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
+          body: JSON.stringify(body)
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          error?: { message?: string; code?: string };
+        } | null;
+        if (!response.ok) {
+          setReportCommandError(
+            response.status === 409
+              ? "报告或确认已被其他成员更新，请刷新后重试。"
+              : (payload?.error?.message ?? "报告命令未完成。")
+          );
+          return;
+        }
+        await reload();
+      } catch {
+        setReportCommandError("报告命令暂时无法连接服务，请稍后重试。");
+      }
+    },
+    [reload]
+  );
   return (
     <AcceptancePageContent
       projectId={projectId}
@@ -897,6 +1385,9 @@ export function AcceptancePageClient({ projectId, initialState }: AcceptancePage
       onRetry={() => void reload()}
       onCommand={runCommand}
       commandError={commandError}
+      reportState={reportState}
+      onReportCommand={runReportCommand}
+      reportCommandError={reportCommandError}
     />
   );
 }

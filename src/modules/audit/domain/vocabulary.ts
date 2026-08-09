@@ -130,6 +130,12 @@ export const AUDIT_ACTIONS = {
   ACCEPTANCE_RESULT_RECORDED: "ACCEPTANCE_RESULT_RECORDED",
   ACCEPTANCE_RESULT_CORRECTED: "ACCEPTANCE_RESULT_CORRECTED",
   ACCEPTANCE_EVIDENCE_REFERENCED: "ACCEPTANCE_EVIDENCE_REFERENCED",
+  ACCEPTANCE_REPORT_GENERATED: "ACCEPTANCE_REPORT_GENERATED",
+  ACCEPTANCE_REPORT_FAILED: "ACCEPTANCE_REPORT_FAILED",
+  ACCEPTANCE_REPORT_DOWNLOADED: "ACCEPTANCE_REPORT_DOWNLOADED",
+  ACCEPTANCE_CONFIRMATION_RECORDED: "ACCEPTANCE_CONFIRMATION_RECORDED",
+  ACCEPTANCE_CONFIRMATION_SUPERSEDED: "ACCEPTANCE_CONFIRMATION_SUPERSEDED",
+  ACCEPTANCE_CONFIRMATION_READ: "ACCEPTANCE_CONFIRMATION_READ",
   RND_PROJECT_CREATED: "RND_PROJECT_CREATED",
   RND_PROJECT_STATUS_CHANGED: "RND_PROJECT_STATUS_CHANGED",
   TECHNICAL_ASSET_CREATED: "TECHNICAL_ASSET_CREATED",
@@ -214,6 +220,9 @@ export const AUDIT_OBJECT_TYPES = {
   ACCEPTANCE_BATCH: "ACCEPTANCE_BATCH",
   ACCEPTANCE_TEST_RESULT: "ACCEPTANCE_TEST_RESULT",
   ACCEPTANCE_TEST_RESULT_REVISION: "ACCEPTANCE_TEST_RESULT_REVISION",
+  ACCEPTANCE_REPORT: "ACCEPTANCE_REPORT",
+  ACCEPTANCE_CONFIRMATION: "ACCEPTANCE_CONFIRMATION",
+  ACCEPTANCE_CONFIRMATION_EVIDENCE: "ACCEPTANCE_CONFIRMATION_EVIDENCE",
   RND_PROJECT: "RND_PROJECT",
   RND_PROJECT_EVENT: "RND_PROJECT_EVENT",
   TECHNICAL_ASSET: "TECHNICAL_ASSET",
@@ -497,6 +506,45 @@ export const ACCEPTANCE_AUDIT_FIELDS = [
   "measuredUnit",
   "evidenceFileId",
   "version",
+  "reason"
+] as const;
+
+export const ACCEPTANCE_REPORT_AUDIT_FIELDS = [
+  "projectId",
+  "reportId",
+  "reportNumber",
+  "reportVersion",
+  "acceptanceType",
+  "scopeType",
+  "scopeId",
+  "sourceBatchId",
+  "finalBatchId",
+  "templateVersionId",
+  "templateChecksum",
+  "snapshotChecksum",
+  "rendererVersion",
+  "pdfFileId",
+  "pdfSha256",
+  "controlledDocumentVersionId",
+  "status",
+  "supersedesReportId",
+  "reason"
+] as const;
+
+export const ACCEPTANCE_CONFIRMATION_AUDIT_FIELDS = [
+  "projectId",
+  "confirmationId",
+  "reportId",
+  "reportChecksum",
+  "controlledDocumentVersionId",
+  "decision",
+  "confirmationChannel",
+  "recordedAt",
+  "supersedesConfirmationId",
+  "confirmationChecksum",
+  "evidenceFileId",
+  "evidenceFileSha256",
+  "status",
   "reason"
 ] as const;
 

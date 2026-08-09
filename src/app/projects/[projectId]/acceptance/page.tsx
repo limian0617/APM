@@ -5,6 +5,11 @@ import {
   toAcceptanceFetchResult,
   type AcceptancePageState
 } from "@/modules/acceptance/contracts/acceptance-page-state";
+import {
+  buildAcceptanceReportPageState,
+  resolveAcceptanceReportFixture,
+  type AcceptanceReportPageState
+} from "@/modules/acceptance/contracts/acceptance-report-page-state";
 
 type PageProps = Readonly<{
   params: Promise<{ projectId: string }>;
@@ -56,8 +61,8 @@ export function developmentAcceptanceFixture(
             acceptanceType: "FAT",
             scopeType: "MACHINE",
             scopeId: "machine-demo",
-            status: "IN_PROGRESS",
-            version: 2
+            status: "LOCKED",
+            version: 3
           }
         ];
   return buildAcceptancePageState({
@@ -112,9 +117,54 @@ export function developmentAcceptanceFixture(
                 ]
               },
               summary: { passRate: 1, denominator: 1, outcome: "PASS" },
-              allowedActions: ["RECORD_RESULT", "REVISE_RESULT", "LOCK_BATCH"]
+              allowedActions: []
             }
           })
+  });
+}
+
+export function developmentAcceptanceReportFixture(
+  projectId: string,
+  fixture: string | undefined
+): AcceptanceReportPageState | null {
+  const allowed = resolveAcceptanceReportFixture(fixture, "development");
+  if (!allowed) return null;
+  if (allowed === "loading") return { projectId, status: "loading" };
+  if (allowed === "denied") return { projectId, status: "denied" };
+  if (allowed === "error") return { projectId, status: "error", retryable: true };
+  const reports =
+    allowed === "empty"
+      ? []
+      : [
+          {
+            id: "acceptance-report-demo",
+            projectId,
+            reportNumber: "APM-FAT-DEMO",
+            reportVersion: 1,
+            acceptanceType: "FAT",
+            scopeType: "PROJECT",
+            scopeId: projectId,
+            status:
+              allowed === "generating" ? "GENERATING" : allowed === "failed" ? "FAILED" : "READY",
+            snapshotChecksum: "a".repeat(64),
+            pdfSha256: "b".repeat(64),
+            generatedAt: fixtureTimestamp,
+            confirmations: []
+          }
+        ];
+  return buildAcceptanceReportPageState({
+    projectId,
+    result: {
+      status: 200,
+      body: {
+        projectId,
+        reports,
+        allowedActions: ["GENERATE_REPORT", "RECORD_CONFIRMATION"]
+      },
+      fetchedAt: fixtureTimestamp,
+      stale: allowed === "stale",
+      retryable: false
+    }
   });
 }
 
@@ -123,5 +173,15 @@ export default async function AcceptancePage({ params, searchParams }: PageProps
   const { fixture } = await searchParams;
   const initialState =
     process.env.NODE_ENV === "production" ? null : developmentAcceptanceFixture(projectId, fixture);
-  return <AcceptancePageClient projectId={projectId} initialState={initialState} />;
+  const initialReportState =
+    process.env.NODE_ENV === "production"
+      ? null
+      : developmentAcceptanceReportFixture(projectId, fixture);
+  return (
+    <AcceptancePageClient
+      projectId={projectId}
+      initialState={initialState}
+      initialReportState={initialReportState}
+    />
+  );
 }

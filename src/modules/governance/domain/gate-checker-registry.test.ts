@@ -8,7 +8,7 @@ describe("APM-031 Gate checker registry", () => {
       code: "STAGE.AWAITING_GATE",
       version: 1
     });
-    expect(GATE_CHECKER_REGISTRY.size).toBe(5);
+    expect(GATE_CHECKER_REGISTRY.size).toBe(7);
     expect(resolveGateChecker("STAGE.AWAITING_GATE", 2)).toBeUndefined();
   });
 
@@ -250,5 +250,16 @@ describe("APM-031 Gate checker registry", () => {
         }
       })
     ).toMatchObject({ status: "HARD_FAILED", code: "ACCEPTANCE_FAIL_ISSUE_UNLINKED" });
+  });
+
+  it("registers separate versioned FAT and SAT confirmation checkers without changing issue checkers", () => {
+    const fat = resolveGateChecker("ACCEPTANCE.FAT.CONFIRMATION", 1);
+    const sat = resolveGateChecker("ACCEPTANCE.SAT.CONFIRMATION", 1);
+    expect(fat).toMatchObject({ code: "ACCEPTANCE.FAT.CONFIRMATION", version: 1 });
+    expect(sat).toMatchObject({ code: "ACCEPTANCE.SAT.CONFIRMATION", version: 1 });
+    expect(resolveGateChecker("ACCEPTANCE.FAT.ISSUES", 1)).toMatchObject({
+      code: "ACCEPTANCE.FAT.ISSUES",
+      version: 1
+    });
   });
 });

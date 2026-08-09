@@ -324,6 +324,161 @@ function acceptanceIssueBinding(bindings: readonly FrozenGateCheckerBinding[]) {
   return binding.code === "ACCEPTANCE.FAT.ISSUES" ? ("FAT" as const) : ("SAT" as const);
 }
 
+function acceptanceConfirmationBinding(bindings: readonly FrozenGateCheckerBinding[]) {
+  const binding = bindings.find(
+    (candidate) =>
+      candidate.version === 1 &&
+      (candidate.code === "ACCEPTANCE.FAT.CONFIRMATION" ||
+        candidate.code === "ACCEPTANCE.SAT.CONFIRMATION")
+  );
+  if (!binding) return null;
+  return binding.code === "ACCEPTANCE.FAT.CONFIRMATION" ? ("FAT" as const) : ("SAT" as const);
+}
+
+function reportIssueIds(snapshot: Prisma.JsonValue): string[] {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return [];
+  const issues = (snapshot as Record<string, unknown>).issues;
+  if (!Array.isArray(issues)) return [];
+  return [
+    ...new Set(
+      issues.flatMap((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+        const issueId = (entry as Record<string, unknown>).issueId;
+        return typeof issueId === "string" && issueId.trim() ? [issueId] : [];
+      })
+    )
+  ].sort();
+}
+
+/**
+ * An acceptance batch uses MACHINE for its smallest scope, while a Gate
+ * instance names that same project object MODULE. Keep this translation in
+ * one place so confirmation checks never accidentally treat valid machine
+ * reports as unavailable facts.
+ */
+export function resolveAcceptanceConfirmationScope(input: {
+  projectId: string;
+  scope: GateScopeTarget;
+}): { scopeType: "PROJECT" | "DELIVERY_UNIT" | "MACHINE"; scopeId: string } | null {
+  if (input.scope.scope === "PROJECT") {
+    return { scopeType: "PROJECT", scopeId: input.projectId };
+  }
+  if (input.scope.scope === "DELIVERY_UNIT" && input.scope.deliveryUnitId) {
+    return { scopeType: "DELIVERY_UNIT", scopeId: input.scope.deliveryUnitId };
+  }
+  if (input.scope.scope === "MODULE" && input.scope.moduleId) {
+    return { scopeType: "MACHINE", scopeId: input.scope.moduleId };
+  }
+  return null;
+}
+
+async function freezeAcceptanceConfirmationCheckerFacts(input: {
+  client: Prisma.TransactionClient;
+  projectId: string;
+  scope: GateScopeTarget;
+  acceptanceType: "FAT" | "SAT";
+}): Promise<Readonly<Record<string, JsonValue>>> {
+  const acceptanceScope = resolveAcceptanceConfirmationScope({
+    projectId: input.projectId,
+    scope: input.scope
+  });
+  if (!acceptanceScope) {
+    return {
+      acceptanceConfirmation: {
+        acceptanceType: input.acceptanceType,
+        factsAvailable: false
+      } as unknown as JsonValue
+    };
+  }
+  const report = await input.client.acceptanceReport.findFirst({
+    where: {
+      projectId: input.projectId,
+      acceptanceType: input.acceptanceType,
+      scopeType: acceptanceScope.scopeType,
+      scopeId: acceptanceScope.scopeId,
+      status: { in: ["READY", "PUBLISHED"] }
+    },
+    orderBy: [{ generatedAt: "desc" }, { reportVersion: "desc" }],
+    include: {
+      confirmations: {
+        where: { status: "ACTIVE" },
+        orderBy: { recordedAt: "desc" },
+        take: 1
+      }
+    }
+  });
+  if (!report) {
+    return {
+      acceptanceConfirmation: {
+        acceptanceType: input.acceptanceType,
+        factsAvailable: true,
+        reportId: null,
+        reportChecksum: null,
+        reportStatus: null,
+        confirmationId: null,
+        confirmationChecksum: null,
+        confirmationDecision: null,
+        hasUnresolvedHardIssue: false,
+        reservationResidualItemIds: [],
+        reservationsFullyGoverned: false
+      } as unknown as JsonValue
+    };
+  }
+  const issueIds = reportIssueIds(report.snapshotJson);
+  const issues = issueIds.length
+    ? await input.client.issue.findMany({
+        where: { projectId: input.projectId, id: { in: issueIds } },
+        select: { id: true, category: true, severity: true, status: true }
+      })
+    : [];
+  const openIssues = issues.filter((issue) => issue.status !== "CLOSED");
+  const hasUnresolvedHardIssue = openIssues.some(
+    (issue) =>
+      issue.category === "SAFETY" ||
+      issue.category === "FUNCTION" ||
+      issue.severity === "HIGH" ||
+      issue.severity === "CRITICAL"
+  );
+  const warningIssueIds = openIssues
+    .filter(
+      (issue) =>
+        ["PERFORMANCE", "APPEARANCE", "DELIVERY_COMPLETENESS"].includes(issue.category) &&
+        ["LOW", "MEDIUM"].includes(issue.severity)
+    )
+    .map((issue) => issue.id);
+  const residuals = warningIssueIds.length
+    ? await input.client.residualItem.findMany({
+        where: {
+          projectId: input.projectId,
+          issueId: { in: warningIssueIds },
+          status: { in: ["OPEN", "IN_PROGRESS", "AWAITING_VERIFICATION"] }
+        },
+        select: { id: true, issueId: true }
+      })
+    : [];
+  const residualIssueIds = new Set(
+    residuals.flatMap((item) => (item.issueId ? [item.issueId] : []))
+  );
+  const confirmation = report.confirmations[0] ?? null;
+  return {
+    acceptanceConfirmation: {
+      acceptanceType: input.acceptanceType,
+      factsAvailable: true,
+      reportId: report.id,
+      reportChecksum: report.snapshotChecksum,
+      reportStatus: report.status,
+      confirmationId: confirmation?.id ?? null,
+      confirmationChecksum: confirmation?.confirmationChecksum ?? null,
+      confirmationDecision: confirmation?.decision ?? null,
+      hasUnresolvedHardIssue,
+      reservationResidualItemIds: residuals.map((item) => item.id).sort(),
+      reservationsFullyGoverned:
+        warningIssueIds.length > 0 &&
+        warningIssueIds.every((issueId) => residualIssueIds.has(issueId))
+    } as unknown as JsonValue
+  };
+}
+
 async function freezeAcceptanceIssueCheckerFacts(input: {
   client: Prisma.TransactionClient;
   projectId: string;
@@ -853,6 +1008,14 @@ export async function runGateChecks(
               projectId: input.projectId,
               scope: checkerScope,
               acceptanceType: acceptanceIssueBinding(checkerBindings)!
+            })
+          : {}),
+        ...(acceptanceConfirmationBinding(checkerBindings)
+          ? await freezeAcceptanceConfirmationCheckerFacts({
+              client,
+              projectId: input.projectId,
+              scope: checkerScope,
+              acceptanceType: acceptanceConfirmationBinding(checkerBindings)!
             })
           : {})
       };

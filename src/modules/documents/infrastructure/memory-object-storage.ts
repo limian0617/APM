@@ -23,6 +23,18 @@ export class MemoryObjectStorage implements ObjectStoragePort {
   private readonly objects = new Map<string, { bytes: Uint8Array; mimeType: string }>();
   private readonly downloads = new Map<string, string>();
 
+  async putObject(input: {
+    area: StorageArea;
+    objectKey: string;
+    mimeType: string;
+    body: Uint8Array;
+  }): Promise<void> {
+    this.objects.set(objectId(input.area, input.objectKey), {
+      bytes: input.body.slice(),
+      mimeType: input.mimeType
+    });
+  }
+
   async beginMultipartUpload(input: {
     area: StorageArea;
     objectKey: string;

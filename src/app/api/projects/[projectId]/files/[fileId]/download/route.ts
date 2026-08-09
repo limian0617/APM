@@ -1,7 +1,15 @@
 import { decideAuthorization } from "@/lib/auth/authorize";
 import { PERMISSIONS } from "@/lib/auth/permissions";
 import { authorizeProjectRequest } from "@/lib/auth/project-guard";
+import { isConfirmationEvidenceFile } from "@/modules/acceptance/application/acceptance-report-service";
 import { auditContextFromRequest } from "@/modules/audit/application/context";
+import {
+  ACCEPTANCE_CONFIRMATION_AUDIT_FIELDS,
+  AUDIT_ACTIONS,
+  AUDIT_OBJECT_TYPES
+} from "@/modules/audit/domain/vocabulary";
+import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
+import { db } from "@/lib/db";
 import {
   findFileAuthorizationTarget,
   issueFileDownloadUrl,
@@ -67,6 +75,61 @@ export function createDownloadHandler(storageFactory: () => ObjectStoragePort) {
         });
         return forbidden();
       }
+    }
+
+    const confirmationEvidence = await isConfirmationEvidenceFile({ projectId, fileId });
+    if (confirmationEvidence) {
+      const confirmationContext = {
+        projectId,
+        resourceDepartmentId: guard.project.departmentId,
+        resourceOwnerId: file.uploadedById,
+        memberRoles: guard.project.memberRoles
+      };
+      const acceptanceDecision = decideAuthorization(
+        guard.actor,
+        PERMISSIONS.ACCEPTANCE_READ,
+        confirmationContext
+      );
+      const confirmationDecision = decideAuthorization(
+        guard.actor,
+        PERMISSIONS.SENSITIVE_CONFIRMATION_READ,
+        confirmationContext
+      );
+      if (!acceptanceDecision.allowed || !confirmationDecision.allowed) {
+        const missingAcceptanceRead = !acceptanceDecision.allowed;
+        const permission = missingAcceptanceRead
+          ? PERMISSIONS.ACCEPTANCE_READ
+          : PERMISSIONS.SENSITIVE_CONFIRMATION_READ;
+        const reason = missingAcceptanceRead
+          ? acceptanceDecision.reason
+          : confirmationDecision.allowed
+            ? "PERMISSION_NOT_GRANTED"
+            : confirmationDecision.reason;
+        await recordFileAccessDenied({
+          fileId,
+          context: auditContext,
+          permission,
+          method: request.method,
+          path: url.pathname,
+          reason
+        });
+        return forbidden();
+      }
+      await writeAudit(db, {
+        action: AUDIT_ACTIONS.ACCEPTANCE_CONFIRMATION_READ,
+        objectType: AUDIT_OBJECT_TYPES.ACCEPTANCE_CONFIRMATION_EVIDENCE,
+        objectId: confirmationEvidence.id,
+        context: { ...auditContext, projectId },
+        metadata: {
+          value: {
+            projectId,
+            confirmationId: confirmationEvidence.confirmationId,
+            evidenceFileId: fileId,
+            reason: "下载敏感客户确认凭证"
+          },
+          allowedFields: ACCEPTANCE_CONFIRMATION_AUDIT_FIELDS
+        }
+      });
     }
 
     try {

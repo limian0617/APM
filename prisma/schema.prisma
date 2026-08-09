@@ -309,6 +309,8 @@ model FileObject {
   mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[]      @relation("DrawingImportItemFile")
   procurementFulfillmentEvents     ProcurementFulfillmentEvent[]
   acceptanceResultRevisionEvidence AcceptanceTestResultRevisionEvidence[]
+  acceptanceReportPdfFiles         AcceptanceReport[]                     @relation("AcceptanceReportPdfFile")
+  acceptanceConfirmationEvidence   AcceptanceConfirmationEvidence[]
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -626,6 +628,32 @@ enum AcceptanceDecision {
   PASS
   FAIL
   NA
+}
+
+enum AcceptanceReportStatus {
+  GENERATING
+  FAILED
+  READY
+  PUBLISHED
+  SUPERSEDED
+}
+
+enum AcceptanceConfirmationDecision {
+  ACCEPTED
+  ACCEPTED_WITH_RESERVATIONS
+  REJECTED
+}
+
+enum AcceptanceConfirmationChannel {
+  SIGNED_DOCUMENT
+  EMAIL
+  MEETING_MINUTES
+  OTHER
+}
+
+enum AcceptanceConfirmationStatus {
+  ACTIVE
+  SUPERSEDED
 }
 
 enum JobStatus {
@@ -1342,6 +1370,12 @@ enum AuditAction {
   ACCEPTANCE_RESULT_RECORDED
   ACCEPTANCE_RESULT_CORRECTED
   ACCEPTANCE_EVIDENCE_REFERENCED
+  ACCEPTANCE_REPORT_GENERATED
+  ACCEPTANCE_REPORT_FAILED
+  ACCEPTANCE_REPORT_DOWNLOADED
+  ACCEPTANCE_CONFIRMATION_RECORDED
+  ACCEPTANCE_CONFIRMATION_SUPERSEDED
+  ACCEPTANCE_CONFIRMATION_READ
   RND_PROJECT_CREATED
   RND_PROJECT_STATUS_CHANGED
   TECHNICAL_ASSET_CREATED
@@ -1426,6 +1460,9 @@ enum AuditObjectType {
   ACCEPTANCE_BATCH
   ACCEPTANCE_TEST_RESULT
   ACCEPTANCE_TEST_RESULT_REVISION
+  ACCEPTANCE_REPORT
+  ACCEPTANCE_CONFIRMATION
+  ACCEPTANCE_CONFIRMATION_EVIDENCE
   RND_PROJECT
   RND_PROJECT_EVENT
   TECHNICAL_ASSET
@@ -1529,6 +1566,9 @@ model User {
   acceptanceBatchesLocked                 AcceptanceBatch[]                      @relation("AcceptanceBatchLockedBy")
   acceptanceResultRevisionsCreated        AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionCreatedBy")
   acceptanceResultRevisionEvidenceCreated AcceptanceTestResultRevisionEvidence[]
+  acceptanceReportsRequested              AcceptanceReport[]                     @relation("AcceptanceReportRequestedBy")
+  acceptanceConfirmationsRecorded         AcceptanceConfirmation[]               @relation("AcceptanceConfirmationRecordedBy")
+  acceptanceConfirmationEvidenceCreated   AcceptanceConfirmationEvidence[]
   responsibilityPackagesCreated           ResponsibilityPackage[]                @relation("ResponsibilityPackageCreatedBy")
   responsibilityPackagesUpdated           ResponsibilityPackage[]                @relation("ResponsibilityPackageUpdatedBy")
   responsibilityPackageEventsActed        ResponsibilityPackageEvent[]           @relation("ResponsibilityPackageEventActor")
@@ -1707,6 +1747,9 @@ model Project {
   acceptanceTestResults              AcceptanceTestResult[]
   acceptanceResultRevisions          AcceptanceTestResultRevision[]
   acceptanceResultRevisionEvidence   AcceptanceTestResultRevisionEvidence[]
+  acceptanceReports                  AcceptanceReport[]
+  acceptanceConfirmations            AcceptanceConfirmation[]
+  acceptanceConfirmationEvidence     AcceptanceConfirmationEvidence[]
   materialRequirementRevisions       ProjectMaterialRequirementRevision[]
   responsibilityPackages             ResponsibilityPackage[]
   projectMilestones                  ProjectMilestone[]
@@ -1924,6 +1967,8 @@ model ControlledDocumentVersion {
   gateSubmissionReferences      GateSubmissionDocumentReference[]
   mechanicalDrawingVersionFiles MechanicalDrawingVersionFile[]
   materialRequirementRevisions  ProjectMaterialRequirementRevision[]
+  acceptanceReports             AcceptanceReport[]
+  acceptanceConfirmations       AcceptanceConfirmation[]
 
   @@unique([documentId, version])
   @@unique([id, projectId])
@@ -2414,6 +2459,7 @@ model AcceptanceTemplateVersion {
   createdBy        User                           @relation("AcceptanceTemplateVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   items            AcceptanceTestItemDefinition[]
   batches          AcceptanceBatch[]
+  reports          AcceptanceReport[]
 
   @@unique([templateId, version])
   @@index([acceptanceType, publishedAt])
@@ -2468,6 +2514,8 @@ model AcceptanceBatch {
   startedBy         User?                     @relation("AcceptanceBatchStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
   lockedBy          User?                     @relation("AcceptanceBatchLockedBy", fields: [lockedById], references: [id], onDelete: Restrict)
   results           AcceptanceTestResult[]
+  reportsAsSource   AcceptanceReport[]        @relation("AcceptanceReportSourceBatch")
+  reportsAsFinal    AcceptanceReport[]        @relation("AcceptanceReportFinalBatch")
 
   @@unique([id, projectId])
   @@index([projectId, acceptanceType, status, createdAt])
@@ -2496,25 +2544,25 @@ model AcceptanceTestResult {
 }
 
 model AcceptanceTestResultRevision {
-  id                   String                                 @id @default(cuid())
-  projectId            String                                 @map("project_id")
-  resultId             String                                 @map("result_id")
-  revisionNo           Int                                    @map("revision_no")
-  supersedesRevisionId String?                                @map("supersedes_revision_id")
-  decision             AcceptanceDecision
-  measuredValue        String?                                @map("measured_value")
-  measuredUnit         String?                                @map("measured_unit")
-  note                 String?
-  correctionReason     String?                                @map("correction_reason")
-  createdById          String                                 @map("created_by_id")
-  createdAt            DateTime                               @default(now()) @map("created_at")
-  project              Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  result               AcceptanceTestResult                   @relation(fields: [resultId, projectId], references: [id, projectId], onDelete: Restrict)
-  supersedes           AcceptanceTestResultRevision?          @relation("AcceptanceResultRevisionSupersedes", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
-  corrections          AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
-  createdBy            User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  evidence             AcceptanceTestResultRevisionEvidence[]
-  acceptanceResidualItems ResidualItem[]                       @relation("AcceptanceResidualResultRevision")
+  id                      String                                 @id @default(cuid())
+  projectId               String                                 @map("project_id")
+  resultId                String                                 @map("result_id")
+  revisionNo              Int                                    @map("revision_no")
+  supersedesRevisionId    String?                                @map("supersedes_revision_id")
+  decision                AcceptanceDecision
+  measuredValue           String?                                @map("measured_value")
+  measuredUnit            String?                                @map("measured_unit")
+  note                    String?
+  correctionReason        String?                                @map("correction_reason")
+  createdById             String                                 @map("created_by_id")
+  createdAt               DateTime                               @default(now()) @map("created_at")
+  project                 Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  result                  AcceptanceTestResult                   @relation(fields: [resultId, projectId], references: [id, projectId], onDelete: Restrict)
+  supersedes              AcceptanceTestResultRevision?          @relation("AcceptanceResultRevisionSupersedes", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
+  corrections             AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
+  createdBy               User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  evidence                AcceptanceTestResultRevisionEvidence[]
+  acceptanceResidualItems ResidualItem[]                         @relation("AcceptanceResidualResultRevision")
 
   @@unique([resultId, revisionNo])
   @@unique([id, projectId])
@@ -2538,6 +2586,105 @@ model AcceptanceTestResultRevisionEvidence {
   @@index([projectId, revisionId])
   @@index([fileObjectId, projectId])
   @@map("acceptance_test_result_revision_evidence")
+}
+
+model AcceptanceReport {
+  id                          String                    @id @default(cuid())
+  projectId                   String                    @map("project_id")
+  acceptanceType              AcceptanceType            @map("acceptance_type")
+  scopeType                   AcceptanceScopeType       @map("scope_type")
+  scopeId                     String                    @map("scope_id")
+  reportNumber                String                    @map("report_number")
+  reportVersion               Int                       @map("report_version")
+  sourceBatchId               String                    @map("source_batch_id")
+  finalBatchId                String                    @map("final_batch_id")
+  retestChainJson             Json                      @map("retest_chain_json")
+  templateVersionId           String                    @map("template_version_id")
+  templateChecksum            String                    @map("template_checksum")
+  snapshotJson                Json                      @map("snapshot_json")
+  snapshotChecksum            String                    @map("snapshot_checksum")
+  rendererVersion             String                    @map("renderer_version")
+  pdfFileId                   String                    @map("pdf_file_id")
+  pdfSha256                   String                    @map("pdf_sha256")
+  pdfSize                     BigInt                    @map("pdf_size")
+  pdfMimeType                 String                    @map("pdf_mime_type")
+  controlledDocumentVersionId String                    @map("controlled_document_version_id")
+  status                      AcceptanceReportStatus    @default(GENERATING)
+  requestedById               String                    @map("requested_by_id")
+  generatedAt                 DateTime?                 @map("generated_at")
+  failureCode                 String?                   @map("failure_code")
+  failureMessage              String?                   @map("failure_message")
+  supersedesReportId          String?                   @map("supersedes_report_id")
+  createdAt                   DateTime                  @default(now()) @map("created_at")
+  project                     Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceBatch                 AcceptanceBatch           @relation("AcceptanceReportSourceBatch", fields: [sourceBatchId, projectId], references: [id, projectId], onDelete: Restrict)
+  finalBatch                  AcceptanceBatch           @relation("AcceptanceReportFinalBatch", fields: [finalBatchId, projectId], references: [id, projectId], onDelete: Restrict)
+  templateVersion             AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  pdfFile                     FileObject                @relation("AcceptanceReportPdfFile", fields: [pdfFileId, projectId], references: [id, projectId], onDelete: Restrict)
+  controlledDocumentVersion   ControlledDocumentVersion @relation(fields: [controlledDocumentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  requestedBy                 User                      @relation("AcceptanceReportRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  supersedes                  AcceptanceReport?         @relation("AcceptanceReportSupersedes", fields: [supersedesReportId, projectId], references: [id, projectId], onDelete: Restrict)
+  supersededBy                AcceptanceReport[]        @relation("AcceptanceReportSupersedes")
+  confirmations               AcceptanceConfirmation[]
+
+  @@unique([projectId, reportNumber, reportVersion])
+  @@unique([id, projectId])
+  @@unique([pdfFileId, projectId])
+  @@unique([controlledDocumentVersionId, projectId])
+  @@index([projectId, acceptanceType, status, createdAt])
+  @@index([projectId, sourceBatchId, createdAt])
+  @@map("acceptance_reports")
+}
+
+model AcceptanceConfirmation {
+  id                          String                           @id @default(cuid())
+  projectId                   String                           @map("project_id")
+  reportId                    String                           @map("report_id")
+  reportChecksum              String                           @map("report_checksum")
+  controlledDocumentVersionId String                           @map("controlled_document_version_id")
+  decision                    AcceptanceConfirmationDecision
+  customerOrganization        String                           @map("customer_organization")
+  customerRepresentative      String                           @map("customer_representative")
+  representativeTitle         String                           @map("representative_title")
+  confirmationChannel         AcceptanceConfirmationChannel    @map("confirmation_channel")
+  customerConfirmedAt         DateTime                         @map("customer_confirmed_at")
+  recordedAt                  DateTime                         @default(now()) @map("recorded_at")
+  comment                     String
+  recordedById                String                           @map("recorded_by_id")
+  supersedesConfirmationId    String?                          @map("supersedes_confirmation_id")
+  confirmationChecksum        String                           @map("confirmation_checksum")
+  status                      AcceptanceConfirmationStatus     @default(ACTIVE)
+  project                     Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  report                      AcceptanceReport                 @relation(fields: [reportId, projectId], references: [id, projectId], onDelete: Restrict)
+  controlledDocumentVersion   ControlledDocumentVersion        @relation(fields: [controlledDocumentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  recordedBy                  User                             @relation("AcceptanceConfirmationRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+  supersedes                  AcceptanceConfirmation?          @relation("AcceptanceConfirmationSupersedes", fields: [supersedesConfirmationId, projectId], references: [id, projectId], onDelete: Restrict)
+  supersededBy                AcceptanceConfirmation[]         @relation("AcceptanceConfirmationSupersedes")
+  evidence                    AcceptanceConfirmationEvidence[]
+
+  @@unique([id, projectId])
+  @@unique([confirmationChecksum, projectId])
+  @@index([projectId, reportId, recordedAt])
+  @@map("acceptance_confirmations")
+}
+
+model AcceptanceConfirmationEvidence {
+  id             String                 @id @default(cuid())
+  projectId      String                 @map("project_id")
+  confirmationId String                 @map("confirmation_id")
+  fileObjectId   String                 @map("file_object_id")
+  fileSha256     String                 @map("file_sha256")
+  createdById    String                 @map("created_by_id")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  confirmation   AcceptanceConfirmation @relation(fields: [confirmationId, projectId], references: [id, projectId], onDelete: Restrict)
+  fileObject     FileObject             @relation(fields: [fileObjectId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy      User                   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([confirmationId, fileObjectId])
+  @@index([projectId, confirmationId])
+  @@index([fileObjectId, projectId])
+  @@map("acceptance_confirmation_evidence")
 }
 
 model PublicLibraryDocument {
@@ -3499,29 +3646,29 @@ model GateConditionalRelease {
 }
 
 model ResidualItem {
-  id                   String                 @id @default(cuid())
-  projectId            String                 @map("project_id")
-  conditionalReleaseId String                 @map("conditional_release_id")
-  issueId              String?                @map("issue_id")
-  acceptanceResultRevisionId String?          @map("acceptance_result_revision_id")
-  sequence             Int
-  title                String
-  ownerMembershipId    String                 @map("owner_membership_id")
-  verifierMembershipId String                 @map("verifier_membership_id")
-  dueAt                DateTime               @map("due_at")
-  evidence             String
-  escalationRule       String                 @map("escalation_rule")
-  status               ResidualItemStatus     @default(OPEN)
-  version              Int                    @default(1)
-  createdAt            DateTime               @default(now()) @map("created_at")
-  updatedAt            DateTime               @updatedAt @map("updated_at")
-  project              Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  conditionalRelease   GateConditionalRelease @relation(fields: [conditionalReleaseId, projectId], references: [id, projectId], onDelete: Restrict)
-  issue                Issue?                 @relation("AcceptanceResidualIssue", fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
-  acceptanceResultRevision AcceptanceTestResultRevision? @relation("AcceptanceResidualResultRevision", fields: [acceptanceResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
-  ownerMembership      ProjectMember          @relation("ResidualItemOwnerMembership", fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
-  verifierMembership   ProjectMember          @relation("ResidualItemVerifierMembership", fields: [verifierMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
-  events               ResidualItemEvent[]
+  id                         String                        @id @default(cuid())
+  projectId                  String                        @map("project_id")
+  conditionalReleaseId       String                        @map("conditional_release_id")
+  issueId                    String?                       @map("issue_id")
+  acceptanceResultRevisionId String?                       @map("acceptance_result_revision_id")
+  sequence                   Int
+  title                      String
+  ownerMembershipId          String                        @map("owner_membership_id")
+  verifierMembershipId       String                        @map("verifier_membership_id")
+  dueAt                      DateTime                      @map("due_at")
+  evidence                   String
+  escalationRule             String                        @map("escalation_rule")
+  status                     ResidualItemStatus            @default(OPEN)
+  version                    Int                           @default(1)
+  createdAt                  DateTime                      @default(now()) @map("created_at")
+  updatedAt                  DateTime                      @updatedAt @map("updated_at")
+  project                    Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  conditionalRelease         GateConditionalRelease        @relation(fields: [conditionalReleaseId, projectId], references: [id, projectId], onDelete: Restrict)
+  issue                      Issue?                        @relation("AcceptanceResidualIssue", fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+  acceptanceResultRevision   AcceptanceTestResultRevision? @relation("AcceptanceResidualResultRevision", fields: [acceptanceResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership            ProjectMember                 @relation("ResidualItemOwnerMembership", fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  verifierMembership         ProjectMember                 @relation("ResidualItemVerifierMembership", fields: [verifierMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  events                     ResidualItemEvent[]
 
   @@unique([id, projectId])
   @@unique([conditionalReleaseId, sequence])
@@ -3659,40 +3806,40 @@ model ProjectAlertScan {
 }
 
 model Issue {
-  id                    String                  @id @default(cuid())
-  projectId             String                  @map("project_id")
-  title                 String
-  confirmedText         String                  @map("confirmed_text")
-  sourceType            IssueSourceType         @default(PROJECT) @map("source_type")
-  category              IssueCategory
-  severity              IssueSeverity
-  phenomenonDescription String?                 @map("phenomenon_description")
-  rootCauseCategory     IssueRootCauseCategory? @map("root_cause_category")
-  rootCauseDescription  String?                 @map("root_cause_description")
-  status                IssueStatus             @default(PENDING_ACCEPTANCE)
-  statusChangedAt       DateTime                @default(now()) @map("status_changed_at")
-  closedAt              DateTime?               @map("closed_at")
-  closedById            String?                 @map("closed_by_id")
-  verificationEvidence  String?                 @map("verification_evidence")
-  ownerMembershipId     String?                 @map("owner_membership_id")
-  verifierMembershipId  String?                 @map("verifier_membership_id")
-  dueDate               DateTime?               @map("due_date") @db.Date
-  version               Int                     @default(1)
-  createdById           String                  @map("created_by_id")
-  updatedById           String                  @map("updated_by_id")
-  createdAt             DateTime                @default(now()) @map("created_at")
-  updatedAt             DateTime                @updatedAt @map("updated_at")
-  project               Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  createdBy             User                    @relation("IssueCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy             User                    @relation("IssueUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  closedBy              User?                   @relation("IssueClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
-  ownerMembership       ProjectMember?          @relation("IssueOwnerMembership", fields: [ownerMembershipId], references: [id], onDelete: Restrict)
-  verifierMembership    ProjectMember?          @relation("IssueVerifierMembership", fields: [verifierMembershipId], references: [id], onDelete: Restrict)
-  tags                  IssueTag[]
-  history               IssueHistory[]
-  relations             IssueRelation[]         @relation("IssueSourceRelations")
-  blockerRelations      IssueRelation[]         @relation("IssueBlockerRelations")
-  acceptanceResidualItems ResidualItem[]        @relation("AcceptanceResidualIssue")
+  id                      String                  @id @default(cuid())
+  projectId               String                  @map("project_id")
+  title                   String
+  confirmedText           String                  @map("confirmed_text")
+  sourceType              IssueSourceType         @default(PROJECT) @map("source_type")
+  category                IssueCategory
+  severity                IssueSeverity
+  phenomenonDescription   String?                 @map("phenomenon_description")
+  rootCauseCategory       IssueRootCauseCategory? @map("root_cause_category")
+  rootCauseDescription    String?                 @map("root_cause_description")
+  status                  IssueStatus             @default(PENDING_ACCEPTANCE)
+  statusChangedAt         DateTime                @default(now()) @map("status_changed_at")
+  closedAt                DateTime?               @map("closed_at")
+  closedById              String?                 @map("closed_by_id")
+  verificationEvidence    String?                 @map("verification_evidence")
+  ownerMembershipId       String?                 @map("owner_membership_id")
+  verifierMembershipId    String?                 @map("verifier_membership_id")
+  dueDate                 DateTime?               @map("due_date") @db.Date
+  version                 Int                     @default(1)
+  createdById             String                  @map("created_by_id")
+  updatedById             String                  @map("updated_by_id")
+  createdAt               DateTime                @default(now()) @map("created_at")
+  updatedAt               DateTime                @updatedAt @map("updated_at")
+  project                 Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy               User                    @relation("IssueCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy               User                    @relation("IssueUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  closedBy                User?                   @relation("IssueClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  ownerMembership         ProjectMember?          @relation("IssueOwnerMembership", fields: [ownerMembershipId], references: [id], onDelete: Restrict)
+  verifierMembership      ProjectMember?          @relation("IssueVerifierMembership", fields: [verifierMembershipId], references: [id], onDelete: Restrict)
+  tags                    IssueTag[]
+  history                 IssueHistory[]
+  relations               IssueRelation[]         @relation("IssueSourceRelations")
+  blockerRelations        IssueRelation[]         @relation("IssueBlockerRelations")
+  acceptanceResidualItems ResidualItem[]          @relation("AcceptanceResidualIssue")
 
   @@unique([id, projectId])
   @@index([projectId, status, severity, updatedAt])

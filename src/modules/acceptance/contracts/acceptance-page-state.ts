@@ -4,7 +4,10 @@ export const ACCEPTANCE_PAGE_FIXTURES = [
   "empty",
   "error",
   "denied",
-  "stale"
+  "stale",
+  "generating",
+  "failed",
+  "conflict"
 ] as const;
 
 export type AcceptancePageFixture = (typeof ACCEPTANCE_PAGE_FIXTURES)[number];

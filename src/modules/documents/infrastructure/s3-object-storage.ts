@@ -6,6 +6,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  PutObjectCommand,
   S3Client,
   UploadPartCommand
 } from "@aws-sdk/client-s3";
@@ -38,6 +39,22 @@ export class S3ObjectStorage implements ObjectStoragePort {
     private readonly client: S3Client,
     private readonly buckets: BucketConfiguration
   ) {}
+
+  async putObject(input: {
+    area: StorageArea;
+    objectKey: string;
+    mimeType: string;
+    body: Uint8Array;
+  }): Promise<void> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: bucketName(this.buckets, input.area),
+        Key: input.objectKey,
+        ContentType: input.mimeType,
+        Body: input.body
+      })
+    );
+  }
 
   async beginMultipartUpload(input: {
     area: StorageArea;

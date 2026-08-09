@@ -2619,6 +2619,93 @@ a {
   resize: vertical;
 }
 
+.acceptance-reports {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  border-top: 2px solid #19324d;
+  padding-top: 18px;
+  min-width: 0;
+}
+
+.acceptance-report-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.acceptance-report-list > li {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #ccd7e2;
+  border-radius: 5px;
+  padding: 12px;
+  background: #fbfcfe;
+}
+
+.acceptance-report-summary,
+.acceptance-confirmation-summary {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.acceptance-report-summary small,
+.acceptance-confirmation-summary small {
+  overflow-wrap: anywhere;
+  color: #526476;
+  font-size: 12px;
+}
+
+.acceptance-report-summary a {
+  width: fit-content;
+  color: #1d5c8d;
+  font-weight: 700;
+  text-underline-offset: 2px;
+}
+
+.acceptance-confirmation-form {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #d9e0e8;
+  padding-top: 10px;
+}
+
+.acceptance-confirmation-form label {
+  display: grid;
+  gap: 4px;
+  color: #526476;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.acceptance-confirmation-form input,
+.acceptance-confirmation-form select,
+.acceptance-confirmation-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #aebdca;
+  border-radius: 4px;
+  padding: 7px 9px;
+  background: #fff;
+  color: #1f2e3c;
+  font: inherit;
+}
+
+.acceptance-confirmation-form textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.acceptance-signature-disclaimer {
+  color: #526476;
+  font-size: 12px;
+}
+
 @media (max-width: 760px) {
   .acceptance-page {
     padding: 20px 16px 36px;
@@ -2701,5 +2788,13 @@ a {
 
   .acceptance-state-panel {
     padding: 20px;
+  }
+
+  .acceptance-report-list > li {
+    padding: 10px;
+  }
+
+  .acceptance-report-summary small {
+    font-size: 11px;
   }
 }

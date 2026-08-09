@@ -5,6 +5,10 @@ import {
   evaluateAcceptanceIssueGate,
   type AcceptanceIssueGateInput
 } from "./acceptance-issue-gate";
+import {
+  evaluateAcceptanceConfirmationGate,
+  type AcceptanceConfirmationGateInput
+} from "./acceptance-confirmation-gate";
 import type {
   AcceptanceIssueCategory,
   AcceptanceIssueSeverity,
@@ -471,6 +475,97 @@ function acceptanceIssueChecker(acceptanceType: "FAT" | "SAT"): GateChecker {
 const fatAcceptanceIssueChecker = acceptanceIssueChecker("FAT");
 const satAcceptanceIssueChecker = acceptanceIssueChecker("SAT");
 
+function acceptanceConfirmationFacts(value: unknown): AcceptanceConfirmationGateInput | null {
+  const source = record(value);
+  if (!source || typeof source.factsAvailable !== "boolean") return null;
+  const acceptanceType =
+    source.acceptanceType === "FAT" || source.acceptanceType === "SAT"
+      ? source.acceptanceType
+      : null;
+  const nullableText = (candidate: unknown) =>
+    candidate === null || candidate === undefined
+      ? null
+      : typeof candidate === "string" && candidate.trim()
+        ? candidate
+        : undefined;
+  const reportStatus = nullableText(source.reportStatus);
+  const decision = nullableText(source.confirmationDecision);
+  const residualItemIds = stringArray(source.reservationResidualItemIds);
+  if (reportStatus === undefined || decision === undefined) return null;
+  if (
+    !acceptanceType ||
+    nullableText(source.reportId) === undefined ||
+    nullableText(source.reportChecksum) === undefined ||
+    nullableText(source.confirmationId) === undefined ||
+    nullableText(source.confirmationChecksum) === undefined ||
+    ![null, "READY", "PUBLISHED", "GENERATING", "FAILED", "SUPERSEDED"].includes(reportStatus) ||
+    ![null, "ACCEPTED", "ACCEPTED_WITH_RESERVATIONS", "REJECTED"].includes(decision) ||
+    typeof source.hasUnresolvedHardIssue !== "boolean" ||
+    typeof source.reservationsFullyGoverned !== "boolean" ||
+    residualItemIds === null
+  ) {
+    return null;
+  }
+  const normalizedReportStatus = reportStatus ?? null;
+  const normalizedDecision = decision ?? null;
+  return {
+    factsAvailable: source.factsAvailable,
+    acceptanceType,
+    reportId: nullableText(source.reportId) ?? null,
+    reportChecksum: nullableText(source.reportChecksum) ?? null,
+    reportStatus: normalizedReportStatus as AcceptanceConfirmationGateInput["reportStatus"],
+    confirmationId: nullableText(source.confirmationId) ?? null,
+    confirmationChecksum: nullableText(source.confirmationChecksum) ?? null,
+    confirmationDecision:
+      normalizedDecision as AcceptanceConfirmationGateInput["confirmationDecision"],
+    hasUnresolvedHardIssue: source.hasUnresolvedHardIssue,
+    reservationResidualItemIds: residualItemIds,
+    reservationsFullyGoverned: source.reservationsFullyGoverned
+  };
+}
+
+function acceptanceConfirmationChecker(acceptanceType: "FAT" | "SAT"): GateChecker {
+  const code = `ACCEPTANCE.${acceptanceType}.CONFIRMATION`;
+  return {
+    code,
+    version: 1,
+    supportedScopes: allGateScopes,
+    evaluate: (input) => {
+      const factsRecord = record(input.facts?.acceptanceConfirmation);
+      if (!factsRecord || factsRecord.acceptanceType !== acceptanceType) {
+        return {
+          status: "HARD_FAILED",
+          code: "ACCEPTANCE_CONFIRMATION_TYPE_FACT_MISMATCH",
+          message: "冻结的客户确认验收类型与 Gate 检查器不匹配。",
+          evidence: { expectedAcceptanceType: acceptanceType } as unknown as JsonValue
+        };
+      }
+      const facts = acceptanceConfirmationFacts(factsRecord);
+      if (!facts) {
+        return {
+          status: "HARD_FAILED",
+          code: "ACCEPTANCE_CONFIRMATION_FACTS_UNAVAILABLE",
+          message: "未冻结可验证的客户确认事实。",
+          evidence: { acceptanceType } as unknown as JsonValue
+        };
+      }
+      const result = evaluateAcceptanceConfirmationGate(facts);
+      return {
+        status: result.status,
+        code: result.code,
+        message: result.message,
+        evidence: {
+          ...result.evidence,
+          residualItemIds: [...result.evidence.residualItemIds]
+        } as unknown as JsonValue
+      };
+    }
+  };
+}
+
+const fatAcceptanceConfirmationChecker = acceptanceConfirmationChecker("FAT");
+const satAcceptanceConfirmationChecker = acceptanceConfirmationChecker("SAT");
+
 function registryKey(code: string, version: number) {
   return `${code}@${version}`;
 }
@@ -481,7 +576,9 @@ export const GATE_CHECKER_REGISTRY: ReadonlyMap<string, GateChecker> = new Map(
     documentsCompleteChecker,
     procurementReadinessChecker,
     fatAcceptanceIssueChecker,
-    satAcceptanceIssueChecker
+    satAcceptanceIssueChecker,
+    fatAcceptanceConfirmationChecker,
+    satAcceptanceConfirmationChecker
   ].map((checker) => [registryKey(checker.code, checker.version), checker])
 );
 

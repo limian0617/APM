@@ -12,6 +12,9 @@ const timestamp = "2026-08-09T04:00:00.000Z";
 describe("acceptance page state", () => {
   it("accepts only named fixtures in development and ignores them in production", () => {
     expect(resolveAcceptanceFixture("normal", "development")).toBe("normal");
+    expect(resolveAcceptanceFixture("generating", "development")).toBe("generating");
+    expect(resolveAcceptanceFixture("failed", "development")).toBe("failed");
+    expect(resolveAcceptanceFixture("conflict", "development")).toBe("conflict");
     expect(resolveAcceptanceFixture("unknown", "development")).toBeNull();
     expect(resolveAcceptanceFixture("denied", "production")).toBeNull();
   });
