@@ -16,6 +16,7 @@ import {
   appendProcurementFulfillmentEvent,
   reverseProcurementFulfillmentEvent
 } from "@/modules/procurement/application/fulfillment-event-service";
+import { createReadyProcurementProject } from "@/modules/procurement/infrastructure/procurement-test-fixtures";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
@@ -50,17 +51,12 @@ describeDatabase("APM-091A PostgreSQL fulfillment event immutability", () => {
         departmentId: "engineering"
       }
     });
-    await db.project.create({
-      data: {
-        id: projectId,
-        code: `EVENT-${suffix}`.toUpperCase(),
-        name: "履约事件测试项目",
-        departmentId: "engineering",
-        createdById: actorId,
-        initializationStatus: "READY",
-        capabilityConfigurationStatus: "READY",
-        capabilitiesConfiguredAt: new Date()
-      }
+    await createReadyProcurementProject({
+      id: projectId,
+      code: `EVENT-${suffix}`.toUpperCase(),
+      name: "履约事件测试项目",
+      departmentId: "engineering",
+      createdById: actorId
     });
     await db.companyCapability.update({
       where: { code: "PROCUREMENT_COLLABORATION" },

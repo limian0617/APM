@@ -11,6 +11,7 @@ import {
   reviseMaterialRequirement
 } from "@/modules/procurement/application/material-requirement-service";
 import { configureProjectProcurement } from "@/modules/procurement/application/procurement-settings-service";
+import { createReadyProcurementProject } from "@/modules/procurement/infrastructure/procurement-test-fixtures";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
@@ -42,17 +43,12 @@ describeDatabase("APM-090A PostgreSQL procurement foundation", () => {
         departmentId: "engineering"
       }
     });
-    await db.project.create({
-      data: {
-        id: projectId,
-        code: `PROC-${suffix}`.toUpperCase(),
-        name: "采购基础测试项目",
-        departmentId: "engineering",
-        createdById: actorId,
-        initializationStatus: "READY",
-        capabilityConfigurationStatus: "READY",
-        capabilitiesConfiguredAt: new Date()
-      }
+    await createReadyProcurementProject({
+      id: projectId,
+      code: `PROC-${suffix}`.toUpperCase(),
+      name: "采购基础测试项目",
+      departmentId: "engineering",
+      createdById: actorId
     });
     await db.companyCapability.update({
       where: { code: "PROCUREMENT_COLLABORATION" },

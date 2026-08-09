@@ -14,6 +14,7 @@ import {
   createProcurementTrackingLine,
   updateLocalProcurementTrackingLine
 } from "@/modules/procurement/application/procurement-tracking-service";
+import { createReadyProcurementProject } from "@/modules/procurement/infrastructure/procurement-test-fixtures";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
@@ -48,17 +49,12 @@ describeDatabase("APM-090B PostgreSQL procurement tracking", () => {
         departmentId: "engineering"
       }
     });
-    await db.project.create({
-      data: {
-        id: projectId,
-        code: `TRACK-${suffix}`.toUpperCase(),
-        name: "采购跟踪测试项目",
-        departmentId: "engineering",
-        createdById: actorId,
-        initializationStatus: "READY",
-        capabilityConfigurationStatus: "READY",
-        capabilitiesConfiguredAt: new Date()
-      }
+    await createReadyProcurementProject({
+      id: projectId,
+      code: `TRACK-${suffix}`.toUpperCase(),
+      name: "采购跟踪测试项目",
+      departmentId: "engineering",
+      createdById: actorId
     });
     await db.companyCapability.update({
       where: { code: "PROCUREMENT_COLLABORATION" },

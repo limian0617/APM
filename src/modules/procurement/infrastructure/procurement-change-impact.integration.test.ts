@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import { resolveProcurementChangeImpact } from "@/modules/procurement/application/change-impact-service";
+import { createReadyProcurementProject } from "@/modules/procurement/infrastructure/procurement-test-fixtures";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
@@ -46,17 +47,12 @@ describeDatabase("APM-091B PostgreSQL procurement change impact concurrency", ()
         }
       ]
     });
-    await db.project.create({
-      data: {
-        id: projectId,
-        code: `CHANGE-${suffix}`.toUpperCase(),
-        name: "采购变更并发测试项目",
-        departmentId: "engineering",
-        createdById: ownerUserId,
-        initializationStatus: "READY",
-        capabilityConfigurationStatus: "READY",
-        capabilitiesConfiguredAt: new Date()
-      }
+    await createReadyProcurementProject({
+      id: projectId,
+      code: `CHANGE-${suffix}`.toUpperCase(),
+      name: "采购变更并发测试项目",
+      departmentId: "engineering",
+      createdById: ownerUserId
     });
     const [ownerMembership, trackingMembership] = await Promise.all([
       db.projectMember.create({
