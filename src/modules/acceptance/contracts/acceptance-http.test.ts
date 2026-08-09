@@ -4,6 +4,9 @@ import {
   acceptanceBatchPathSchema,
   acceptanceBatchQuerySchema,
   acceptanceResultBodySchema,
+  acceptanceFailurePathSchema,
+  acceptanceFailureIssueCreateBodySchema,
+  acceptanceFailureIssueLinkBodySchema,
   createAcceptanceBatchBodySchema,
   createAcceptanceTemplateBodySchema,
   acceptanceServiceErrorResponse
@@ -45,6 +48,39 @@ describe("acceptance HTTP contracts", () => {
     expect(acceptanceResultBodySchema.safeParse({ version: 1, decision: "UNKNOWN" }).success).toBe(
       false
     );
+  });
+
+  it("exposes strict FAIL-result issue create and link contracts", () => {
+    expect(
+      acceptanceFailurePathSchema.safeParse({
+        projectId: "p-1",
+        batchId: "b-1",
+        resultRevisionId: "revision-1"
+      }).success
+    ).toBe(true);
+    expect(
+      acceptanceFailureIssueCreateBodySchema.safeParse({
+        title: "电压异常",
+        confirmedText: "上电后电压低于标准",
+        category: "FUNCTION",
+        severity: "HIGH"
+      }).success
+    ).toBe(true);
+    expect(
+      acceptanceFailureIssueLinkBodySchema.safeParse({
+        issueId: "issue-1",
+        issueVersion: 2,
+        reason: "复用已有问题"
+      }).success
+    ).toBe(true);
+    expect(
+      acceptanceFailureIssueLinkBodySchema.safeParse({
+        issueId: "issue-1",
+        issueVersion: 2,
+        reason: "复用已有问题",
+        targetId: "cross-project"
+      }).success
+    ).toBe(false);
   });
 
   it("maps service errors to structured responses", async () => {

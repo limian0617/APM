@@ -24,6 +24,7 @@ import {
   AcceptancePolicyError,
   assertBatchCanTransition,
   assertBatchMutable,
+  assertFailureIssueLinksPresent,
   assertMeasuredUnitMatchesFrozenDefinition,
   assertRequiredEvidencePresent,
   assertRetestBatchCompatible,
@@ -514,6 +515,34 @@ async function transitionBatch(
       } catch (error) {
         return policyError(error);
       }
+      const latestRevisionIds = details.results
+        .map((result) => result.revisions[0]?.id)
+        .filter((id): id is string => Boolean(id));
+      const linkedFailures =
+        latestRevisionIds.length === 0
+          ? []
+          : await client.issueRelation.findMany({
+              where: {
+                projectId,
+                relationType: "TEST_RESULT",
+                status: "ACTIVE",
+                targetId: { in: latestRevisionIds }
+              },
+              select: { targetId: true }
+            });
+      const linkedFailureIds = new Set(linkedFailures.map((relation) => relation.targetId));
+      try {
+        assertFailureIssueLinksPresent(
+          details.results.map((result) => ({
+            decision: result.revisions[0]?.decision ?? null,
+            hasActiveIssueRelation: result.revisions[0]
+              ? linkedFailureIds.has(result.revisions[0].id)
+              : false
+          }))
+        );
+      } catch (error) {
+        return policyError(error);
+      }
     }
     const now = await databaseNow(client);
     const updateData =
@@ -794,10 +823,68 @@ export async function getAcceptanceBatch(
   });
   if (!batch)
     throw new AcceptanceServiceError("ACCEPTANCE_BATCH_NOT_FOUND", "验收批次不存在。", 404);
+  const revisionIds = batch.results.flatMap((result) =>
+    result.revisions.map((revision) => revision.id)
+  );
+  const issueRelations = revisionIds.length
+    ? await db.issueRelation.findMany({
+        where: {
+          projectId,
+          relationType: "TEST_RESULT",
+          status: "ACTIVE",
+          targetId: { in: revisionIds }
+        },
+        include: {
+          issue: {
+            select: {
+              id: true,
+              projectId: true,
+              title: true,
+              category: true,
+              severity: true,
+              status: true,
+              ownerMembershipId: true,
+              verifierMembershipId: true,
+              dueDate: true,
+              version: true
+            }
+          }
+        },
+        orderBy: { createdAt: "asc" }
+      })
+    : [];
+  const issueLinksByRevision = new Map<string, typeof issueRelations>();
+  for (const relation of issueRelations) {
+    const current = issueLinksByRevision.get(relation.targetId) ?? [];
+    current.push(relation);
+    issueLinksByRevision.set(relation.targetId, current);
+  }
+  const enrichedBatch = {
+    ...batch,
+    results: batch.results.map((result) => ({
+      ...result,
+      revisions: result.revisions.map((revision) => ({
+        ...revision,
+        issueLinks: (issueLinksByRevision.get(revision.id) ?? []).map((relation) => ({
+          relationId: relation.id,
+          issue: {
+            ...relation.issue,
+            dueDate: relation.issue.dueDate?.toISOString().slice(0, 10) ?? null
+          }
+        }))
+      }))
+    }))
+  };
+  const latestFailures = batch.results
+    .map((result) => result.revisions[0])
+    .filter((revision) => revision?.decision === "FAIL");
+  const unlinkedFailureCount = latestFailures.filter(
+    (revision) => !revision || (issueLinksByRevision.get(revision.id) ?? []).length === 0
+  ).length;
   return {
     projectId: text(projectId, "projectId"),
-    batch,
-    summary: summaryForBatch(batch as BatchWithDetails),
+    batch: enrichedBatch,
+    summary: { ...summaryForBatch(batch as BatchWithDetails), unlinkedFailureCount },
     allowedActions
   };
 }

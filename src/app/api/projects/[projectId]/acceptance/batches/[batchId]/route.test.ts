@@ -37,6 +37,8 @@ describe("GET acceptance batch detail", () => {
     });
     authorization.decideAuthorization
       .mockReturnValueOnce({ allowed: true })
+      .mockReturnValueOnce({ allowed: true })
+      .mockReturnValueOnce({ allowed: true })
       .mockReturnValueOnce({ allowed: true });
     acceptanceService.getAcceptanceBatch.mockResolvedValue({ batch: { id: "b-1" }, summary: {} });
     const response = await GET(
@@ -49,7 +51,9 @@ describe("GET acceptance batch detail", () => {
       "LOCK_BATCH",
       "START_BATCH",
       "RECORD_RESULT",
-      "REVISE_RESULT"
+      "REVISE_RESULT",
+      "CREATE_FAILURE_ISSUE",
+      "LINK_FAILURE_ISSUE"
     ]);
   });
 });

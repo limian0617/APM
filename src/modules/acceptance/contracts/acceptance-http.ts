@@ -9,6 +9,7 @@ import {
 } from "@/modules/platform-api/contracts/dto";
 
 import { AcceptanceServiceError } from "../application/acceptance-service";
+import { ISSUE_CATEGORIES, ISSUE_SEVERITIES } from "@/modules/issues/domain/issue-lifecycle";
 import {
   AcceptancePolicyError,
   ACCEPTANCE_DECISIONS,
@@ -42,6 +43,25 @@ export const acceptanceResultPathSchema = z.strictObject({
   projectId: identifierSchema,
   batchId: identifierSchema,
   itemId: identifierSchema
+});
+
+export const acceptanceFailurePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  batchId: identifierSchema,
+  resultRevisionId: identifierSchema
+});
+
+export const acceptanceFailureIssueCreateBodySchema = z.strictObject({
+  title: z.string().trim().min(1).max(191),
+  confirmedText: z.string().trim().min(1).max(10_000),
+  category: z.enum(ISSUE_CATEGORIES),
+  severity: z.enum(ISSUE_SEVERITIES)
+});
+
+export const acceptanceFailureIssueLinkBodySchema = z.strictObject({
+  issueId: identifierSchema,
+  issueVersion: positiveVersionSchema,
+  reason: reasonSchema
 });
 
 export const acceptanceSummaryPathSchema = acceptanceBatchPathSchema;

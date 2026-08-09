@@ -896,6 +896,8 @@ export const RESIDUAL_ITEM_AUDIT_FIELDS = [
   "projectId",
   "residualItemId",
   "conditionalReleaseId",
+  "issueId",
+  "acceptanceResultRevisionId",
   "sequence",
   "title",
   "ownerMembershipId",

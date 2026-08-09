@@ -1,4 +1,4 @@
-import { Prisma, UserStatus } from "@prisma/client";
+import { IssueSourceType, Prisma, UserStatus } from "@prisma/client";
 
 import { db, inTransaction } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
@@ -93,6 +93,11 @@ function severity(value: unknown): IssueSeverity {
     throw new IssueServiceError("ISSUE_INVALID_INPUT", "severity 必须是预定义的问题严重度。", 422);
   }
   return value as IssueSeverity;
+}
+
+function sourceType(value: unknown): IssueSourceType {
+  if (value === "PROJECT" || value === "FAT" || value === "SAT") return value;
+  throw new IssueServiceError("ISSUE_INVALID_INPUT", "sourceType 未注册。", 422);
 }
 
 function rootCauseCategory(
@@ -325,7 +330,8 @@ function auditValue(
 function historySnapshot(
   issue: ReturnType<typeof serializeIssue>,
   eventType: IssueEventType,
-  reason: string
+  reason: string,
+  sourceSnapshot?: Record<string, unknown>
 ) {
   return {
     ...auditValue(issue, eventType, reason),
@@ -333,7 +339,8 @@ function historySnapshot(
     phenomenonDescription: issue.phenomenonDescription,
     rootCauseDescription: issue.rootCauseDescription,
     verificationEvidence: issue.verificationEvidence,
-    tags: issue.tags.map((tag) => tag.tag)
+    tags: issue.tags.map((tag) => tag.tag),
+    ...(sourceSnapshot ? { sourceSnapshot } : {})
   };
 }
 
@@ -529,6 +536,27 @@ async function assertIssueRelationTarget(
     }
     return blocker;
   }
+  if (relationType === "TEST_RESULT") {
+    const revision = await client.acceptanceTestResultRevision.findFirst({
+      where: { id: targetId, projectId },
+      select: { id: true, decision: true }
+    });
+    if (!revision) {
+      throw new IssueServiceError(
+        "ISSUE_RELATION_TARGET_NOT_FOUND",
+        "验收结果修订不存在或不属于该项目。",
+        404
+      );
+    }
+    if (revision.decision !== "FAIL") {
+      throw new IssueServiceError(
+        "ACCEPTANCE_FAILURE_DECISION_REQUIRED",
+        "只有 FAIL 结果修订可以关联统一问题。",
+        422
+      );
+    }
+    return null;
+  }
   return null;
 }
 
@@ -595,6 +623,9 @@ export async function createProjectIssue(
     rootCauseCategory: unknown;
     rootCauseDescription: unknown;
     tags: unknown;
+    sourceType?: unknown;
+    sourceSnapshot?: Record<string, unknown>;
+    creationReason?: string;
     actorId: string;
     auditContext: AuditContext;
   },
@@ -602,6 +633,7 @@ export async function createProjectIssue(
 ) {
   const projectId = requiredText(input.projectId, "projectId", 191);
   const value = details(input);
+  const issueSourceType = input.sourceType === undefined ? "PROJECT" : sourceType(input.sourceType);
   return inTransaction(transaction, async (client) => {
     const project = await lockProject(client, projectId);
     if (!project) throw new IssueServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
@@ -611,7 +643,7 @@ export async function createProjectIssue(
         projectId,
         title: value.title,
         confirmedText: value.confirmedText,
-        sourceType: "PROJECT",
+        sourceType: issueSourceType,
         category: value.category,
         severity: value.severity,
         phenomenonDescription: value.phenomenonDescription,
@@ -625,13 +657,13 @@ export async function createProjectIssue(
     });
     const now = await databaseNow(client);
     const serialized = serializeIssue(issue, now);
-    const reason = "创建统一问题主记录。";
+    const reason = input.creationReason ?? "创建统一问题主记录。";
     await appendHistory(client, {
       issueId: issue.id,
       projectId,
       eventType: "CREATED",
       reason,
-      snapshot: historySnapshot(serialized, "CREATED", reason),
+      snapshot: historySnapshot(serialized, "CREATED", reason, input.sourceSnapshot),
       actorId: input.actorId
     });
     const audit = await writeAudit(client, {
@@ -891,89 +923,97 @@ export async function addProjectIssueRelation(
   const relationType = issueRelationType(input.relationType);
   const targetId = requiredText(input.targetId, "targetId", 191);
   const reason = requiredText(input.reason, "reason", 1024);
-  return inTransaction(transaction, async (client) => {
-    const project = await lockProject(client, projectId);
-    if (!project) throw new IssueServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
-    assertProjectIssuesWritable(project.status);
-    const current = await lockIssue(client, projectId, issueId);
-    if (!current) throw new IssueServiceError("ISSUE_NOT_FOUND", "问题不存在或不属于该项目。", 404);
-    if (current.status === "CLOSED") {
-      throw new IssueServiceError("ISSUE_CLOSED", "已关闭问题必须先重开才能新增关联。", 409);
-    }
-    if (
-      current.relations.some(
-        (relation) =>
-          relation.status === "ACTIVE" &&
-          relation.relationType === relationType &&
-          relation.targetId === targetId
-      )
-    ) {
-      throw new IssueServiceError("ISSUE_RELATION_EXISTS", "问题已存在相同的有效关联。", 409);
-    }
-    const blocker = await assertIssueRelationTarget(
-      client,
-      projectId,
-      issueId,
-      relationType,
-      targetId
-    );
-    const now = await databaseNow(client);
-    const updated = await client.issue.updateMany({
-      where: { id: issueId, projectId, version: expectedVersion },
-      data: { updatedById: input.actorId, version: { increment: 1 } }
-    });
-    if (updated.count !== 1) {
-      throw new IssueServiceError("VERSION_CONFLICT", "问题已被其他操作更新。", 409);
-    }
-    const relation = await client.issueRelation.create({
-      data: {
+  try {
+    return await inTransaction(transaction, async (client) => {
+      const project = await lockProject(client, projectId);
+      if (!project) throw new IssueServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+      assertProjectIssuesWritable(project.status);
+      const current = await lockIssue(client, projectId, issueId);
+      if (!current)
+        throw new IssueServiceError("ISSUE_NOT_FOUND", "问题不存在或不属于该项目。", 404);
+      if (current.status === "CLOSED") {
+        throw new IssueServiceError("ISSUE_CLOSED", "已关闭问题必须先重开才能新增关联。", 409);
+      }
+      if (
+        current.relations.some(
+          (relation) =>
+            relation.status === "ACTIVE" &&
+            relation.relationType === relationType &&
+            relation.targetId === targetId
+        )
+      ) {
+        throw new IssueServiceError("ISSUE_RELATION_EXISTS", "问题已存在相同的有效关联。", 409);
+      }
+      const blocker = await assertIssueRelationTarget(
+        client,
         projectId,
         issueId,
         relationType,
-        targetId,
-        blockerIssueId: blocker?.id ?? null,
+        targetId
+      );
+      const now = await databaseNow(client);
+      const updated = await client.issue.updateMany({
+        where: { id: issueId, projectId, version: expectedVersion },
+        data: { updatedById: input.actorId, version: { increment: 1 } }
+      });
+      if (updated.count !== 1) {
+        throw new IssueServiceError("VERSION_CONFLICT", "问题已被其他操作更新。", 409);
+      }
+      const relation = await client.issueRelation.create({
+        data: {
+          projectId,
+          issueId,
+          relationType,
+          targetId,
+          blockerIssueId: blocker?.id ?? null,
+          reason,
+          createdById: input.actorId
+        },
+        include: { blockerIssue: { select: { status: true } } }
+      });
+      const issue = serializeIssue(await readIssueOrThrow(client, projectId, issueId), now);
+      const relationFact = serializeIssueRelation(relation);
+      await appendHistory(client, {
+        issueId,
+        projectId,
+        eventType: "RELATION_ADDED",
         reason,
-        createdById: input.actorId
-      },
-      include: { blockerIssue: { select: { status: true } } }
+        snapshot: {
+          before: historySnapshot(serializeIssue(current, now), "RELATION_ADDED", reason),
+          after: historySnapshot(issue, "RELATION_ADDED", reason),
+          relation: relationFact
+        },
+        actorId: input.actorId
+      });
+      const audit = await writeAudit(client, {
+        action: AUDIT_ACTIONS.ISSUE_RELATION_ADDED,
+        objectType: AUDIT_OBJECT_TYPES.ISSUE_RELATION,
+        objectId: relation.id,
+        context: context(input, projectId, reason),
+        after: {
+          value: relationAuditValue(issue, relationFact, "RELATION_ADDED", reason),
+          allowedFields: ISSUE_AUDIT_FIELDS
+        }
+      });
+      const outbox = await appendOutboxEvent(client, {
+        eventType: "issues.issue-relation.added",
+        aggregateType: "ISSUE_RELATION",
+        aggregateId: relation.id,
+        idempotencyKey: relation.id,
+        payload: {
+          issue: auditValue(issue, "RELATION_ADDED", reason),
+          relation: relationFact,
+          auditId: audit.id
+        }
+      });
+      return { issue, relation: relationFact, auditId: audit.id, outboxEventId: outbox.id };
     });
-    const issue = serializeIssue(await readIssueOrThrow(client, projectId, issueId), now);
-    const relationFact = serializeIssueRelation(relation);
-    await appendHistory(client, {
-      issueId,
-      projectId,
-      eventType: "RELATION_ADDED",
-      reason,
-      snapshot: {
-        before: historySnapshot(serializeIssue(current, now), "RELATION_ADDED", reason),
-        after: historySnapshot(issue, "RELATION_ADDED", reason),
-        relation: relationFact
-      },
-      actorId: input.actorId
-    });
-    const audit = await writeAudit(client, {
-      action: AUDIT_ACTIONS.ISSUE_RELATION_ADDED,
-      objectType: AUDIT_OBJECT_TYPES.ISSUE_RELATION,
-      objectId: relation.id,
-      context: context(input, projectId, reason),
-      after: {
-        value: relationAuditValue(issue, relationFact, "RELATION_ADDED", reason),
-        allowedFields: ISSUE_AUDIT_FIELDS
-      }
-    });
-    const outbox = await appendOutboxEvent(client, {
-      eventType: "issues.issue-relation.added",
-      aggregateType: "ISSUE_RELATION",
-      aggregateId: relation.id,
-      idempotencyKey: relation.id,
-      payload: {
-        issue: auditValue(issue, "RELATION_ADDED", reason),
-        relation: relationFact,
-        auditId: audit.id
-      }
-    });
-    return { issue, relation: relationFact, auditId: audit.id, outboxEventId: outbox.id };
-  });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new IssueServiceError("ISSUE_RELATION_EXISTS", "问题已存在相同的有效关联。", 409);
+    }
+    throw error;
+  }
 }
 
 export async function closeProjectIssueRelation(

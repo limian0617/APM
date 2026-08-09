@@ -8,6 +8,7 @@ import {
   AcceptancePolicyError,
   assertBatchCanTransition,
   assertBatchMutable,
+  assertFailureIssueLinksPresent,
   assertRetestBatchCompatible,
   assertMeasuredUnitMatchesFrozenDefinition,
   assertRequiredEvidencePresent,
@@ -166,6 +167,22 @@ describe("acceptance policy", () => {
       unexecutedRequiredCount: 1,
       outcome: "PENDING"
     });
+  });
+
+  it("refuses to lock a batch when a current FAIL has no active unified issue relation", () => {
+    expect(() =>
+      assertFailureIssueLinksPresent([
+        { decision: "FAIL", hasActiveIssueRelation: false },
+        { decision: "PASS", hasActiveIssueRelation: false },
+        { decision: "NA", hasActiveIssueRelation: false }
+      ])
+    ).toThrowError("失败测试项尚未关联有效统一问题，验收批次不能锁定。 ".trim());
+    expect(() =>
+      assertFailureIssueLinksPresent([
+        { decision: "FAIL", hasActiveIssueRelation: true },
+        { decision: "PASS", hasActiveIssueRelation: false }
+      ])
+    ).not.toThrow();
   });
 
   it("accepts text measured values and rejects arbitrary non-text values", () => {

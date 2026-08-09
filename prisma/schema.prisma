@@ -2514,6 +2514,7 @@ model AcceptanceTestResultRevision {
   corrections          AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
   createdBy            User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   evidence             AcceptanceTestResultRevisionEvidence[]
+  acceptanceResidualItems ResidualItem[]                       @relation("AcceptanceResidualResultRevision")
 
   @@unique([resultId, revisionNo])
   @@unique([id, projectId])
@@ -3501,6 +3502,8 @@ model ResidualItem {
   id                   String                 @id @default(cuid())
   projectId            String                 @map("project_id")
   conditionalReleaseId String                 @map("conditional_release_id")
+  issueId              String?                @map("issue_id")
+  acceptanceResultRevisionId String?          @map("acceptance_result_revision_id")
   sequence             Int
   title                String
   ownerMembershipId    String                 @map("owner_membership_id")
@@ -3514,6 +3517,8 @@ model ResidualItem {
   updatedAt            DateTime               @updatedAt @map("updated_at")
   project              Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
   conditionalRelease   GateConditionalRelease @relation(fields: [conditionalReleaseId, projectId], references: [id, projectId], onDelete: Restrict)
+  issue                Issue?                 @relation("AcceptanceResidualIssue", fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+  acceptanceResultRevision AcceptanceTestResultRevision? @relation("AcceptanceResidualResultRevision", fields: [acceptanceResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
   ownerMembership      ProjectMember          @relation("ResidualItemOwnerMembership", fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
   verifierMembership   ProjectMember          @relation("ResidualItemVerifierMembership", fields: [verifierMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
   events               ResidualItemEvent[]
@@ -3521,6 +3526,8 @@ model ResidualItem {
   @@unique([id, projectId])
   @@unique([conditionalReleaseId, sequence])
   @@index([projectId, status, dueAt])
+  @@index([projectId, issueId, status])
+  @@index([projectId, acceptanceResultRevisionId, status])
   @@index([ownerMembershipId, status, dueAt])
   @@index([verifierMembershipId, status, dueAt])
   @@map("residual_items")
@@ -3685,6 +3692,7 @@ model Issue {
   history               IssueHistory[]
   relations             IssueRelation[]         @relation("IssueSourceRelations")
   blockerRelations      IssueRelation[]         @relation("IssueBlockerRelations")
+  acceptanceResidualItems ResidualItem[]        @relation("AcceptanceResidualIssue")
 
   @@unique([id, projectId])
   @@index([projectId, status, severity, updatedAt])

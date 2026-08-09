@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AcceptancePageDataState } from "@/modules/acceptance/contracts/acceptance-page-state";
 
-import { AcceptancePageContent } from "./acceptance-page-client";
+import { AcceptancePageContent, acceptanceCommandErrorMessage } from "./acceptance-page-client";
 
 const projectId = "project-1";
 
@@ -30,7 +30,13 @@ function readyState(): AcceptancePageDataState {
         scopeId: "machine-1",
         status: "IN_PROGRESS",
         version: 2,
-        allowedActions: ["RECORD_RESULT", "REVISE_RESULT", "LOCK_BATCH"]
+        allowedActions: [
+          "RECORD_RESULT",
+          "REVISE_RESULT",
+          "LOCK_BATCH",
+          "CREATE_FAILURE_ISSUE",
+          "LINK_FAILURE_ISSUE"
+        ]
       }
     ],
     batchDetail: {
@@ -56,13 +62,40 @@ function readyState(): AcceptancePageDataState {
           {
             itemId: "item-1",
             revisions: [
-              { id: "revision-1", decision: "PASS", measuredValue: "230V", measuredUnit: "V" }
+              {
+                id: "revision-1",
+                decision: "FAIL",
+                measuredValue: "190V",
+                measuredUnit: "V",
+                issueLinks: [
+                  {
+                    relationId: "relation-1",
+                    issue: {
+                      id: "issue-1",
+                      title: "电压异常",
+                      category: "FUNCTION",
+                      severity: "HIGH",
+                      status: "OPEN",
+                      ownerMembershipId: "member-1",
+                      verifierMembershipId: "member-2",
+                      dueDate: "2026-08-20",
+                      version: 3
+                    }
+                  }
+                ]
+              }
             ]
           }
         ]
       },
-      summary: { passRate: 1, outcome: "PASS", denominator: 1 },
-      allowedActions: ["RECORD_RESULT", "REVISE_RESULT", "LOCK_BATCH"]
+      summary: { passRate: 0, outcome: "FAIL", denominator: 1, unlinkedFailureCount: 0 },
+      allowedActions: [
+        "RECORD_RESULT",
+        "REVISE_RESULT",
+        "LOCK_BATCH",
+        "CREATE_FAILURE_ISSUE",
+        "LINK_FAILURE_ISSUE"
+      ]
     },
     timestamps: {
       templates: "2026-08-09T01:00:00.000Z",
@@ -73,6 +106,16 @@ function readyState(): AcceptancePageDataState {
 }
 
 describe("AcceptancePageContent", () => {
+  it("maps conflict codes to actionable messages without exposing server internals", () => {
+    expect(
+      acceptanceCommandErrorMessage(409, { error: { code: "ACCEPTANCE_FAILURE_ISSUE_REQUIRED" } })
+    ).toContain("锁定前必须");
+    expect(
+      acceptanceCommandErrorMessage(409, { error: { code: "ISSUE_RELATION_EXISTS" } })
+    ).toContain("已经关联");
+    expect(acceptanceCommandErrorMessage(500, null)).toBe("验收命令未完成。");
+  });
+
   it("renders FAT/SAT templates, project-scoped batches, items and append-only result facts", () => {
     const markup = renderToStaticMarkup(
       createElement(AcceptancePageContent, {
@@ -89,9 +132,38 @@ describe("AcceptancePageContent", () => {
     expect(markup).toContain("MACHINE");
     expect(markup).toContain("通电检查");
     expect(markup).toContain("PASS");
-    expect(markup).toContain("230V");
+    expect(markup).toContain("FAIL");
+    expect(markup).toContain("电压异常");
+    expect(markup).toContain("FUNCTION");
+    expect(markup).toContain("HIGH");
+    expect(markup).toContain("未关闭，待复测");
+    expect(markup).toContain("创建问题");
+    expect(markup).toContain("关联已有问题");
     expect(markup).toContain("单位：V");
     expect(markup).toContain('href="/projects/project-1/acceptance?batch=batch-1"');
+  });
+
+  it("does not render an issue command for PASS/NA and warns before locking unlinked failures", () => {
+    const state = readyState();
+    const detail = state.batchDetail as Record<string, unknown>;
+    const batch = detail.batch as Record<string, unknown>;
+    const results = batch.results as Array<Record<string, unknown>>;
+    results[0] = {
+      itemId: "item-1",
+      revisions: [{ id: "revision-1", decision: "FAIL", measuredValue: "190", measuredUnit: "V" }]
+    };
+    detail.summary = { passRate: 0, outcome: "FAIL", denominator: 1, unlinkedFailureCount: 1 };
+    const markup = renderToStaticMarkup(
+      createElement(AcceptancePageContent, {
+        projectId,
+        state,
+        selectedBatchId: "batch-1",
+        onRetry: () => undefined
+      })
+    );
+    expect(markup).toContain("存在 1 个未关联统一问题的 FAIL 项");
+    expect(markup).toContain("锁定前必须关联问题");
+    expect(markup).not.toContain("跳转问题详情");
   });
 
   it("renders explicit loading, empty, denied, retryable error and stale states", () => {

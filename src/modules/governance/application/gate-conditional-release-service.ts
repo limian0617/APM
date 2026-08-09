@@ -24,6 +24,7 @@ import {
   type ResidualItemInput,
   type ResidualItemStatus
 } from "../domain/gate-conditional-release";
+import { assertResidualCanClose } from "@/modules/issues/domain/acceptance-issue-policy";
 import { appendOutboxEvent } from "../infrastructure/outbox";
 
 function positiveVersion(value: unknown): number {
@@ -111,6 +112,8 @@ function residualItemSnapshot(value: {
   dueAt: Date;
   evidence: string;
   escalationRule: string;
+  issueId: string | null;
+  acceptanceResultRevisionId: string | null;
   status: string;
   version: number;
 }) {
@@ -125,6 +128,8 @@ function residualItemSnapshot(value: {
     dueAt: value.dueAt.toISOString(),
     evidence: value.evidence,
     escalationRule: value.escalationRule,
+    issueId: value.issueId,
+    acceptanceResultRevisionId: value.acceptanceResultRevisionId,
     status: value.status,
     version: value.version
   };
@@ -215,7 +220,9 @@ async function lockResidualItem(
     include: {
       ownerMembership: { include: { user: true } },
       verifierMembership: { include: { user: true } },
-      conditionalRelease: true
+      conditionalRelease: true,
+      issue: true,
+      acceptanceResultRevision: { include: { result: { include: { batch: true, item: true } } } }
     }
   });
 }
@@ -256,6 +263,178 @@ async function assertActiveResidualMembers(
     throw new GateConditionalReleaseError(
       "RESIDUAL_MEMBER_INVALID",
       "遗留项 Owner 和验证人必须是当前项目的有效成员。",
+      422
+    );
+  }
+}
+
+async function hasLockedAcceptanceRetestPass(
+  client: Prisma.TransactionClient,
+  projectId: string,
+  revisionId: string
+) {
+  const source = await client.acceptanceTestResultRevision.findFirst({
+    where: { id: revisionId, projectId },
+    include: { result: { include: { batch: true, item: true } } }
+  });
+  if (!source) return false;
+  const batches = await client.acceptanceBatch.findMany({
+    where: {
+      projectId,
+      acceptanceType: source.result.batch.acceptanceType,
+      scopeType: source.result.batch.scopeType,
+      scopeId: source.result.batch.scopeId,
+      status: "LOCKED"
+    },
+    include: {
+      results: {
+        include: { item: true, revisions: { orderBy: { revisionNo: "desc" }, take: 1 } }
+      }
+    }
+  });
+  const byId = new Map(batches.map((batch) => [batch.id, batch]));
+  for (const batch of batches) {
+    if (batch.id === source.result.batchId) continue;
+    let parentId = batch.retestOfBatchId;
+    const visited = new Set<string>();
+    while (parentId && !visited.has(parentId)) {
+      if (parentId === source.result.batchId) {
+        const matching = batch.results.find(
+          (result) => result.item.code === source.result.item.code
+        );
+        if (matching?.revisions[0]?.decision === "PASS") return true;
+        break;
+      }
+      visited.add(parentId);
+      parentId = byId.get(parentId)?.retestOfBatchId ?? null;
+    }
+  }
+  return false;
+}
+
+type AcceptanceResidualSource = Readonly<{
+  issueId: string;
+  acceptanceResultRevisionId: string;
+  ownerMembershipId: string;
+  verifierMembershipId: string;
+  dueDate: string;
+}>;
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function acceptanceResidualSources(
+  results: readonly { checkerCode: string; status: string; evidenceJson: unknown }[]
+) {
+  const sources: AcceptanceResidualSource[] = [];
+  for (const result of results) {
+    if (!result.checkerCode.startsWith("ACCEPTANCE.") || result.status !== "WARNING") continue;
+    const evidence = record(result.evidenceJson);
+    const links = evidence?.failureLinks;
+    const issueFacts = evidence?.issueFacts;
+    if (!Array.isArray(links) || !Array.isArray(issueFacts)) {
+      throw new GateConditionalReleaseError(
+        "ACCEPTANCE_RESIDUAL_FACTS_UNAVAILABLE",
+        "验收 WARNING 缺少失败结果与问题来源事实，不能条件放行。",
+        409
+      );
+    }
+    const facts = new Map(
+      issueFacts.flatMap((entry) => {
+        const fact = record(entry);
+        return fact && typeof fact.issueId === "string" ? [[fact.issueId, fact] as const] : [];
+      })
+    );
+    for (const linkEntry of links) {
+      const link = record(linkEntry);
+      if (!link || typeof link.resultRevisionId !== "string" || !Array.isArray(link.issueIds)) {
+        throw new GateConditionalReleaseError(
+          "ACCEPTANCE_RESIDUAL_FACTS_UNAVAILABLE",
+          "验收 WARNING 的失败结果来源事实无效，不能条件放行。",
+          409
+        );
+      }
+      for (const issueId of link.issueIds) {
+        if (typeof issueId !== "string") {
+          throw new GateConditionalReleaseError(
+            "ACCEPTANCE_RESIDUAL_FACTS_UNAVAILABLE",
+            "验收 WARNING 的问题来源事实无效，不能条件放行。",
+            409
+          );
+        }
+        const fact = facts.get(issueId);
+        if (
+          !fact ||
+          typeof fact.ownerMembershipId !== "string" ||
+          typeof fact.verifierMembershipId !== "string" ||
+          typeof fact.dueDate !== "string"
+        ) {
+          throw new GateConditionalReleaseError(
+            "ACCEPTANCE_RESIDUAL_FACTS_UNAVAILABLE",
+            "验收 WARNING 缺少 Owner、验证人或截止日事实，不能条件放行。",
+            409
+          );
+        }
+        sources.push({
+          issueId,
+          acceptanceResultRevisionId: link.resultRevisionId,
+          ownerMembershipId: fact.ownerMembershipId,
+          verifierMembershipId: fact.verifierMembershipId,
+          dueDate: fact.dueDate
+        });
+      }
+    }
+  }
+  return sources;
+}
+
+function validateAcceptanceResidualInputs(
+  results: readonly { checkerCode: string; status: string; evidenceJson: unknown }[],
+  inputs: readonly ResidualItemInput[]
+) {
+  const sources = acceptanceResidualSources(results);
+  if (sources.length === 0) return;
+  const sourceByKey = new Map(
+    sources.map((source) => [`${source.issueId}:${source.acceptanceResultRevisionId}`, source])
+  );
+  const suppliedKeys = new Set<string>();
+  for (const item of inputs) {
+    if (!item.issueId || !item.acceptanceResultRevisionId) {
+      throw new GateConditionalReleaseError(
+        "ACCEPTANCE_RESIDUAL_SOURCE_REQUIRED",
+        "FAT/SAT 条件放行遗留项必须关联问题和失败结果修订。",
+        422
+      );
+    }
+    const key = `${item.issueId}:${item.acceptanceResultRevisionId}`;
+    const source = sourceByKey.get(key);
+    if (!source || suppliedKeys.has(key)) {
+      throw new GateConditionalReleaseError(
+        "ACCEPTANCE_RESIDUAL_SOURCE_INVALID",
+        "遗留项来源必须来自当前 Gate 冻结的失败问题事实，且不能重复。",
+        422
+      );
+    }
+    suppliedKeys.add(key);
+    if (
+      item.ownerMembershipId !== source.ownerMembershipId ||
+      item.verifierMembershipId !== source.verifierMembershipId ||
+      item.dueAt.toISOString().slice(0, 10) !== source.dueDate
+    ) {
+      throw new GateConditionalReleaseError(
+        "ACCEPTANCE_RESIDUAL_SOURCE_CHANGED",
+        "遗留项 Owner、验证人和截止日必须与 Gate 冻结事实一致。",
+        409
+      );
+    }
+  }
+  if (suppliedKeys.size !== sourceByKey.size) {
+    throw new GateConditionalReleaseError(
+      "ACCEPTANCE_RESIDUAL_SOURCE_REQUIRED",
+      "每个可条件放行的 FAT/SAT 问题都必须建立关联遗留项。",
       422
     );
   }
@@ -349,6 +528,7 @@ export async function conditionallyReleaseGate(
         actorIsActiveProjectMember: Boolean(actorMembership),
         targetStageStatus: targetStage.status
       });
+      validateAcceptanceResidualInputs(submission.gateCheckSnapshot.results, residualInputs);
       await assertActiveResidualMembers(client, input.projectId, residualInputs);
       const release = await client.gateConditionalRelease.create({
         data: {
@@ -381,6 +561,8 @@ export async function conditionallyReleaseGate(
           data: {
             projectId: input.projectId,
             conditionalReleaseId: release.id,
+            issueId: residualInput.issueId ?? null,
+            acceptanceResultRevisionId: residualInput.acceptanceResultRevisionId ?? null,
             sequence: position + 1,
             title: residualInput.title,
             ownerMembershipId: residualInput.ownerMembershipId,
@@ -551,6 +733,30 @@ async function changeResidualItem(
         );
       }
       const nextStatus = nextResidualStatus(current.status as ResidualItemStatus, action);
+      if (action === "VERIFY" && nextStatus === "CLOSED" && current.issueId) {
+        const retestPass = current.acceptanceResultRevisionId
+          ? await hasLockedAcceptanceRetestPass(
+              client,
+              input.projectId,
+              current.acceptanceResultRevisionId
+            )
+          : false;
+        try {
+          assertResidualCanClose({
+            issueStatus: current.issue?.status ?? "PROCESSING",
+            retestPass
+          });
+        } catch (error) {
+          if (error instanceof Error && "code" in error) {
+            throw new GateConditionalReleaseError(
+              String((error as { code: string }).code),
+              error.message,
+              "status" in error ? Number((error as { status: number }).status) : 409
+            );
+          }
+          throw error;
+        }
+      }
       const changed = await client.residualItem.updateMany({
         where: {
           id: current.id,

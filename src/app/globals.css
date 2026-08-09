@@ -2544,6 +2544,81 @@ a {
   align-self: end;
 }
 
+.acceptance-failure-issues {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  min-width: 0;
+}
+
+.acceptance-issue-list,
+.acceptance-issue-summary {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.acceptance-issue-summary {
+  border-left: 3px solid #b77300;
+  padding: 8px 10px;
+  background: #fff8e6;
+  color: #5c4100;
+  font-size: 12px;
+}
+
+.acceptance-issue-summary a {
+  color: #1d5c8d;
+  font-weight: 700;
+  text-underline-offset: 2px;
+}
+
+.acceptance-issue-unlinked {
+  color: #7f241e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.acceptance-issue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.acceptance-issue-form {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-top: 1px solid #d9e0e8;
+  padding-top: 10px;
+}
+
+.acceptance-issue-form label {
+  display: grid;
+  gap: 4px;
+  color: #526476;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.acceptance-issue-form input,
+.acceptance-issue-form select,
+.acceptance-issue-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #aebdca;
+  border-radius: 4px;
+  padding: 7px 9px;
+  background: #fff;
+  color: #1f2e3c;
+  font: inherit;
+}
+
+.acceptance-issue-form textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
 @media (max-width: 760px) {
   .acceptance-page {
     padding: 20px 16px 36px;

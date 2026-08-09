@@ -18,6 +18,8 @@ export type ResidualItemInput = {
   dueAt: Date;
   evidence: string;
   escalationRule: string;
+  issueId?: string | null;
+  acceptanceResultRevisionId?: string | null;
 };
 
 export class GateConditionalReleaseError extends Error {
@@ -70,13 +72,35 @@ export function validateResidualItemInput(input: ResidualItemInput): ResidualIte
     "遗留项升级规则",
     1024
   );
+  const issueId =
+    input.issueId == null
+      ? null
+      : requiredText(input.issueId, "RESIDUAL_ISSUE_INVALID", "关联问题", 191);
+  const acceptanceResultRevisionId =
+    input.acceptanceResultRevisionId == null
+      ? null
+      : requiredText(
+          input.acceptanceResultRevisionId,
+          "RESIDUAL_ACCEPTANCE_REVISION_INVALID",
+          "失败结果修订",
+          191
+        );
+  if ((issueId === null) !== (acceptanceResultRevisionId === null)) {
+    throw new GateConditionalReleaseError(
+      "RESIDUAL_ACCEPTANCE_SOURCE_REQUIRED",
+      "验收遗留项必须同时关联问题和失败结果修订。",
+      422
+    );
+  }
   return {
     title,
     ownerMembershipId,
     verifierMembershipId,
     dueAt: input.dueAt,
     evidence,
-    escalationRule
+    escalationRule,
+    ...(issueId === null ? {} : { issueId }),
+    ...(acceptanceResultRevisionId === null ? {} : { acceptanceResultRevisionId })
   };
 }
 

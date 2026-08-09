@@ -738,7 +738,9 @@ const residualItemInputSchema = z.strictObject({
   verifierMembershipId: identifierSchema,
   dueAt: z.string().datetime({ offset: true }),
   evidence: z.string().trim().min(1).max(4096),
-  escalationRule: z.string().trim().min(1).max(1024)
+  escalationRule: z.string().trim().min(1).max(1024),
+  issueId: identifierSchema.nullable().optional(),
+  acceptanceResultRevisionId: identifierSchema.nullable().optional()
 });
 export const conditionalReleaseBodySchema = z.strictObject({
   version: positiveVersionSchema,

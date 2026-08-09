@@ -241,4 +241,47 @@ describeDatabase("APM-100 acceptance application commands", () => {
     });
     expect(rows.map((row) => row.version)).toEqual(rows.map((_, index) => index + 1));
   });
+
+  it("refuses to lock a batch while its current FAIL result has no unified issue relation", async () => {
+    const template = await publishTemplate();
+    const item = template.templateVersion.items[0];
+    if (!item) throw new Error("expected frozen acceptance test item");
+    const batch = await createAcceptanceBatch({
+      projectId,
+      acceptanceType: "FAT",
+      scopeType: "PROJECT",
+      scopeId: projectId,
+      templateVersionId: template.templateVersion.id,
+      version: 0,
+      actorId,
+      auditContext: auditContext(`batch-unlinked-fail-${randomUUID()}`)
+    });
+    const started = await startAcceptanceBatch({
+      projectId,
+      batchId: batch.batch.id,
+      version: batch.resourceVersion,
+      actorId,
+      auditContext: auditContext(`start-unlinked-fail-${randomUUID()}`)
+    });
+    const recorded = await recordAcceptanceResultRevision({
+      projectId,
+      batchId: batch.batch.id,
+      itemId: item.id,
+      version: started.resourceVersion,
+      decision: "FAIL",
+      measuredValue: "180V",
+      measuredUnit: "V",
+      actorId,
+      auditContext: auditContext(`result-unlinked-fail-${randomUUID()}`)
+    });
+    await expect(
+      lockAcceptanceBatch({
+        projectId,
+        batchId: batch.batch.id,
+        version: recorded.resourceVersion,
+        actorId,
+        auditContext: auditContext(`lock-unlinked-fail-${randomUUID()}`)
+      })
+    ).rejects.toMatchObject({ code: "ACCEPTANCE_FAILURE_ISSUE_REQUIRED", status: 409 });
+  });
 });

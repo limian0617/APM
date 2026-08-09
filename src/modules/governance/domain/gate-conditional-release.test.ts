@@ -38,6 +38,22 @@ describe("APM-033 residual item rules", () => {
     }
   });
 
+  it("requires acceptance residuals to carry both immutable issue and failure revision sources", () => {
+    expect(() =>
+      validateResidualItemInput({
+        ...validInput,
+        issueId: "issue-1"
+      })
+    ).toThrowError("验收遗留项必须同时关联问题和失败结果修订。");
+    expect(
+      validateResidualItemInput({
+        ...validInput,
+        issueId: "issue-1",
+        acceptanceResultRevisionId: "revision-1"
+      })
+    ).toMatchObject({ issueId: "issue-1", acceptanceResultRevisionId: "revision-1" });
+  });
+
   it("allows only owner processing and verifier closure transitions", () => {
     expect(nextResidualStatus("OPEN", "START")).toBe("IN_PROGRESS");
     expect(nextResidualStatus("OPEN", "SUBMIT_VERIFICATION")).toBe("AWAITING_VERIFICATION");

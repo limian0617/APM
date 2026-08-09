@@ -1,6 +1,15 @@
 import type { GateScope } from "@/modules/configuration/domain/template-policy";
 import type { JsonValue } from "@/modules/governance/domain/idempotency";
 import type { ProjectStageExecutionStatus } from "@/modules/projects/domain/project-stage";
+import {
+  evaluateAcceptanceIssueGate,
+  type AcceptanceIssueGateInput
+} from "./acceptance-issue-gate";
+import type {
+  AcceptanceIssueCategory,
+  AcceptanceIssueSeverity,
+  AcceptanceIssueStatus
+} from "@/modules/issues/domain/acceptance-issue-policy";
 
 export const GATE_CHECKER_RESULT_STATUSES = {
   PASSED: "PASSED",
@@ -309,14 +318,171 @@ const procurementReadinessChecker: GateChecker = {
   }
 };
 
+function acceptanceIssueFacts(value: unknown): AcceptanceIssueGateInput | null {
+  if (!record(value)) return null;
+  const source = value as Record<string, unknown>;
+  if (
+    typeof source.factsAvailable !== "boolean" ||
+    typeof source.sourceChecksum !== "string" ||
+    typeof source.requiredResultMissing !== "boolean" ||
+    !Array.isArray(source.results) ||
+    !Array.isArray(source.issues) ||
+    !Array.isArray(source.retestPassRevisionIds) ||
+    source.retestPassRevisionIds.some((id) => typeof id !== "string")
+  ) {
+    return null;
+  }
+  const results = source.results.map((entry) => {
+    const value = record(entry);
+    if (
+      !value ||
+      typeof value.resultRevisionId !== "string" ||
+      typeof value.itemCode !== "string" ||
+      !["PASS", "FAIL", "NA"].includes(value.decision as string) ||
+      !Array.isArray(value.issueIds) ||
+      value.issueIds.some((id) => typeof id !== "string")
+    ) {
+      return null;
+    }
+    return {
+      resultRevisionId: value.resultRevisionId,
+      itemCode: value.itemCode,
+      decision: value.decision as "PASS" | "FAIL" | "NA",
+      issueIds: value.issueIds as string[]
+    };
+  });
+  const issues = source.issues.map((entry) => {
+    const value = record(entry);
+    if (
+      !value ||
+      typeof value.issueId !== "string" ||
+      !["SAFETY", "FUNCTION", "PERFORMANCE", "APPEARANCE", "DELIVERY_COMPLETENESS"].includes(
+        value.category as string
+      ) ||
+      !["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(value.severity as string) ||
+      !["PENDING_ACCEPTANCE", "ANALYZING", "PROCESSING", "PENDING_VERIFICATION", "CLOSED"].includes(
+        value.status as string
+      ) ||
+      (value.ownerMembershipId !== null && typeof value.ownerMembershipId !== "string") ||
+      (value.verifierMembershipId !== null && typeof value.verifierMembershipId !== "string") ||
+      (value.dueDate !== null && typeof value.dueDate !== "string") ||
+      (value.verificationPlan !== null && typeof value.verificationPlan !== "string")
+    ) {
+      return null;
+    }
+    return {
+      issueId: value.issueId,
+      category: value.category as AcceptanceIssueCategory,
+      severity: value.severity as AcceptanceIssueSeverity,
+      status: value.status as AcceptanceIssueStatus,
+      ownerMembershipId: value.ownerMembershipId as string | null,
+      verifierMembershipId: value.verifierMembershipId as string | null,
+      dueDate: value.dueDate as string | null,
+      verificationPlan: value.verificationPlan as string | null
+    };
+  });
+  if (results.some((entry) => entry === null) || issues.some((entry) => entry === null))
+    return null;
+  return {
+    factsAvailable: source.factsAvailable,
+    acceptanceType:
+      source.acceptanceType === "FAT" || source.acceptanceType === "SAT"
+        ? source.acceptanceType
+        : undefined,
+    lockedBatchId: typeof source.lockedBatchId === "string" ? source.lockedBatchId : null,
+    lockedBatchChain:
+      Array.isArray(source.lockedBatchChain) &&
+      source.lockedBatchChain.every((id) => typeof id === "string")
+        ? (source.lockedBatchChain as string[])
+        : undefined,
+    templateVersionId:
+      typeof source.templateVersionId === "string" ? source.templateVersionId : null,
+    templateChecksum: typeof source.templateChecksum === "string" ? source.templateChecksum : null,
+    sourceChecksum: source.sourceChecksum,
+    requiredResultMissing: source.requiredResultMissing,
+    results: results as NonNullable<(typeof results)[number]>[],
+    issues: issues as NonNullable<(typeof issues)[number]>[],
+    retestPassRevisionIds: source.retestPassRevisionIds as string[]
+  };
+}
+
+function acceptanceIssueChecker(acceptanceType: "FAT" | "SAT"): GateChecker {
+  const code = `ACCEPTANCE.${acceptanceType}.ISSUES`;
+  return {
+    code,
+    version: 1,
+    supportedScopes: allGateScopes,
+    evaluate: (input) => {
+      const factsRecord = record(input.facts?.acceptanceIssues);
+      if (!factsRecord || factsRecord.acceptanceType !== acceptanceType) {
+        return {
+          status: "HARD_FAILED",
+          code: "ACCEPTANCE_TYPE_FACT_MISMATCH",
+          message: "冻结的验收类型与 Gate 检查器不匹配。",
+          evidence: { expectedAcceptanceType: acceptanceType } as unknown as JsonValue
+        };
+      }
+      const facts = acceptanceIssueFacts(factsRecord);
+      if (!facts) {
+        return {
+          status: "HARD_FAILED",
+          code: "ACCEPTANCE_FACTS_UNAVAILABLE",
+          message: "未冻结可验证的 FAT/SAT 问题事实。",
+          evidence: { acceptanceType } as unknown as JsonValue
+        };
+      }
+      const result = evaluateAcceptanceIssueGate(facts);
+      return {
+        status: result.status,
+        code: result.code,
+        message: result.message,
+        evidence: {
+          ...(result.evidence.acceptanceType
+            ? { acceptanceType: result.evidence.acceptanceType }
+            : {}),
+          ...(result.evidence.lockedBatchId !== undefined
+            ? { lockedBatchId: result.evidence.lockedBatchId }
+            : {}),
+          ...(result.evidence.lockedBatchChain
+            ? { lockedBatchChain: [...result.evidence.lockedBatchChain] }
+            : {}),
+          ...(result.evidence.templateVersionId !== undefined
+            ? { templateVersionId: result.evidence.templateVersionId }
+            : {}),
+          ...(result.evidence.templateChecksum !== undefined
+            ? { templateChecksum: result.evidence.templateChecksum }
+            : {}),
+          sourceChecksum: result.evidence.sourceChecksum,
+          resultRevisionIds: [...result.evidence.resultRevisionIds],
+          issueIds: [...result.evidence.issueIds],
+          warnings: [...result.evidence.warnings],
+          retestPassRevisionIds: [...result.evidence.retestPassRevisionIds],
+          failureLinks: result.evidence.failureLinks.map((link) => ({
+            resultRevisionId: link.resultRevisionId,
+            issueIds: [...link.issueIds]
+          })),
+          issueFacts: result.evidence.issueFacts.map((issue) => ({ ...issue }))
+        } as JsonValue
+      };
+    }
+  };
+}
+
+const fatAcceptanceIssueChecker = acceptanceIssueChecker("FAT");
+const satAcceptanceIssueChecker = acceptanceIssueChecker("SAT");
+
 function registryKey(code: string, version: number) {
   return `${code}@${version}`;
 }
 
 export const GATE_CHECKER_REGISTRY: ReadonlyMap<string, GateChecker> = new Map(
-  [stageAwaitingGateChecker, documentsCompleteChecker, procurementReadinessChecker].map(
-    (checker) => [registryKey(checker.code, checker.version), checker]
-  )
+  [
+    stageAwaitingGateChecker,
+    documentsCompleteChecker,
+    procurementReadinessChecker,
+    fatAcceptanceIssueChecker,
+    satAcceptanceIssueChecker
+  ].map((checker) => [registryKey(checker.code, checker.version), checker])
 );
 
 export function resolveGateChecker(code: string, version = 1): GateChecker | undefined {

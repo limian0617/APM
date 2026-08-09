@@ -8,7 +8,7 @@ describe("APM-031 Gate checker registry", () => {
       code: "STAGE.AWAITING_GATE",
       version: 1
     });
-    expect(GATE_CHECKER_REGISTRY.size).toBe(3);
+    expect(GATE_CHECKER_REGISTRY.size).toBe(5);
     expect(resolveGateChecker("STAGE.AWAITING_GATE", 2)).toBeUndefined();
   });
 
@@ -221,5 +221,34 @@ describe("APM-031 Gate checker registry", () => {
       status: "HARD_FAILED",
       code: "PROCUREMENT_READINESS_GAP_HARD_FAILED"
     });
+  });
+
+  it("registers separate versioned FAT and SAT acceptance issue checkers", () => {
+    const fat = resolveGateChecker("ACCEPTANCE.FAT.ISSUES", 1);
+    const sat = resolveGateChecker("ACCEPTANCE.SAT.ISSUES", 1);
+    expect(fat).toMatchObject({ code: "ACCEPTANCE.FAT.ISSUES", version: 1 });
+    expect(sat).toMatchObject({ code: "ACCEPTANCE.SAT.ISSUES", version: 1 });
+    expect(
+      fat?.evaluate({
+        projectId: "project-1",
+        gateCode: "G6",
+        stageCode: "S6",
+        scope: "PROJECT",
+        stageStatus: "AWAITING_GATE",
+        facts: {
+          acceptanceIssues: {
+            acceptanceType: "FAT",
+            factsAvailable: true,
+            sourceChecksum: "sha256:facts",
+            requiredResultMissing: false,
+            results: [
+              { resultRevisionId: "r-1", itemCode: "POWER", decision: "FAIL", issueIds: [] }
+            ],
+            issues: [],
+            retestPassRevisionIds: []
+          }
+        }
+      })
+    ).toMatchObject({ status: "HARD_FAILED", code: "ACCEPTANCE_FAIL_ISSUE_UNLINKED" });
   });
 });

@@ -314,6 +314,184 @@ function needsProcurementFacts(bindings: readonly FrozenGateCheckerBinding[]) {
   );
 }
 
+function acceptanceIssueBinding(bindings: readonly FrozenGateCheckerBinding[]) {
+  const binding = bindings.find(
+    (candidate) =>
+      candidate.version === 1 &&
+      (candidate.code === "ACCEPTANCE.FAT.ISSUES" || candidate.code === "ACCEPTANCE.SAT.ISSUES")
+  );
+  if (!binding) return null;
+  return binding.code === "ACCEPTANCE.FAT.ISSUES" ? ("FAT" as const) : ("SAT" as const);
+}
+
+async function freezeAcceptanceIssueCheckerFacts(input: {
+  client: Prisma.TransactionClient;
+  projectId: string;
+  scope: GateScopeTarget;
+  acceptanceType: "FAT" | "SAT";
+}): Promise<Readonly<Record<string, JsonValue>>> {
+  const scopeType =
+    input.scope.scope === "PROJECT"
+      ? "PROJECT"
+      : input.scope.scope === "DELIVERY_UNIT"
+        ? "DELIVERY_UNIT"
+        : null;
+  const scopeId =
+    input.scope.scope === "PROJECT"
+      ? input.projectId
+      : input.scope.scope === "DELIVERY_UNIT"
+        ? input.scope.deliveryUnitId
+        : null;
+  if (!scopeType || !scopeId) {
+    return {
+      acceptanceIssues: {
+        acceptanceType: input.acceptanceType,
+        factsAvailable: false,
+        sourceChecksum: "unavailable",
+        requiredResultMissing: false,
+        results: [],
+        issues: [],
+        retestPassRevisionIds: []
+      } as unknown as JsonValue
+    };
+  }
+  const batches = await input.client.acceptanceBatch.findMany({
+    where: {
+      projectId: input.projectId,
+      acceptanceType: input.acceptanceType,
+      scopeType,
+      scopeId,
+      status: "LOCKED"
+    },
+    orderBy: [{ lockedAt: "desc" }, { id: "desc" }],
+    include: {
+      templateVersion: { include: { items: { orderBy: { position: "asc" } } } },
+      results: {
+        include: { revisions: { orderBy: { revisionNo: "desc" }, take: 1 } }
+      }
+    }
+  });
+  const latest = batches[0];
+  if (!latest) {
+    return {
+      acceptanceIssues: {
+        acceptanceType: input.acceptanceType,
+        factsAvailable: false,
+        sourceChecksum: payloadHash({ projectId: input.projectId, scopeType, scopeId }).hash,
+        requiredResultMissing: false,
+        results: [],
+        issues: [],
+        retestPassRevisionIds: []
+      } as unknown as JsonValue
+    };
+  }
+  const byId = new Map(batches.map((batch) => [batch.id, batch]));
+  const chain: string[] = [];
+  let cursor: typeof latest | undefined = latest;
+  while (cursor) {
+    chain.push(cursor.id);
+    cursor = cursor.retestOfBatchId ? byId.get(cursor.retestOfBatchId) : undefined;
+  }
+  const latestByItem = new Map(
+    latest.results.map((result) => [result.itemId, result.revisions[0] ?? null])
+  );
+  const requiredResultMissing = latest.templateVersion.items.some(
+    (item) => item.required && !latestByItem.get(item.id)
+  );
+  const revisionIds = latest.templateVersion.items
+    .map((item) => latestByItem.get(item.id)?.id)
+    .filter((id): id is string => Boolean(id));
+  const relations =
+    revisionIds.length === 0
+      ? []
+      : await input.client.issueRelation.findMany({
+          where: {
+            projectId: input.projectId,
+            relationType: "TEST_RESULT",
+            status: "ACTIVE",
+            targetId: { in: revisionIds }
+          },
+          select: { targetId: true, issueId: true }
+        });
+  const issueIds = [...new Set(relations.map((relation) => relation.issueId))];
+  const issueRows =
+    issueIds.length === 0
+      ? []
+      : await input.client.issue.findMany({
+          where: { projectId: input.projectId, id: { in: issueIds } },
+          select: {
+            id: true,
+            category: true,
+            severity: true,
+            status: true,
+            ownerMembershipId: true,
+            verifierMembershipId: true,
+            dueDate: true
+          }
+        });
+  const issueById = new Map(issueRows.map((issue) => [issue.id, issue]));
+  const issueLinks = new Map<string, string[]>();
+  for (const relation of relations) {
+    const ids = issueLinks.get(relation.targetId) ?? [];
+    ids.push(relation.issueId);
+    issueLinks.set(relation.targetId, ids);
+  }
+  const retestPassRevisionIds = latest.retestOfBatchId
+    ? latest.templateVersion.items
+        .map((item) => {
+          const current = latestByItem.get(item.id);
+          return current?.decision === "PASS" ? current.id : null;
+        })
+        .filter((id): id is string => Boolean(id))
+    : [];
+  const results = latest.templateVersion.items.map((item) => {
+    const revision = latestByItem.get(item.id);
+    return {
+      resultRevisionId: revision?.id ?? `missing:${latest.id}:${item.id}`,
+      itemCode: item.code,
+      decision: revision?.decision ?? null,
+      issueIds: [...(revision ? (issueLinks.get(revision.id) ?? []) : [])].sort()
+    };
+  });
+  const issues = issueRows.map((issue) => ({
+    issueId: issue.id,
+    category: issue.category,
+    severity: issue.severity,
+    status: issue.status,
+    ownerMembershipId: issue.ownerMembershipId,
+    verifierMembershipId: issue.verifierMembershipId,
+    dueDate: issue.dueDate?.toISOString().slice(0, 10) ?? null,
+    verificationPlan: issue.verifierMembershipId ? "ASSIGNED_VERIFIER" : null
+  }));
+  const sourceChecksum = payloadHash({
+    projectId: input.projectId,
+    acceptanceType: input.acceptanceType,
+    scopeType,
+    scopeId,
+    lockedBatchChain: chain,
+    templateVersionId: latest.templateVersionId,
+    templateChecksum: latest.templateVersion.snapshotChecksum,
+    results,
+    issues,
+    requiredResultMissing
+  }).hash;
+  return {
+    acceptanceIssues: {
+      acceptanceType: input.acceptanceType,
+      factsAvailable: true,
+      sourceChecksum,
+      requiredResultMissing,
+      lockedBatchId: latest.id,
+      lockedBatchChain: chain,
+      templateVersionId: latest.templateVersionId,
+      templateChecksum: latest.templateVersion.snapshotChecksum,
+      results,
+      issues,
+      retestPassRevisionIds
+    } as unknown as JsonValue
+  };
+}
+
 async function freezeProcurementCheckerFacts(input: {
   projectId: string;
   scope: GateScopeTarget;
@@ -656,17 +834,28 @@ export async function runGateChecks(
       const checkerBindings = parseFrozenCheckerBindings(
         instance.gateDefinition.checkerBindingsJson
       );
-      const checkerFacts = needsProcurementFacts(checkerBindings)
-        ? await freezeProcurementCheckerFacts({
-            projectId: input.projectId,
-            scope: {
-              scope: instance.scope as GateScopeCode,
-              deliveryUnitId: instance.deliveryUnitId,
-              moduleId: instance.moduleId
-            },
-            gateThreshold: frozenGateThreshold(instance.gateDefinition.definitionJson)
-          })
-        : {};
+      const checkerScope = {
+        scope: instance.scope as GateScopeCode,
+        deliveryUnitId: instance.deliveryUnitId,
+        moduleId: instance.moduleId
+      };
+      const checkerFacts = {
+        ...(needsProcurementFacts(checkerBindings)
+          ? await freezeProcurementCheckerFacts({
+              projectId: input.projectId,
+              scope: checkerScope,
+              gateThreshold: frozenGateThreshold(instance.gateDefinition.definitionJson)
+            })
+          : {}),
+        ...(acceptanceIssueBinding(checkerBindings)
+          ? await freezeAcceptanceIssueCheckerFacts({
+              client,
+              projectId: input.projectId,
+              scope: checkerScope,
+              acceptanceType: acceptanceIssueBinding(checkerBindings)!
+            })
+          : {})
+      };
       const run = buildGateCheckRun({
         projectId: input.projectId,
         instanceId: instance.id,
@@ -676,11 +865,7 @@ export async function runGateChecks(
           projectStageId: instance.gateDefinition.projectStageId,
           definitionJson: instance.gateDefinition.definitionJson
         },
-        scope: {
-          scope: instance.scope as GateScopeCode,
-          deliveryUnitId: instance.deliveryUnitId,
-          moduleId: instance.moduleId
-        },
+        scope: checkerScope,
         stage: { code: instance.projectStage.code, status: stageStatus },
         checkerBindings,
         checkerFacts,

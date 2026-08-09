@@ -37,9 +37,21 @@ async function readBatch(request: Request, context: RouteContext) {
       PERMISSIONS.ACCEPTANCE_REVIEW,
       context
     ).allowed;
+    const canCreateFailureIssue = decideAuthorization(
+      guard.actor,
+      PERMISSIONS.PROJECT_ISSUE_CREATE,
+      context
+    ).allowed;
+    const canLinkFailureIssue = decideAuthorization(
+      guard.actor,
+      PERMISSIONS.PROJECT_ISSUE_UPDATE,
+      context
+    ).allowed;
     const allowedActions = [
       ...(canReview ? ["CREATE_BATCH", "LOCK_BATCH"] : []),
-      ...(canResult ? ["START_BATCH", "RECORD_RESULT", "REVISE_RESULT"] : [])
+      ...(canResult ? ["START_BATCH", "RECORD_RESULT", "REVISE_RESULT"] : []),
+      ...(canCreateFailureIssue ? ["CREATE_FAILURE_ISSUE"] : []),
+      ...(canLinkFailureIssue ? ["LINK_FAILURE_ISSUE"] : [])
     ];
     return Response.json(await getAcceptanceBatch(path.projectId, path.batchId, allowedActions));
   } catch (error) {

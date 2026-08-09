@@ -260,6 +260,21 @@ export function assertRequiredEvidencePresent(
   }
 }
 
+export function assertFailureIssueLinksPresent(
+  items: ReadonlyArray<{
+    decision: AcceptanceDecision | null;
+    hasActiveIssueRelation: boolean;
+  }>
+): void {
+  if (items.some((item) => item.decision === "FAIL" && !item.hasActiveIssueRelation)) {
+    throw new AcceptancePolicyError(
+      "ACCEPTANCE_FAILURE_ISSUE_REQUIRED",
+      "失败测试项尚未关联有效统一问题，验收批次不能锁定。",
+      409
+    );
+  }
+}
+
 export const assertResultMutable = assertBatchMutable;
 
 export type AcceptanceSummary = Readonly<{

@@ -60,10 +60,37 @@ function dateTime(value: string | null) {
   return value ? value.slice(0, 16).replace("T", " ") : "尚无时间";
 }
 
+export function acceptanceCommandErrorMessage(
+  status: number,
+  payload: { error?: { code?: string; message?: string } } | null
+) {
+  const code = payload?.error?.code;
+  if (status === 409 && code === "ACCEPTANCE_FAILURE_ISSUE_REQUIRED") {
+    return "锁定前必须为所有 FAIL 结果关联统一问题。";
+  }
+  if (status === 409 && code === "ISSUE_RELATION_EXISTS") {
+    return "该问题与失败结果已经关联，可刷新查看最新关系。";
+  }
+  if (status === 409) return "验收数据已被其他成员更新，请刷新后重试。";
+  return payload?.error?.message ?? "验收命令未完成。";
+}
+
 function percentage(value: unknown) {
   return typeof value === "number" && Number.isFinite(value)
     ? `${(value * 100).toFixed(1)}%`
     : "不可计算";
+}
+
+function issueStatusLabel(value: unknown) {
+  if (value === "CLOSED") return "已关闭，待复测";
+  if (value === "VERIFICATION_PENDING") return "验证中，待复测";
+  if (value === "PENDING_ACCEPTANCE") return "待确认";
+  return "未关闭，待复测";
+}
+
+function issueHref(projectId: string, issueId: unknown) {
+  if (typeof issueId !== "string" || !issueId.trim()) return null;
+  return `/projects/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(issueId)}`;
 }
 
 function belongsToProject(batch: Record<string, unknown>, projectId: string) {
@@ -284,6 +311,164 @@ function ResultRevisionForm({
   );
 }
 
+function FailureIssueActions({
+  projectId,
+  batchId,
+  revisionId,
+  issueLinks,
+  canCreate,
+  canLink,
+  onCommand
+}: {
+  projectId: string;
+  batchId: string;
+  revisionId: string;
+  issueLinks: readonly Record<string, unknown>[];
+  canCreate: boolean;
+  canLink: boolean;
+  onCommand: (path: string, body: Record<string, unknown>) => Promise<void>;
+}) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [showLink, setShowLink] = useState(false);
+  const [title, setTitle] = useState("");
+  const [confirmedText, setConfirmedText] = useState("");
+  const [category, setCategory] = useState("FUNCTION");
+  const [severity, setSeverity] = useState("MEDIUM");
+  const [issueId, setIssueId] = useState("");
+  const [issueVersion, setIssueVersion] = useState("1");
+  const [reason, setReason] = useState("");
+  const createPath = `/api/projects/${encodeURIComponent(projectId)}/acceptance/batches/${encodeURIComponent(batchId)}/results/${encodeURIComponent(revisionId)}/issues`;
+  const linkPath = `${createPath}/link`;
+  return (
+    <div className="acceptance-failure-issues" aria-label="失败结果关联问题">
+      <div className="acceptance-issue-list">
+        {issueLinks.length === 0 ? (
+          <span className="acceptance-issue-unlinked">未关联统一问题</span>
+        ) : (
+          issueLinks.map((link, index) => {
+            const issue = isRecord(link.issue) ? link.issue : {};
+            const href = issueHref(projectId, issue.id);
+            return (
+              <div
+                className="acceptance-issue-summary"
+                key={text(link.relationId, `issue-link-${index}`)}
+              >
+                {href ? <a href={href}>#{text(issue.id)}</a> : <strong>问题</strong>}
+                <span>{text(issue.title)}</span>
+                <span>
+                  {text(issue.category)} · {text(issue.severity)}
+                </span>
+                <span>{issueStatusLabel(issue.status)}</span>
+                <span>Owner：{text(issue.ownerMembershipId)}</span>
+                <span>截止：{text(issue.dueDate)}</span>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div className="acceptance-issue-actions">
+        {canCreate ? (
+          <button
+            className="acceptance-command"
+            type="button"
+            onClick={() => setShowCreate((value) => !value)}
+          >
+            创建问题
+          </button>
+        ) : null}
+        {canLink ? (
+          <button
+            className="acceptance-command"
+            type="button"
+            onClick={() => setShowLink((value) => !value)}
+          >
+            关联已有问题
+          </button>
+        ) : null}
+      </div>
+      {showCreate && canCreate ? (
+        <form
+          className="acceptance-issue-form"
+          aria-label="从失败结果创建问题"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onCommand(createPath, { title, confirmedText, category, severity });
+            setShowCreate(false);
+          }}
+        >
+          <label>
+            标题
+            <input required value={title} onChange={(event) => setTitle(event.target.value)} />
+          </label>
+          <label>
+            问题描述
+            <textarea
+              required
+              value={confirmedText}
+              onChange={(event) => setConfirmedText(event.target.value)}
+            />
+          </label>
+          <label>
+            分类
+            <select value={category} onChange={(event) => setCategory(event.target.value)}>
+              <option value="SAFETY">SAFETY</option>
+              <option value="FUNCTION">FUNCTION</option>
+              <option value="PERFORMANCE">PERFORMANCE</option>
+              <option value="APPEARANCE">APPEARANCE</option>
+              <option value="DELIVERY_COMPLETENESS">DELIVERY_COMPLETENESS</option>
+            </select>
+          </label>
+          <label>
+            严重度
+            <select value={severity} onChange={(event) => setSeverity(event.target.value)}>
+              <option value="LOW">LOW</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="HIGH">HIGH</option>
+              <option value="CRITICAL">CRITICAL</option>
+            </select>
+          </label>
+          <button className="acceptance-command" type="submit">
+            确认创建
+          </button>
+        </form>
+      ) : null}
+      {showLink && canLink ? (
+        <form
+          className="acceptance-issue-form"
+          aria-label="关联已有问题"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onCommand(linkPath, { issueId, issueVersion: Number(issueVersion), reason });
+            setShowLink(false);
+          }}
+        >
+          <label>
+            问题ID
+            <input required value={issueId} onChange={(event) => setIssueId(event.target.value)} />
+          </label>
+          <label>
+            问题版本
+            <input
+              required
+              type="number"
+              min="1"
+              value={issueVersion}
+              onChange={(event) => setIssueVersion(event.target.value)}
+            />
+          </label>
+          <label>
+            关联原因
+            <input required value={reason} onChange={(event) => setReason(event.target.value)} />
+          </label>
+          <button className="acceptance-command" type="submit">
+            确认关联
+          </button>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
 function BatchDetail({
   projectId,
   state,
@@ -310,6 +495,10 @@ function BatchDetail({
     ? detail.allowedActions.filter((action): action is string => typeof action === "string")
     : [];
   const commands = acceptanceCommandsForBatch({ status: batch.status, allowedActions });
+  const canCreateFailureIssue = allowedActions.includes("CREATE_FAILURE_ISSUE");
+  const canLinkFailureIssue = allowedActions.includes("LINK_FAILURE_ISSUE");
+  const unlinkedFailureCount =
+    typeof summary.unlinkedFailureCount === "number" ? summary.unlinkedFailureCount : 0;
   const batchId = typeof batch.id === "string" ? batch.id : null;
   const version = typeof batch.version === "number" ? batch.version : null;
   return (
@@ -320,6 +509,11 @@ function BatchDetail({
           通过率 {percentage(summary.passRate)} · {text(summary.outcome)}
         </span>
       </div>
+      {unlinkedFailureCount > 0 ? (
+        <p className="acceptance-command-error" role="status">
+          存在 {unlinkedFailureCount} 个未关联统一问题的 FAIL 项；锁定前必须关联问题。
+        </p>
+      ) : null}
       {batchId && version !== null && commands.includes("START_BATCH") ? (
         <button
           className="acceptance-command"
@@ -367,6 +561,10 @@ function BatchDetail({
                 const revisions = result ? list(result.revisions) : [];
                 const current = revisions[0] ?? null;
                 const itemId = typeof item.id === "string" ? item.id : null;
+                const issueLinks =
+                  current && Array.isArray(current.issueLinks)
+                    ? current.issueLinks.filter(isRecord)
+                    : [];
                 return (
                   <tr key={text(item.id, `item-${index}`)}>
                     <th scope="row">
@@ -382,6 +580,17 @@ function BatchDetail({
                       {current
                         ? `${text(current.measuredValue, "未提供")}${current.measuredUnit ? ` ${text(current.measuredUnit)}` : ""}`
                         : "—"}
+                      {current?.decision === "FAIL" && typeof current.id === "string" && batchId ? (
+                        <FailureIssueActions
+                          projectId={projectId}
+                          batchId={batchId}
+                          revisionId={current.id}
+                          issueLinks={issueLinks}
+                          canCreate={canCreateFailureIssue}
+                          canLink={canLinkFailureIssue}
+                          onCommand={onCommand}
+                        />
+                      ) : null}
                       {batchId &&
                       version !== null &&
                       itemId &&
@@ -655,27 +864,27 @@ export function AcceptancePageClient({ projectId, initialState }: AcceptancePage
   const runCommand = useCallback(
     async (path: string, body: Record<string, unknown>) => {
       setCommandError(null);
-      const response = await fetch(path, {
-        method: "POST",
-        cache: "no-store",
-        headers: {
-          "content-type": "application/json",
-          "idempotency-key": crypto.randomUUID()
-        },
-        body: JSON.stringify(body)
-      });
-      const payload = (await response.json().catch(() => null)) as {
-        error?: { code?: string; message?: string };
-      } | null;
-      if (!response.ok) {
-        setCommandError(
-          response.status === 409
-            ? "验收数据已被其他成员更新，请刷新后重试。"
-            : (payload?.error?.message ?? "验收命令未完成。")
-        );
-        return;
+      try {
+        const response = await fetch(path, {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": crypto.randomUUID()
+          },
+          body: JSON.stringify(body)
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          error?: { code?: string; message?: string };
+        } | null;
+        if (!response.ok) {
+          setCommandError(acceptanceCommandErrorMessage(response.status, payload));
+          return;
+        }
+        await reload();
+      } catch {
+        setCommandError("验收命令暂时无法连接服务，请稍后重试。");
       }
-      await reload();
     },
     [reload]
   );
