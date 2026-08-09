@@ -900,7 +900,6 @@ export async function recordAcceptanceConfirmation(
         confirmationChecksum,
         evidence: {
           create: files.map((file) => ({
-            projectId: input.projectId,
             fileObjectId: file.id,
             fileSha256: file.sha256!,
             createdById: input.actorId

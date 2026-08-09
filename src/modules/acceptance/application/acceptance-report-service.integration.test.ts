@@ -341,6 +341,16 @@ describeDatabase("APM-102 controlled acceptance reports", () => {
     const confirmation = await recordAcceptanceConfirmation(command);
     expect(confirmation.confirmation).toMatchObject({ reportId: report.id, decision: "ACCEPTED" });
     await expect(
+      db.acceptanceConfirmationEvidence.findFirstOrThrow({
+        where: { confirmationId: confirmation.confirmation.id, fileObjectId: evidence.id }
+      })
+    ).resolves.toMatchObject({
+      projectId,
+      confirmationId: confirmation.confirmation.id,
+      fileObjectId: evidence.id,
+      fileSha256: evidence.sha256
+    });
+    await expect(
       db.acceptanceConfirmation.update({
         where: { id: confirmation.confirmation.id },
         data: { status: "SUPERSEDED", comment: "不能篡改不可变确认事实" }
