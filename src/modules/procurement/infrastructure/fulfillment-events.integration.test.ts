@@ -25,6 +25,7 @@ const projectId = `event-project-${suffix}`;
 let eventId = "";
 let requirementId = "";
 let requirementRevisionId = "";
+let capabilitySnapshotComponentId = "";
 
 function context(operationId: string): AuditContext {
   return {
@@ -51,13 +52,14 @@ describeDatabase("APM-091A PostgreSQL fulfillment event immutability", () => {
         departmentId: "engineering"
       }
     });
-    await createReadyProcurementProject({
+    const fixture = await createReadyProcurementProject({
       id: projectId,
       code: `EVENT-${suffix}`.toUpperCase(),
       name: "履约事件测试项目",
       departmentId: "engineering",
       createdById: actorId
     });
+    capabilitySnapshotComponentId = fixture.capabilitySnapshotComponentId;
     await db.companyCapability.update({
       where: { code: "PROCUREMENT_COLLABORATION" },
       data: { enabled: true }
@@ -69,6 +71,7 @@ describeDatabase("APM-091A PostgreSQL fulfillment event immutability", () => {
         templateAllowed: true,
         templateRequired: false,
         selectedEnabled: true,
+        sourceSnapshotComponentId: capabilitySnapshotComponentId,
         createdById: actorId,
         updatedById: actorId
       }

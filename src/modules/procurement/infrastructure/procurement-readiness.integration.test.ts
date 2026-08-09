@@ -36,6 +36,7 @@ const projectId = `readiness-project-${suffix}`;
 let requirementId = "";
 let requirementRevisionId = "";
 let trackingLineId = "";
+let capabilitySnapshotComponentId = "";
 
 function context(operationId: string): AuditContext {
   return {
@@ -98,13 +99,14 @@ describeDatabase("APM-091B PostgreSQL readiness publication", () => {
         departmentId: "engineering"
       }
     });
-    await createReadyProcurementProject({
+    const fixture = await createReadyProcurementProject({
       id: projectId,
       code: `READINESS-${suffix}`.toUpperCase(),
       name: "齐套计算测试项目",
       departmentId: "engineering",
       createdById: actorId
     });
+    capabilitySnapshotComponentId = fixture.capabilitySnapshotComponentId;
     await db.companyCapability.update({
       where: { code: "PROCUREMENT_COLLABORATION" },
       data: { enabled: true }
@@ -116,6 +118,7 @@ describeDatabase("APM-091B PostgreSQL readiness publication", () => {
         templateAllowed: true,
         templateRequired: false,
         selectedEnabled: true,
+        sourceSnapshotComponentId: capabilitySnapshotComponentId,
         createdById: actorId,
         updatedById: actorId
       }

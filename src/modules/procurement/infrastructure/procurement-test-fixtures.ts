@@ -23,6 +23,7 @@ export async function createReadyProcurementProject(input: ReadyProcurementProje
   const capabilityComponentId = `${templateId}-capability-rule`;
   const capabilityComponentVersionId = `${capabilityComponentId}-v1`;
   const capabilitySnapshotId = `${templateId}-capability-snapshot`;
+  const capabilitySnapshotComponentId = `${capabilitySnapshotId}-component`;
   const capabilityRule = { capabilities: [] };
   const publishedAt = new Date();
 
@@ -111,6 +112,7 @@ export async function createReadyProcurementProject(input: ReadyProcurementProje
       templatePublishedAt: publishedAt,
       components: {
         create: {
+          id: capabilitySnapshotComponentId,
           sourceComponentVersionId: capabilityComponentVersionId,
           componentType: "CAPABILITY_RULE",
           slot: "CAPABILITY_RULE.0",
@@ -124,11 +126,12 @@ export async function createReadyProcurementProject(input: ReadyProcurementProje
       }
     }
   });
-  return db.project.update({
+  const readyProject = await db.project.update({
     where: { id: project.id },
     data: {
       capabilityConfigurationStatus: "READY",
       capabilitiesConfiguredAt: publishedAt
     }
   });
+  return { project: readyProject, capabilitySnapshotComponentId };
 }

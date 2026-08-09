@@ -20,6 +20,7 @@ const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe
 const suffix = randomUUID().slice(0, 8);
 const actorId = `tracking-admin-${suffix}`;
 const projectId = `tracking-project-${suffix}`;
+let capabilitySnapshotComponentId = "";
 
 function context(operationId: string): AuditContext {
   return {
@@ -49,13 +50,14 @@ describeDatabase("APM-090B PostgreSQL procurement tracking", () => {
         departmentId: "engineering"
       }
     });
-    await createReadyProcurementProject({
+    const fixture = await createReadyProcurementProject({
       id: projectId,
       code: `TRACK-${suffix}`.toUpperCase(),
       name: "采购跟踪测试项目",
       departmentId: "engineering",
       createdById: actorId
     });
+    capabilitySnapshotComponentId = fixture.capabilitySnapshotComponentId;
     await db.companyCapability.update({
       where: { code: "PROCUREMENT_COLLABORATION" },
       data: { enabled: true }
@@ -67,6 +69,7 @@ describeDatabase("APM-090B PostgreSQL procurement tracking", () => {
         templateAllowed: true,
         templateRequired: false,
         selectedEnabled: true,
+        sourceSnapshotComponentId: capabilitySnapshotComponentId,
         createdById: actorId,
         updatedById: actorId
       }
