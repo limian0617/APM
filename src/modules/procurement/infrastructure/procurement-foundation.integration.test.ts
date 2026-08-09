@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
+  cancelMaterialRequirement,
   confirmMaterialRequirement,
   createMaterialReference,
   createMaterialRequirementDraft,
@@ -23,7 +24,7 @@ function context(operationId: string): AuditContext {
   return {
     actorId,
     requestId: `request-${operationId}`,
-    traceId: `trace-${operationId}`,
+    traceId: "a".repeat(32),
     source: "API",
     sourceIp: null,
     userAgent: "Vitest",
@@ -140,6 +141,53 @@ describeDatabase("APM-090A PostgreSQL procurement foundation", () => {
     await expect(
       db.outboxEvent.count({ where: { aggregateType: "PROJECT_MATERIAL_REQUIREMENT" } })
     ).resolves.toBeGreaterThanOrEqual(3);
+  });
+
+  it("records a cancellation reason without making other revision fields mutable", async () => {
+    const material = await createMaterialReference({
+      projectId,
+      source: "LOCAL",
+      code: `CANCEL-MAT-${suffix}`,
+      name: "取消原因测试物料",
+      trackingUnit: "PCS",
+      actorId,
+      auditContext: context("cancel-material")
+    });
+    const draft = await createMaterialRequirementDraft({
+      projectId,
+      materialReferenceId: material.materialReference.id,
+      quantity: "1",
+      trackingUnit: "PCS",
+      requiredOn: "2026-09-05",
+      isCritical: false,
+      businessType: "STANDARD_PURCHASE",
+      source: "MANUAL",
+      actorId,
+      auditContext: context("cancel-draft")
+    });
+    const confirmed = await confirmMaterialRequirement({
+      projectId,
+      requirementId: draft.requirement.id,
+      version: draft.resourceVersion,
+      reason: "确认取消原因测试需求",
+      actorId,
+      auditContext: context("cancel-confirm")
+    });
+
+    const canceled = await cancelMaterialRequirement({
+      projectId,
+      requirementId: confirmed.requirement.id,
+      version: confirmed.resourceVersion,
+      reason: "采购负责人确认取消",
+      actorId,
+      auditContext: context("cancel")
+    });
+
+    expect(canceled.requirement.status).toBe("CANCELED");
+    expect(canceled.requirement.currentRevision).toMatchObject({
+      status: "CANCELED",
+      reason: "采购负责人确认取消"
+    });
   });
 
   it("rejects a project requirement when the capability is effectively disabled", async () => {

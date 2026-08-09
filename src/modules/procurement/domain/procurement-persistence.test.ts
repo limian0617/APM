@@ -35,6 +35,10 @@ const changeImpactMigrationPath = resolve(
   process.cwd(),
   "prisma/migrations/20260807040200_apm_091b_procurement_change_impacts/migration.sql"
 );
+const cancellationReasonMigrationPath = resolve(
+  process.cwd(),
+  "prisma/migrations/20260809010000_apm_091b_cancel_reason_fix/migration.sql"
+);
 
 describe("APM-090A procurement persistence", () => {
   it("commits the new capability enum before inserting its seed row", () => {
@@ -118,6 +122,22 @@ describe("APM-090A procurement persistence", () => {
     expect(migration).toContain('UNIQUE ("source_system", "object_type")');
     expect(migration).toContain('CHECK ("ordered_quantity" > 0)');
     expect(migration).toContain("ON DELETE RESTRICT");
+  });
+
+  it("allows only a cancellation transition to append its cancellation reason", () => {
+    const migration = existsSync(cancellationReasonMigrationPath)
+      ? readFileSync(cancellationReasonMigrationPath, "utf8")
+      : "";
+
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION enforce_project_material_requirement_revision()"
+    );
+    expect(migration).toMatch(
+      /OLD\."reason" IS DISTINCT FROM NEW\."reason"[\s\S]*NOT \(OLD\."status" IN \('DRAFT', 'CONFIRMED'\) AND NEW\."status" = 'CANCELED'\)/u
+    );
+    expect(migration).toContain(
+      "superseded or canceled material requirement revisions are immutable"
+    );
   });
 
   it("declares immutable fulfillment events and their source identity", () => {

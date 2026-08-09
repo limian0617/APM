@@ -26,7 +26,7 @@ function context(operationId: string): AuditContext {
   return {
     actorId,
     requestId: `request-${operationId}`,
-    traceId: `trace-${operationId}`,
+    traceId: "a".repeat(32),
     source: "API",
     sourceIp: null,
     userAgent: "Vitest",

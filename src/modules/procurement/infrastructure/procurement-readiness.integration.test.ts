@@ -238,6 +238,18 @@ describeDatabase("APM-091B PostgreSQL readiness publication", () => {
       projectId,
       requirementId,
       requirementRevisionId,
+      eventType: "PURCHASE_ARRIVED",
+      quantity: "2",
+      trackingUnit: "PCS",
+      businessOccurredAt: "2026-08-06T23:00:00.000Z",
+      reason: "齐套测试到货",
+      actorId,
+      auditContext: context("arrival-before-accepted")
+    });
+    await appendProcurementFulfillmentEvent({
+      projectId,
+      requirementId,
+      requirementRevisionId,
       eventType: "ACCEPTED",
       quantity: "2",
       trackingUnit: "PCS",
