@@ -192,9 +192,9 @@ describeDatabase("APM-091A PostgreSQL fulfillment event immutability", () => {
     expect(arrival.events).toHaveLength(2);
     expect(arrival.events[1]).toMatchObject({
       eventType: "MARKED_USABLE",
-      quantity: "1",
       derivedFromEventId: arrival.events[0]!.id
     });
+    expect(arrival.events[1]!.quantity.toString()).toBe("1");
     expect(arrival.auditIds).toHaveLength(2);
     expect(arrival.outboxEventIds).toHaveLength(2);
 
