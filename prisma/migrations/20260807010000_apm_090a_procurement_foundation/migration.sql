@@ -498,10 +498,6 @@ CREATE TRIGGER project_material_requirement_revisions_reject_truncate
   BEFORE TRUNCATE ON "project_material_requirement_revisions"
   FOR EACH STATEMENT EXECUTE FUNCTION reject_procurement_requirement_revision_truncate();
 
-INSERT INTO "company_capabilities" ("code", "enabled", "version", "updated_at") VALUES
-  ('PROCUREMENT_COLLABORATION', false, 1, CURRENT_TIMESTAMP)
-ON CONFLICT ("code") DO NOTHING;
-
 INSERT INTO "permissions" ("id", "code", "description") VALUES
   ('permission-project-procurement-read', 'PROJECT_PROCUREMENT_READ', '读取项目采购与物料协同数据'),
   ('permission-project-procurement-requirement-manage', 'PROJECT_PROCUREMENT_REQUIREMENT_MANAGE', '管理项目物料需求'),

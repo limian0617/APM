@@ -7,6 +7,10 @@ const migrationPath = resolve(
   process.cwd(),
   "prisma/migrations/20260807010000_apm_090a_procurement_foundation/migration.sql"
 );
+const capabilitySeedMigrationPath = resolve(
+  process.cwd(),
+  "prisma/migrations/20260807010100_apm_090a_capability_seed/migration.sql"
+);
 const trackingMigrationPath = resolve(
   process.cwd(),
   "prisma/migrations/20260807020000_apm_090b_procurement_tracking/migration.sql"
@@ -33,6 +37,19 @@ const changeImpactMigrationPath = resolve(
 );
 
 describe("APM-090A procurement persistence", () => {
+  it("commits the new capability enum before inserting its seed row", () => {
+    const foundationMigration = readFileSync(migrationPath, "utf8");
+    const capabilitySeedMigration = existsSync(capabilitySeedMigrationPath)
+      ? readFileSync(capabilitySeedMigrationPath, "utf8")
+      : "";
+
+    expect(foundationMigration).not.toMatch(
+      /INSERT INTO "company_capabilities"[\s\S]*PROCUREMENT_COLLABORATION/u
+    );
+    expect(capabilitySeedMigration).toContain('INSERT INTO "company_capabilities"');
+    expect(capabilitySeedMigration).toContain("'PROCUREMENT_COLLABORATION'");
+  });
+
   it("declares the foundation models and protects immutable requirement revisions", () => {
     const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
     const migration = existsSync(migrationPath) ? readFileSync(migrationPath, "utf8") : "";
