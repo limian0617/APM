@@ -56,6 +56,14 @@ export class AcceptanceReportServiceError extends Error {
   }
 }
 
+/**
+ * FileObject.objectKey is intentionally opaque: project identity belongs to the
+ * database relation and authorization boundary, never to an object-storage key.
+ */
+export function createControlledReportObjectKey(): string {
+  return randomUUID();
+}
+
 function text(value: unknown, field: string, maximum = 2048): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > maximum) {
     throw new AcceptanceReportServiceError(
@@ -439,7 +447,7 @@ export async function generateAcceptanceReport(
           controlledDocumentVersion: { code: documentCode, version: reportVersion }
         });
         const pdfSha256 = sha256Bytes(pdf);
-        objectKey = `acceptance-reports/${input.projectId}/${randomUUID()}.pdf`;
+        objectKey = createControlledReportObjectKey();
         await input.storage.putObject({
           area: STORAGE_AREAS.CONTROLLED,
           objectKey,

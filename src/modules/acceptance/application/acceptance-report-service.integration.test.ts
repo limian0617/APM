@@ -195,6 +195,9 @@ describeDatabase("APM-102 controlled acceptance reports", () => {
     expect(persisted.snapshotChecksum).toMatch(/^[0-9a-f]{64}$/u);
     expect(persisted.pdfSha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(persisted.pdfSha256).toBe(persisted.pdfFile.sha256);
+    expect(persisted.pdfFile.objectKey).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+    );
     expect(persisted.pdfSha256).toBe(persisted.controlledDocumentVersion.sourceFileSha256);
     expect(persisted.controlledDocumentVersion).toMatchObject({
       version: persisted.reportVersion,
@@ -310,7 +313,7 @@ describeDatabase("APM-102 controlled acceptance reports", () => {
         declaredSize: 12n,
         verifiedSize: 12n,
         sha256: createHash("sha256").update("signed evidence").digest("hex"),
-        objectKey: `confirmation-evidence-${randomUUID()}`,
+        objectKey: randomUUID(),
         storageArea: "CONTROLLED",
         status: "AVAILABLE",
         sensitivity: "RESTRICTED",
