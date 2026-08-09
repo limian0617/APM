@@ -12,7 +12,6 @@ const otherProjectId = `acceptance-other-project-${suffix}`;
 const templateId = `acceptance-template-${suffix}`;
 const templateVersionId = `${templateId}-v1`;
 const itemId = `${templateVersionId}-item-1`;
-const deliveryUnitId = `${projectId}-machine-1`;
 const batchId = `${projectId}-batch-1`;
 
 describeDatabase("APM-100 PostgreSQL acceptance constraints", () => {
@@ -31,35 +30,15 @@ describeDatabase("APM-100 PostgreSQL acceptance constraints", () => {
           id: projectId,
           code: `ACC-${suffix}`.toUpperCase(),
           name: "验收测试项目",
-          initializationStatus: "READY",
-          projectType: "CUSTOMER_DELIVERY",
-          equipmentShape: "SINGLE_MACHINE",
-          structureStatus: "READY",
           createdById: actorId
         },
         {
           id: otherProjectId,
           code: `ACC-OTHER-${suffix}`.toUpperCase(),
           name: "其他验收项目",
-          initializationStatus: "READY",
-          projectType: "CUSTOMER_DELIVERY",
-          equipmentShape: "SINGLE_MACHINE",
-          structureStatus: "READY",
           createdById: actorId
         }
       ]
-    });
-    await db.deliveryUnit.create({
-      data: {
-        id: deliveryUnitId,
-        projectId,
-        unitType: "MACHINE",
-        code: "M-1",
-        name: "测试单机",
-        position: 1,
-        createdById: actorId,
-        updatedById: actorId
-      }
     });
     await db.acceptanceTemplate.create({
       data: {
@@ -102,8 +81,8 @@ describeDatabase("APM-100 PostgreSQL acceptance constraints", () => {
           id: batchId,
           projectId,
           acceptanceType: "FAT",
-          scopeType: "MACHINE",
-          scopeId: `${otherProjectId}-missing-machine`,
+          scopeType: "PROJECT",
+          scopeId: otherProjectId,
           templateVersionId,
           createdById: actorId
         }
@@ -117,8 +96,8 @@ describeDatabase("APM-100 PostgreSQL acceptance constraints", () => {
         id: batchId,
         projectId,
         acceptanceType: "FAT",
-        scopeType: "MACHINE",
-        scopeId: deliveryUnitId,
+        scopeType: "PROJECT",
+        scopeId: projectId,
         templateVersionId,
         createdById: actorId
       }
