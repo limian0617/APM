@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -22,7 +22,7 @@ function auditContext(operationId: string): AuditContext {
   return {
     actorId,
     requestId: `acceptance-request-${operationId}`,
-    traceId: `acceptance-trace-${operationId}`,
+    traceId: createHash("sha256").update(operationId).digest("hex").slice(0, 32),
     source: "API",
     sourceIp: "127.0.0.1",
     userAgent: "Vitest",
