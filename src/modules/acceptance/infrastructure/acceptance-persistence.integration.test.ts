@@ -31,7 +31,9 @@ describeDatabase("APM-100 PostgreSQL acceptance constraints", () => {
           id: projectId,
           code: `ACC-${suffix}`.toUpperCase(),
           name: "验收测试项目",
+          initializationStatus: "READY",
           projectType: "CUSTOMER_DELIVERY",
+          equipmentShape: "SINGLE_MACHINE",
           structureStatus: "READY",
           createdById: actorId
         },
@@ -39,7 +41,9 @@ describeDatabase("APM-100 PostgreSQL acceptance constraints", () => {
           id: otherProjectId,
           code: `ACC-OTHER-${suffix}`.toUpperCase(),
           name: "其他验收项目",
+          initializationStatus: "READY",
           projectType: "CUSTOMER_DELIVERY",
+          equipmentShape: "SINGLE_MACHINE",
           structureStatus: "READY",
           createdById: actorId
         }
