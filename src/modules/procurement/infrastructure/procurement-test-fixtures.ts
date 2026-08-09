@@ -18,9 +18,41 @@ export async function createReadyProcurementProject(input: ReadyProcurementProje
   const templateId = `procurement-test-template-${templateKey}`;
   const templateVersionId = `${templateId}-v1`;
   const templateCode = `PROC.TEST.${templateKey}`;
-  const checksum = "a".repeat(64);
+  const templateChecksum = "a".repeat(64);
+  const componentChecksum = "b".repeat(64);
+  const capabilityComponentId = `${templateId}-capability-rule`;
+  const capabilityComponentVersionId = `${capabilityComponentId}-v1`;
+  const capabilitySnapshotId = `${templateId}-capability-snapshot`;
+  const capabilityRule = { capabilities: [] };
   const publishedAt = new Date();
 
+  await db.templateComponent.create({
+    data: {
+      id: capabilityComponentId,
+      code: `PROC.CAPABILITY.${templateKey}`,
+      componentType: "CAPABILITY_RULE",
+      name: `${input.name}采购能力规则`,
+      draftContent: capabilityRule,
+      status: "ACTIVE",
+      currentVersion: 1,
+      createdById: input.createdById,
+      updatedById: input.createdById
+    }
+  });
+  await db.templateComponentVersion.create({
+    data: {
+      id: capabilityComponentVersionId,
+      componentId: capabilityComponentId,
+      version: 1,
+      status: "PUBLISHED",
+      componentType: "CAPABILITY_RULE",
+      name: `${input.name}采购能力规则 v1`,
+      contentJson: capabilityRule,
+      checksum: componentChecksum,
+      publishedById: input.createdById,
+      publishedAt
+    }
+  });
   await db.projectTemplate.create({
     data: {
       id: templateId,
@@ -39,13 +71,21 @@ export async function createReadyProcurementProject(input: ReadyProcurementProje
       version: 1,
       status: "PUBLISHED",
       name: `${input.name}模板 v1`,
-      checksum,
+      checksum: templateChecksum,
       publishedById: input.createdById,
-      publishedAt
+      publishedAt,
+      components: {
+        create: {
+          componentVersionId: capabilityComponentVersionId,
+          componentType: "CAPABILITY_RULE",
+          slot: "CAPABILITY_RULE.0",
+          position: 0
+        }
+      }
     }
   });
 
-  return db.project.create({
+  const project = await db.project.create({
     data: {
       id: input.id,
       code: input.code,
@@ -54,8 +94,39 @@ export async function createReadyProcurementProject(input: ReadyProcurementProje
       createdById: input.createdById,
       initializationStatus: "READY",
       sourceTemplateVersionId: templateVersionId,
-      sourceTemplateChecksum: checksum,
-      initializedAt: publishedAt,
+      sourceTemplateChecksum: templateChecksum,
+      initializedAt: publishedAt
+    }
+  });
+  await db.projectTemplateSnapshot.create({
+    data: {
+      id: capabilitySnapshotId,
+      projectId: project.id,
+      sourceTemplateVersionId: templateVersionId,
+      sourceTemplateChecksum: templateChecksum,
+      snapshotChecksum: "c".repeat(64),
+      templateCode,
+      templateName: `${input.name}模板 v1`,
+      templateVersion: 1,
+      templatePublishedAt: publishedAt,
+      components: {
+        create: {
+          sourceComponentVersionId: capabilityComponentVersionId,
+          componentType: "CAPABILITY_RULE",
+          slot: "CAPABILITY_RULE.0",
+          position: 0,
+          sourceChecksum: componentChecksum,
+          componentCode: `PROC.CAPABILITY.${templateKey}`,
+          componentName: `${input.name}采购能力规则 v1`,
+          componentVersion: 1,
+          contentJson: capabilityRule
+        }
+      }
+    }
+  });
+  return db.project.update({
+    where: { id: project.id },
+    data: {
       capabilityConfigurationStatus: "READY",
       capabilitiesConfiguredAt: publishedAt
     }
