@@ -54,7 +54,10 @@ describeDatabase("APM-090B PostgreSQL procurement tracking", () => {
         code: `TRACK-${suffix}`.toUpperCase(),
         name: "采购跟踪测试项目",
         departmentId: "engineering",
-        createdById: actorId
+        createdById: actorId,
+        initializationStatus: "READY",
+        capabilityConfigurationStatus: "READY",
+        capabilitiesConfiguredAt: new Date()
       }
     });
     await db.companyCapability.update({

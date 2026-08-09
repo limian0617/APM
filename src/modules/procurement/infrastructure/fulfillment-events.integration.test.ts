@@ -56,7 +56,10 @@ describeDatabase("APM-091A PostgreSQL fulfillment event immutability", () => {
         code: `EVENT-${suffix}`.toUpperCase(),
         name: "履约事件测试项目",
         departmentId: "engineering",
-        createdById: actorId
+        createdById: actorId,
+        initializationStatus: "READY",
+        capabilityConfigurationStatus: "READY",
+        capabilitiesConfiguredAt: new Date()
       }
     });
     await db.companyCapability.update({

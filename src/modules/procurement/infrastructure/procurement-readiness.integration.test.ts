@@ -103,7 +103,10 @@ describeDatabase("APM-091B PostgreSQL readiness publication", () => {
         code: `READINESS-${suffix}`.toUpperCase(),
         name: "齐套计算测试项目",
         departmentId: "engineering",
-        createdById: actorId
+        createdById: actorId,
+        initializationStatus: "READY",
+        capabilityConfigurationStatus: "READY",
+        capabilitiesConfiguredAt: new Date()
       }
     });
     await db.companyCapability.update({

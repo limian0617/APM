@@ -48,7 +48,10 @@ describeDatabase("APM-090A PostgreSQL procurement foundation", () => {
         code: `PROC-${suffix}`.toUpperCase(),
         name: "采购基础测试项目",
         departmentId: "engineering",
-        createdById: actorId
+        createdById: actorId,
+        initializationStatus: "READY",
+        capabilityConfigurationStatus: "READY",
+        capabilitiesConfiguredAt: new Date()
       }
     });
     await db.companyCapability.update({

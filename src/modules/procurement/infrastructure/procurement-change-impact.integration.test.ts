@@ -52,7 +52,10 @@ describeDatabase("APM-091B PostgreSQL procurement change impact concurrency", ()
         code: `CHANGE-${suffix}`.toUpperCase(),
         name: "采购变更并发测试项目",
         departmentId: "engineering",
-        createdById: ownerUserId
+        createdById: ownerUserId,
+        initializationStatus: "READY",
+        capabilityConfigurationStatus: "READY",
+        capabilitiesConfiguredAt: new Date()
       }
     });
     const [ownerMembership, trackingMembership] = await Promise.all([
@@ -122,16 +125,8 @@ describeDatabase("APM-091B PostgreSQL procurement change impact concurrency", ()
         detectedById: ownerUserId,
         obligations: {
           create: [
-            {
-              projectId,
-              type: "PROCUREMENT_OWNER",
-              subjectId: ownerMembership.id
-            },
-            {
-              projectId,
-              type: "OLD_TRACKING",
-              subjectId: trackingMembership.id
-            }
+            { type: "PROCUREMENT_OWNER", subjectId: ownerMembership.id },
+            { type: "OLD_TRACKING", subjectId: trackingMembership.id }
           ]
         }
       },

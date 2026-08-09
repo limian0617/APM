@@ -319,7 +319,7 @@ describeDatabase("APM-013 PostgreSQL project capabilities", () => {
     expect(await replay.json()).toEqual(firstBody);
     expect(conflict.status).toBe(409);
     expect(firstBody.resourceVersion).toBe(project.version + 1);
-    expect(firstBody.capabilities).toHaveLength(5);
+    expect(firstBody.capabilities).toHaveLength(CAPABILITY_CODE_VALUES.length);
     expect(
       firstBody.capabilities.find(({ code }) => code === "SUPPLIER_COLLABORATION")
     ).toMatchObject({
@@ -335,10 +335,12 @@ describeDatabase("APM-013 PostgreSQL project capabilities", () => {
       effectiveEnabled: false,
       sourceSnapshotComponentId: null
     });
-    await expect(db.projectCapability.count({ where: { projectId: project.id } })).resolves.toBe(5);
+    await expect(db.projectCapability.count({ where: { projectId: project.id } })).resolves.toBe(
+      CAPABILITY_CODE_VALUES.length
+    );
     await expect(
       db.projectCapabilityRevision.count({ where: { projectId: project.id } })
-    ).resolves.toBe(5);
+    ).resolves.toBe(CAPABILITY_CODE_VALUES.length);
     await expect(
       db.auditLog.count({
         where: { projectId: project.id, action: "PROJECT_CAPABILITIES_CONFIRMED" }
@@ -511,7 +513,7 @@ describeDatabase("APM-013 PostgreSQL project capabilities", () => {
     expect(outcomes.map(({ status }) => status).sort()).toEqual([201, 409]);
     await expect(
       db.projectCapability.count({ where: { projectId: concurrentProject.id } })
-    ).resolves.toBe(5);
+    ).resolves.toBe(CAPABILITY_CODE_VALUES.length);
     await expect(
       db.auditLog.count({
         where: { projectId: concurrentProject.id, action: "PROJECT_CAPABILITIES_CONFIRMED" }
