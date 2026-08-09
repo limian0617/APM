@@ -145,4 +145,52 @@ describe("POST /api/projects/[projectId]/procurement/change-impacts/[impactId]/o
       obligation: { id: "obligation-1", resolution: "OWNER_PLAN_CONFIRMED" }
     });
   });
+
+  it("maps an already resolved obligation conflict to HTTP 409", async () => {
+    projectGuard.authorizeProjectRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "manager-1" },
+      project: { departmentId: "engineering" }
+    });
+    changeImpactService.resolveProcurementChangeImpact.mockRejectedValue({
+      code: "PROC_CHANGE_OBLIGATION_ALREADY_RESOLVED",
+      message: "采购变更影响义务已经处置，不能用不同内容覆盖。",
+      status: 409
+    });
+    command.idempotentCommandResponse.mockImplementation(async (input) => {
+      const result = await input.execute({});
+      return Response.json(result.body, { status: result.status });
+    });
+
+    const response = await POST(
+      new Request(
+        "http://localhost/api/projects/project-1/procurement/change-impacts/impact-1/obligations/obligation-1/resolve",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": "resolve-impact-conflict-v1"
+          },
+          body: JSON.stringify({
+            version: 2,
+            disposition: "OWNER_PLAN_CONFIRMED",
+            evidenceReference: "record:changed",
+            reason: "采购负责人改变处置方案"
+          })
+        }
+      ),
+      {
+        params: Promise.resolve({
+          projectId: "project-1",
+          impactId: "impact-1",
+          obligationId: "obligation-1"
+        })
+      }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "PROC_CHANGE_OBLIGATION_ALREADY_RESOLVED" }
+    });
+  });
 });

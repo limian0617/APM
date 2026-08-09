@@ -207,9 +207,172 @@ describe("APM-091B procurement change impact resolution rules", () => {
     ).toThrow(expect.objectContaining({ code: "PROC_CHANGE_VERSION_CONFLICT", status: 409 }));
   });
 
+  it("returns the existing evidence as an idempotent result only when every business field matches", async () => {
+    const transaction = resolvedObligationTransaction();
+
+    await expect(resolveExistingObligation(transaction.transaction)).resolves.toMatchObject({
+      idempotent: true,
+      resolution: {
+        id: "resolution-1",
+        disposition: "OWNER_PLAN_CONFIRMED",
+        evidenceReference: "owner-plan:1",
+        reason: "采购负责人确认处置"
+      }
+    });
+    expect(transaction.writes).toEqual({ resolution: 0, audit: 0, outbox: 0 });
+  });
+
+  it.each([
+    ["disposition", { disposition: "REWORK" }],
+    ["evidenceReference", { evidenceReference: "owner-plan:changed" }],
+    ["reason", { reason: "采购负责人改变处置方案" }]
+  ])(
+    "rejects an already resolved obligation when %s differs without writing another fact",
+    async (_field, change) => {
+      const transaction = resolvedObligationTransaction();
+
+      await expect(
+        resolveExistingObligation(transaction.transaction, change)
+      ).rejects.toMatchObject({
+        code: "PROC_CHANGE_OBLIGATION_ALREADY_RESOLVED",
+        status: 409
+      });
+      expect(transaction.writes).toEqual({ resolution: 0, audit: 0, outbox: 0 });
+    }
+  );
+
+  it("rejects a stale version for an unresolved obligation before writing any evidence", async () => {
+    const createResolution = vi.fn();
+    const transaction = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      procurementChangeImpact: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "impact-1",
+          projectId: "project-1",
+          previousRevisionId: "revision-before",
+          nextRevisionId: "revision-after",
+          status: "OPEN",
+          version: 2,
+          changedFieldsJson: ["quantity"],
+          obligations: [
+            {
+              id: "obligation-1",
+              type: "PROCUREMENT_OWNER",
+              subjectId: "membership-1",
+              resolution: null
+            }
+          ]
+        })
+      },
+      projectMember: {
+        findFirst: vi.fn().mockResolvedValue({ id: "membership-1", projectRole: "PROCUREMENT" })
+      },
+      procurementChangeImpactResolution: { create: createResolution }
+    } as never;
+
+    await expect(resolveExistingObligation(transaction)).rejects.toMatchObject({
+      code: "PROC_CHANGE_VERSION_CONFLICT",
+      status: 409
+    });
+    expect(createResolution).not.toHaveBeenCalled();
+  });
+
   it("exposes project-scoped list and detail read ports for the procurement impact views", () => {
     const service = changeImpactService as unknown as Record<string, unknown>;
     expect(service.listProcurementChangeImpacts).toBeTypeOf("function");
     expect(service.readProcurementChangeImpactDetail).toBeTypeOf("function");
   });
 });
+
+function resolvedObligationTransaction() {
+  const writes = {
+    resolution: 0,
+    audit: 0,
+    outbox: 0
+  };
+  return {
+    transaction: {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      procurementChangeImpact: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "impact-1",
+          projectId: "project-1",
+          previousRevisionId: "revision-before",
+          nextRevisionId: "revision-after",
+          status: "RESOLVED",
+          version: 2,
+          changedFieldsJson: ["quantity"],
+          obligations: [
+            {
+              id: "obligation-1",
+              type: "PROCUREMENT_OWNER",
+              subjectId: "membership-1",
+              resolution: {
+                id: "resolution-1",
+                disposition: "OWNER_PLAN_CONFIRMED",
+                evidenceReference: "owner-plan:1",
+                reason: "采购负责人确认处置"
+              }
+            }
+          ]
+        })
+      },
+      procurementChangeImpactObligation: { findMany: vi.fn().mockResolvedValue([]) },
+      projectMember: {
+        findFirst: vi.fn().mockResolvedValue({ id: "membership-1", projectRole: "PROCUREMENT" })
+      },
+      procurementChangeImpactResolution: {
+        create: vi.fn(async () => {
+          writes.resolution += 1;
+        })
+      },
+      auditLog: {
+        create: vi.fn(async () => {
+          writes.audit += 1;
+        })
+      },
+      outboxEvent: {
+        create: vi.fn(async () => {
+          writes.outbox += 1;
+        })
+      }
+    } as never,
+    writes
+  };
+}
+
+function resolveExistingObligation(
+  transaction: never,
+  change: Partial<{
+    disposition: string;
+    evidenceReference: string;
+    reason: string;
+  }> = {}
+) {
+  return resolveProcurementChangeImpact(
+    {
+      projectId: "project-1",
+      impactId: "impact-1",
+      obligationId: "obligation-1",
+      version: 1,
+      disposition: "OWNER_PLAN_CONFIRMED",
+      evidenceReference: "owner-plan:1",
+      reason: "采购负责人确认处置",
+      actorId: "user-1",
+      auditContext: {
+        actorId: "user-1",
+        requestId: "request-existing-obligation",
+        traceId: "b".repeat(32),
+        source: "API",
+        sourceIp: null,
+        userAgent: "Vitest",
+        reason: null,
+        projectId: "project-1",
+        departmentId: "engineering",
+        operationId: "resolve-existing-obligation"
+      },
+      ...change
+    },
+    transaction
+  );
+}

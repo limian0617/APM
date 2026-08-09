@@ -143,6 +143,32 @@ export function assertImpactResolutionAllowed(input: {
   }
 }
 
+function assertExistingObligationResolutionMatches(
+  resolution: Readonly<{
+    disposition: unknown;
+    evidenceReference: unknown;
+    reason: unknown;
+  }>,
+  input: Readonly<{
+    disposition: unknown;
+    evidenceReference: unknown;
+    reason: unknown;
+  }>
+) {
+  const matches =
+    resolution.disposition === input.disposition &&
+    typeof input.evidenceReference === "string" &&
+    resolution.evidenceReference === input.evidenceReference.trim() &&
+    typeof input.reason === "string" &&
+    resolution.reason === input.reason.trim();
+  if (matches) return;
+  throw new ProcurementChangeImpactServiceError(
+    "PROC_CHANGE_OBLIGATION_ALREADY_RESOLVED",
+    "采购变更影响义务已经处置，不能用不同内容覆盖已有追加式证据。",
+    409
+  );
+}
+
 function revisionFact(revision: {
   id: string;
   requirementId: string;
@@ -556,6 +582,7 @@ export async function resolveProcurementChangeImpact(
       );
     }
     if (obligation.resolution) {
+      assertExistingObligationResolutionMatches(obligation.resolution, input);
       const closure = await closeImpactWhenAllObligationsResolved(client, {
         impact,
         actorId: input.actorId,
