@@ -712,34 +712,36 @@ export async function getAcceptanceReport(input: {
   });
   if (!report)
     throw new AcceptanceReportServiceError("ACCEPTANCE_REPORT_NOT_FOUND", "验收报告不存在。", 404);
-  const serialized = serializeReport(report as unknown as Record<string, unknown>);
+  const { snapshotJson: _snapshotJson, ...serialized } = serializeReport(
+    report as unknown as Record<string, unknown>
+  ) as Record<string, unknown>;
   return {
     report: {
       ...serialized,
-      snapshotJson: input.sensitive ? report.snapshotJson : undefined,
+      ...(input.sensitive ? { snapshotJson: report.snapshotJson } : {}),
       confirmations: report.confirmations.map((confirmation) => ({
         id: confirmation.id,
         decision: confirmation.decision,
         status: confirmation.status,
         recordedAt: confirmation.recordedAt.toISOString(),
-        reportChecksum: input.sensitive ? confirmation.reportChecksum : undefined,
-        customerOrganization: input.sensitive ? confirmation.customerOrganization : undefined,
-        customerRepresentative: input.sensitive ? confirmation.customerRepresentative : undefined,
-        representativeTitle: input.sensitive ? confirmation.representativeTitle : undefined,
-        confirmationChannel: input.sensitive ? confirmation.confirmationChannel : undefined,
-        customerConfirmedAt: input.sensitive
-          ? confirmation.customerConfirmedAt.toISOString()
-          : undefined,
-        comment: input.sensitive ? confirmation.comment : undefined,
-        confirmationChecksum: input.sensitive ? confirmation.confirmationChecksum : undefined,
         supersedesConfirmationId: confirmation.supersedesConfirmationId,
-        evidence: input.sensitive
-          ? confirmation.evidence.map((evidence) => ({
-              fileId: evidence.fileObject.id,
-              fileSha256: evidence.fileObject.sha256,
-              originalName: evidence.fileObject.originalName
-            }))
-          : []
+        ...(input.sensitive
+          ? {
+              reportChecksum: confirmation.reportChecksum,
+              customerOrganization: confirmation.customerOrganization,
+              customerRepresentative: confirmation.customerRepresentative,
+              representativeTitle: confirmation.representativeTitle,
+              confirmationChannel: confirmation.confirmationChannel,
+              customerConfirmedAt: confirmation.customerConfirmedAt.toISOString(),
+              comment: confirmation.comment,
+              confirmationChecksum: confirmation.confirmationChecksum,
+              evidence: confirmation.evidence.map((evidence) => ({
+                fileId: evidence.fileObject.id,
+                fileSha256: evidence.fileObject.sha256,
+                originalName: evidence.fileObject.originalName
+              }))
+            }
+          : {})
       }))
     }
   };
