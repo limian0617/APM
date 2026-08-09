@@ -13,6 +13,7 @@
 ### Task 1: 领域词汇和纯规则
 
 **Files:**
+
 - Create: `src/modules/acceptance/domain/acceptance-policy.ts`
 - Create: `src/modules/acceptance/domain/acceptance-policy.test.ts`
 - Modify: `src/lib/auth/permissions.ts`
@@ -26,6 +27,7 @@
 ### Task 2: Prisma 模型、迁移和数据库约束
 
 **Files:**
+
 - Modify: `prisma/schema.prisma`
 - Create: `prisma/migrations/<timestamp>_apm_100_acceptance_foundation/migration.sql`
 - Create: `src/modules/acceptance/infrastructure/acceptance-persistence.integration.test.ts`
@@ -38,6 +40,7 @@
 ### Task 3: 模板和批次应用服务
 
 **Files:**
+
 - Create: `src/modules/acceptance/application/acceptance-template-service.ts`
 - Create: `src/modules/acceptance/application/acceptance-batch-service.ts`
 - Create: matching unit/integration tests
@@ -49,6 +52,7 @@
 ### Task 4: 结果和证据应用服务
 
 **Files:**
+
 - Create: `src/modules/acceptance/application/acceptance-result-service.ts`
 - Create: `src/modules/acceptance/application/acceptance-evidence-service.ts`
 - Create: matching tests
@@ -60,6 +64,7 @@
 ### Task 5: Route Handler 和合同测试
 
 **Files:**
+
 - Create: `src/app/api/projects/[projectId]/acceptance/.../route.ts`
 - Create: `src/modules/acceptance/contracts/acceptance-http.ts`
 - Create: route contract tests
@@ -70,6 +75,7 @@
 ### Task 6: 页面状态合同和 FAT/SAT 页面
 
 **Files:**
+
 - Create: `src/modules/acceptance/contracts/acceptance-page-state.ts` and tests
 - Create: `src/app/projects/[projectId]/acceptance/page.tsx`
 - Create: `src/app/projects/[projectId]/acceptance/acceptance-page-client.tsx` and tests

@@ -42,3 +42,16 @@ APM-100 建立项目内 FAT/SAT 验收的只读与记录基础能力：不可变
 - PostgreSQL 测试覆盖 FK/复合 FK、唯一性、不可变触发器、批次锁定和事务回滚；本地数据库不可用时标明跳过，CI 负责空库与升级回放。
 - API 测试覆盖 401/403、跨项目 IDOR、非法状态、过期 version、重复/复用幂等键、审计和 Outbox 原子性。
 - 证据测试覆盖跨项目、未扫描、隔离/作废和无权限文件拒绝，以及引用/下载审计。
+
+## 发布前修补：全局模板、命令页面与证据集合
+
+本修订以 2026-08-09 的发布前验收指令为准，替换本设计中“项目路由发布模板”和“单一 `evidenceFileId`”的旧约定。
+
+- `AcceptanceTemplate` 是全局配置主记录。全局 `POST /api/acceptance/templates` 使用 `CONFIGURATION_WRITE` 与系统授权发布版本；项目内模板端口只允许 `ACCEPTANCE_READ` 查询并引用已发布版本，绝不允许项目成员借由项目路由发布全局模板。
+- 模板主记录保存 `currentVersion` 与乐观锁 `version`。发布在锁定主记录的事务内生成下一个版本；并发竞争要么得到顺序版本，要么得到结构化 `409 ACCEPTANCE_TEMPLATE_VERSION_CONFLICT`，不得泄露 PostgreSQL 唯一约束错误或 500。
+- 客户端不再提交 checksum。服务端先验证、修剪并按稳定字段顺序规范化 FAT/SAT 类型及完整测试项快照，再用 SHA-256 计算 `snapshotChecksum`；任何业务字段变化都必须改变 checksum，相同规范化输入必须得到相同 checksum。
+- 新建重测批次仅在原批次属于当前项目、已 `LOCKED`、验收类型及 `scopeType`/`scopeId` 完全一致时允许；否则返回可审计的 404/409/422 业务错误。
+- `AcceptanceTestResultRevision` 只保存结果事实，新增追加式 `AcceptanceTestResultRevisionEvidence` 保存 0..N 个精确 `FileObject` 引用。所有证据均校验同项目、`AVAILABLE`、已扫描、`CONTROLLED` 且未失败；必需证据项至少要有一项。历史结果与历史证据均不更新、不删除。
+- 修订实测单位由冻结 `AcceptanceTestItemDefinition.unit` 决定：模板未定义单位时只接受 `null`，模板定义单位时客户端不得传入不同单位。服务端返回冻结单位，不将客户端单位作为事实来源。
+- 项目页面以受权读取 DTO 提供的 `allowedActions` 为唯一显示依据；服务端仍在每个命令路由执行项目、对象、状态、版本和证据授权。页面支持选择 FAT/SAT、范围、已发布模板、创建、开始、逐项录入或修订、缺失必测项/通过率提示和锁定；409 显示刷新提示而不覆盖任何事实。
+- APM-100 仍不创建 Issue、不写 Gate、不生成报告/客户确认/法律签名，也不实现 SAT 离线草稿。`resultRevisionId` 只作为 APM-101 后续只读关联端口。

@@ -277,37 +277,38 @@ model JobAttempt {
 }
 
 model FileObject {
-  id                     String                      @id @default(cuid())
-  projectId              String                      @map("project_id")
-  uploadedById           String                      @map("uploaded_by_id")
-  originalName           String                      @map("original_name")
-  declaredMimeType       String                      @map("declared_mime_type")
-  verifiedMimeType       String?                     @map("verified_mime_type")
-  declaredSize           BigInt                      @map("declared_size")
-  verifiedSize           BigInt?                     @map("verified_size")
-  sha256                 String?
-  objectKey              String                      @unique @map("object_key")
-  storageArea            FileStorageArea             @default(QUARANTINE) @map("storage_area")
-  status                 FileObjectStatus            @default(UPLOADING)
-  sensitivity            FileSensitivity             @default(INTERNAL)
-  scanEngine             String?                     @map("scan_engine")
-  scannerVersion         String?                     @map("scanner_version")
-  scanSignature          String?                     @map("scan_signature")
-  scannedAt              DateTime?                   @map("scanned_at")
-  failureCode            String?                     @map("failure_code")
-  failureMessage         String?                     @map("failure_message")
-  version                Int                         @default(1)
-  createdAt              DateTime                    @default(now()) @map("created_at")
-  updatedAt              DateTime                    @updatedAt @map("updated_at")
-  project                Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  uploadedBy             User                        @relation("FileObjectUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
-  uploadSession          FileUploadSession?
-  commands               FileCommand[]
-  documentSourceVersions ControlledDocumentVersion[] @relation("DocumentVersionSourceFile")
-  publicLibrarySourceVersions PublicLibraryDocumentVersion[] @relation("PublicLibraryVersionSourceFile")
-  mechanicalDrawingVersionFiles    MechanicalDrawingVersionFile[]    @relation("DrawingVersionFile")
-  mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[] @relation("DrawingImportItemFile")
+  id                               String                                 @id @default(cuid())
+  projectId                        String                                 @map("project_id")
+  uploadedById                     String                                 @map("uploaded_by_id")
+  originalName                     String                                 @map("original_name")
+  declaredMimeType                 String                                 @map("declared_mime_type")
+  verifiedMimeType                 String?                                @map("verified_mime_type")
+  declaredSize                     BigInt                                 @map("declared_size")
+  verifiedSize                     BigInt?                                @map("verified_size")
+  sha256                           String?
+  objectKey                        String                                 @unique @map("object_key")
+  storageArea                      FileStorageArea                        @default(QUARANTINE) @map("storage_area")
+  status                           FileObjectStatus                       @default(UPLOADING)
+  sensitivity                      FileSensitivity                        @default(INTERNAL)
+  scanEngine                       String?                                @map("scan_engine")
+  scannerVersion                   String?                                @map("scanner_version")
+  scanSignature                    String?                                @map("scan_signature")
+  scannedAt                        DateTime?                              @map("scanned_at")
+  failureCode                      String?                                @map("failure_code")
+  failureMessage                   String?                                @map("failure_message")
+  version                          Int                                    @default(1)
+  createdAt                        DateTime                               @default(now()) @map("created_at")
+  updatedAt                        DateTime                               @updatedAt @map("updated_at")
+  project                          Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  uploadedBy                       User                                   @relation("FileObjectUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  uploadSession                    FileUploadSession?
+  commands                         FileCommand[]
+  documentSourceVersions           ControlledDocumentVersion[]            @relation("DocumentVersionSourceFile")
+  publicLibrarySourceVersions      PublicLibraryDocumentVersion[]         @relation("PublicLibraryVersionSourceFile")
+  mechanicalDrawingVersionFiles    MechanicalDrawingVersionFile[]         @relation("DrawingVersionFile")
+  mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[]      @relation("DrawingImportItemFile")
   procurementFulfillmentEvents     ProcurementFulfillmentEvent[]
+  acceptanceResultRevisionEvidence AcceptanceTestResultRevisionEvidence[]
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -602,6 +603,29 @@ enum ProcurementChangeImpactDisposition {
   REWORK
   RETURNED
   CONTINUE_USE
+}
+
+enum AcceptanceType {
+  FAT
+  SAT
+}
+
+enum AcceptanceScopeType {
+  PROJECT
+  DELIVERY_UNIT
+  MACHINE
+}
+
+enum AcceptanceBatchStatus {
+  DRAFT
+  IN_PROGRESS
+  LOCKED
+}
+
+enum AcceptanceDecision {
+  PASS
+  FAIL
+  NA
 }
 
 enum JobStatus {
@@ -1311,6 +1335,13 @@ enum AuditAction {
   PROCUREMENT_CHANGE_IMPACT_DETECTED
   PROCUREMENT_CHANGE_IMPACT_EVIDENCE_RECORDED
   PROCUREMENT_CHANGE_IMPACT_RESOLVED
+  ACCEPTANCE_TEMPLATE_PUBLISHED
+  ACCEPTANCE_BATCH_CREATED
+  ACCEPTANCE_BATCH_STARTED
+  ACCEPTANCE_BATCH_LOCKED
+  ACCEPTANCE_RESULT_RECORDED
+  ACCEPTANCE_RESULT_CORRECTED
+  ACCEPTANCE_EVIDENCE_REFERENCED
   RND_PROJECT_CREATED
   RND_PROJECT_STATUS_CHANGED
   TECHNICAL_ASSET_CREATED
@@ -1389,6 +1420,12 @@ enum AuditObjectType {
   PROCUREMENT_FULFILLMENT_EVENT
   PROCUREMENT_CHANGE_IMPACT
   PROCUREMENT_CHANGE_IMPACT_RESOLUTION
+  ACCEPTANCE_TEMPLATE
+  ACCEPTANCE_TEMPLATE_VERSION
+  ACCEPTANCE_TEST_ITEM
+  ACCEPTANCE_BATCH
+  ACCEPTANCE_TEST_RESULT
+  ACCEPTANCE_TEST_RESULT_REVISION
   RND_PROJECT
   RND_PROJECT_EVENT
   TECHNICAL_ASSET
@@ -1416,131 +1453,138 @@ enum AuditResult {
 }
 
 model User {
-  id                                    String                            @id @default(cuid())
-  employeeNo                            String                            @unique @map("employee_no")
-  name                                  String
-  email                                 String?                           @unique
-  departmentId                          String?                           @map("department_id")
-  status                                UserStatus                        @default(ACTIVE)
-  version                               Int                               @default(1)
-  createdAt                             DateTime                          @default(now()) @map("created_at")
-  updatedAt                             DateTime                          @updatedAt @map("updated_at")
-  roleAssignments                       UserRole[]                        @relation("RoleAssignmentUser")
-  rolesAssigned                         UserRole[]                        @relation("RoleAssignmentActor")
-  memberships                           ProjectMember[]                   @relation("ProjectMemberUser")
-  membershipsAssigned                   ProjectMember[]                   @relation("ProjectMemberAssignedBy")
-  membershipsEnded                      ProjectMember[]                   @relation("ProjectMemberLeftBy")
-  projectsCreated                       Project[]                         @relation("ProjectCreatedBy")
-  auditLogs                             AuditLog[]
-  settingRevisions                      SystemSettingRevision[]           @relation("SystemSettingRevisionChangedBy")
-  capabilityRevisions                   CompanyCapabilityRevision[]       @relation("CompanyCapabilityRevisionChangedBy")
-  requestedJobReplays                   JobAttempt[]                      @relation("JobAttemptRequestedBy")
-  filesUploaded                         FileObject[]                      @relation("FileObjectUploadedBy")
-  fileCommands                          FileCommand[]                     @relation("FileCommandActor")
-  controlledDocumentsCreated            ControlledDocument[]              @relation("ControlledDocumentCreatedBy")
-  controlledDocumentsVoided             ControlledDocument[]              @relation("ControlledDocumentVoidedBy")
-  controlledDocumentVersionsCreated     ControlledDocumentVersion[]       @relation("ControlledDocumentVersionCreatedBy")
-  controlledDocumentVersionsPublished   ControlledDocumentVersion[]       @relation("ControlledDocumentVersionPublishedBy")
-  controlledDocumentVersionsVoided      ControlledDocumentVersion[]       @relation("ControlledDocumentVersionVoidedBy")
-  publicLibraryDocumentsCreated         PublicLibraryDocument[]            @relation("PublicLibraryDocumentCreatedBy")
-  publicLibraryDocumentsVoided          PublicLibraryDocument[]            @relation("PublicLibraryDocumentVoidedBy")
-  publicLibraryVersionsCreated          PublicLibraryDocumentVersion[]     @relation("PublicLibraryVersionCreatedBy")
-  publicLibraryVersionsPublished        PublicLibraryDocumentVersion[]     @relation("PublicLibraryVersionPublishedBy")
-  publicLibraryVersionsVoided           PublicLibraryDocumentVersion[]     @relation("PublicLibraryVersionVoidedBy")
-  projectPublicLibraryReferencesCreated ProjectPublicLibraryReference[]    @relation("ProjectPublicLibraryReferenceCreatedBy")
-  projectPublicLibraryReferencesRetired ProjectPublicLibraryReference[]    @relation("ProjectPublicLibraryReferenceRetiredBy")
-  mechanicalDrawingsCreated             MechanicalDrawing[]                @relation("MechanicalDrawingCreatedBy")
-  mechanicalDrawingImportBatchesCreated MechanicalDrawingImportBatch[]     @relation("MechanicalDrawingImportBatchCreatedBy")
-  notificationTemplateVersionsPublished NotificationTemplateVersion[]     @relation("NotificationTemplatePublishedBy")
-  notificationsReceived                 Notification[]                    @relation("NotificationRecipient")
-  notificationReadReceipts              NotificationReadReceipt[]         @relation("NotificationReadRecipient")
-  apiIdempotencyRecords                 ApiIdempotencyRecord[]
-  templateComponentsCreated             TemplateComponent[]               @relation("TemplateComponentCreatedBy")
-  templateComponentsUpdated             TemplateComponent[]               @relation("TemplateComponentUpdatedBy")
-  templateComponentVersionsPublished    TemplateComponentVersion[]        @relation("TemplateComponentVersionPublishedBy")
-  projectTemplatesCreated               ProjectTemplate[]                 @relation("ProjectTemplateCreatedBy")
-  projectTemplatesUpdated               ProjectTemplate[]                 @relation("ProjectTemplateUpdatedBy")
-  projectTemplateVersionsPublished      ProjectTemplateVersion[]          @relation("ProjectTemplateVersionPublishedBy")
-  deliveryUnitsCreated                  DeliveryUnit[]                    @relation("DeliveryUnitCreatedBy")
-  deliveryUnitsUpdated                  DeliveryUnit[]                    @relation("DeliveryUnitUpdatedBy")
-  projectModulesCreated                 ProjectModule[]                   @relation("ProjectModuleCreatedBy")
-  projectModulesUpdated                 ProjectModule[]                   @relation("ProjectModuleUpdatedBy")
-  projectCapabilitiesCreated            ProjectCapability[]               @relation("ProjectCapabilityCreatedBy")
-  projectCapabilitiesUpdated            ProjectCapability[]               @relation("ProjectCapabilityUpdatedBy")
-  projectCapabilityRevisionsChanged     ProjectCapabilityRevision[]       @relation("ProjectCapabilityRevisionChangedBy")
-  procurementSettingsConfigured         ProjectProcurementSettings[]         @relation("ProcurementSettingsConfiguredBy")
-  procurementSettingsUpdated            ProjectProcurementSettings[]         @relation("ProcurementSettingsUpdatedBy")
-  materialReferencesCreated             MaterialReference[]                  @relation("MaterialReferenceCreatedBy")
-  materialReferencesUpdated             MaterialReference[]                  @relation("MaterialReferenceUpdatedBy")
-  supplierReferencesCreated             SupplierReference[]                  @relation("SupplierReferenceCreatedBy")
-  supplierReferencesUpdated             SupplierReference[]                  @relation("SupplierReferenceUpdatedBy")
-  materialRequirementsCreated           ProjectMaterialRequirement[]         @relation("MaterialRequirementCreatedBy")
-  materialRequirementsUpdated           ProjectMaterialRequirement[]         @relation("MaterialRequirementUpdatedBy")
-  materialRequirementRevisionsCreated   ProjectMaterialRequirementRevision[] @relation("MaterialRequirementRevisionCreatedBy")
-  materialRequirementRevisionsConfirmed ProjectMaterialRequirementRevision[] @relation("MaterialRequirementRevisionConfirmedBy")
-  procurementTrackingLinesCreated      ProcurementTrackingLine[]          @relation("ProcurementTrackingLineCreatedBy")
-  procurementTrackingLinesUpdated      ProcurementTrackingLine[]          @relation("ProcurementTrackingLineUpdatedBy")
-  procurementFulfillmentEventsCreated  ProcurementFulfillmentEvent[]       @relation("ProcurementFulfillmentEventCreatedBy")
-  procurementReadinessPoliciesCreated  ProcurementReadinessPolicyVersion[] @relation("ProcurementReadinessPolicyCreatedBy")
-  procurementChangeImpactsDetected     ProcurementChangeImpact[]           @relation("ProcurementChangeImpactDetectedBy")
-  procurementChangeImpactsResolved     ProcurementChangeImpact[]           @relation("ProcurementChangeImpactResolvedBy")
-  procurementChangeImpactResolutions   ProcurementChangeImpactResolution[] @relation("ProcurementChangeImpactResolutionConfirmedBy")
-  responsibilityPackagesCreated         ResponsibilityPackage[]           @relation("ResponsibilityPackageCreatedBy")
-  responsibilityPackagesUpdated         ResponsibilityPackage[]           @relation("ResponsibilityPackageUpdatedBy")
-  responsibilityPackageEventsActed      ResponsibilityPackageEvent[]      @relation("ResponsibilityPackageEventActor")
-  projectMilestonesCreated              ProjectMilestone[]                @relation("ProjectMilestoneCreatedBy")
-  projectMilestonesUpdated              ProjectMilestone[]                @relation("ProjectMilestoneUpdatedBy")
-  projectMilestoneTaskLinksCreated      ProjectMilestoneTaskLink[]        @relation("ProjectMilestoneTaskLinkCreatedBy")
-  projectMilestoneTaskLinksVoided       ProjectMilestoneTaskLink[]        @relation("ProjectMilestoneTaskLinkVoidedBy")
-  projectMilestoneEventsActed           ProjectMilestoneEvent[]           @relation("ProjectMilestoneEventActor")
-  projectStagesCreated                  ProjectStage[]                    @relation("ProjectStageCreatedBy")
-  projectStagesUpdated                  ProjectStage[]                    @relation("ProjectStageUpdatedBy")
-  deliveryUnitStagesCreated             DeliveryUnitStage[]               @relation("DeliveryUnitStageCreatedBy")
-  deliveryUnitStagesUpdated             DeliveryUnitStage[]               @relation("DeliveryUnitStageUpdatedBy")
-  stageReleaseAuthorizationsAuthorized  StageReleaseAuthorization[]       @relation("StageReleaseAuthorizationAuthorizedBy")
-  stageReleaseAuthorizationsRevoked     StageReleaseAuthorization[]       @relation("StageReleaseAuthorizationRevokedBy")
-  projectStageEventsActed               ProjectStageEvent[]               @relation("ProjectStageEventActor")
-  wbsNodesCreated                       WbsNode[]                         @relation("WbsNodeCreatedBy")
-  wbsNodesUpdated                       WbsNode[]                         @relation("WbsNodeUpdatedBy")
-  planningTasksCreated                  PlanningTask[]                    @relation("PlanningTaskCreatedBy")
-  planningTasksUpdated                  PlanningTask[]                    @relation("PlanningTaskUpdatedBy")
-  projectCalendarsCreated               ProjectCalendar[]                 @relation("ProjectCalendarCreatedBy")
-  projectCalendarsUpdated               ProjectCalendar[]                 @relation("ProjectCalendarUpdatedBy")
-  projectCalendarRevisionsCreated       ProjectCalendarRevision[]         @relation("ProjectCalendarRevisionCreatedBy")
-  taskDependenciesCreated               TaskDependency[]                  @relation("TaskDependencyCreatedBy")
-  taskDependenciesUpdated               TaskDependency[]                  @relation("TaskDependencyUpdatedBy")
-  scheduleRecalculationsRequested       ScheduleRecalculation[]           @relation("ScheduleRecalculationRequestedBy")
-  planningBaselinesCreated              PlanningBaseline[]                @relation("PlanningBaselineCreatedBy")
-  gateSubmissionsSubmitted              GateSubmission[]                  @relation("GateSubmissionSubmittedBy")
-  gateSubmissionsWithdrawn              GateSubmission[]                  @relation("GateSubmissionWithdrawnBy")
-  gateSubmissionApprovers               GateSubmissionApprover[]          @relation("GateSubmissionApproverUser")
-  gateApprovals                         GateApproval[]                    @relation("GateApprovalDecidedBy")
-  gateSubmissionEvents                  GateSubmissionEvent[]             @relation("GateSubmissionEventActor")
-  gateConditionalReleases               GateConditionalRelease[]          @relation("GateConditionalReleaseActor")
-  residualItemEvents                    ResidualItemEvent[]               @relation("ResidualItemEventActor")
-  projectAlertEvents                    ProjectAlertEvent[]               @relation("ProjectAlertEventActor")
-  projectAlertScansRequested            ProjectAlertScan[]                @relation("ProjectAlertScanRequestedBy")
-  rndProjectsOwned                      RndProject[]                      @relation("RndProjectOwner")
-  rndProjectsCreated                    RndProject[]                      @relation("RndProjectCreatedBy")
-  rndProjectEventsActed                 RndProjectEvent[]                 @relation("RndProjectEventActor")
-  technicalAssetsOwned                  TechnicalAsset[]                  @relation("TechnicalAssetOwner")
-  technicalAssetsCreated                TechnicalAsset[]                  @relation("TechnicalAssetCreatedBy")
-  technicalAssetEventsActed             TechnicalAssetEvent[]             @relation("TechnicalAssetEventActor")
-  technicalAssetValidationsActed        TechnicalAssetValidation[]        @relation("TechnicalAssetValidationValidator")
-  issuesCreated                         Issue[]                           @relation("IssueCreatedBy")
-  issuesUpdated                         Issue[]                           @relation("IssueUpdatedBy")
-  issuesClosed                          Issue[]                           @relation("IssueClosedBy")
-  issueHistoriesActed                   IssueHistory[]                    @relation("IssueHistoryActor")
-  issueRelationsCreated                 IssueRelation[]                   @relation("IssueRelationCreatedBy")
-  issueRelationsClosed                  IssueRelation[]                   @relation("IssueRelationClosedBy")
-  documentReviewsRequested              DocumentReview[]                  @relation("DocumentReviewRequestedBy")
-  documentReviewsAssigned               DocumentReview[]                  @relation("DocumentReviewReviewer")
-  documentReviewsDecided                DocumentReview[]                  @relation("DocumentReviewDecidedBy")
-  documentReviewEvents                  DocumentReviewEvent[]             @relation("DocumentReviewEventActor")
-  documentReviewComments                DocumentReviewComment[]           @relation("DocumentReviewCommentCreatedBy")
-  documentReviewCommentResolutions      DocumentReviewCommentResolution[] @relation("DocumentReviewCommentResolvedBy")
-  documentVersionRelationsCreated       DocumentVersionRelation[]         @relation("DocumentVersionRelationCreatedBy")
-  documentVersionRelationsVoided        DocumentVersionRelation[]         @relation("DocumentVersionRelationVoidedBy")
+  id                                      String                                 @id @default(cuid())
+  employeeNo                              String                                 @unique @map("employee_no")
+  name                                    String
+  email                                   String?                                @unique
+  departmentId                            String?                                @map("department_id")
+  status                                  UserStatus                             @default(ACTIVE)
+  version                                 Int                                    @default(1)
+  createdAt                               DateTime                               @default(now()) @map("created_at")
+  updatedAt                               DateTime                               @updatedAt @map("updated_at")
+  roleAssignments                         UserRole[]                             @relation("RoleAssignmentUser")
+  rolesAssigned                           UserRole[]                             @relation("RoleAssignmentActor")
+  memberships                             ProjectMember[]                        @relation("ProjectMemberUser")
+  membershipsAssigned                     ProjectMember[]                        @relation("ProjectMemberAssignedBy")
+  membershipsEnded                        ProjectMember[]                        @relation("ProjectMemberLeftBy")
+  projectsCreated                         Project[]                              @relation("ProjectCreatedBy")
+  auditLogs                               AuditLog[]
+  settingRevisions                        SystemSettingRevision[]                @relation("SystemSettingRevisionChangedBy")
+  capabilityRevisions                     CompanyCapabilityRevision[]            @relation("CompanyCapabilityRevisionChangedBy")
+  requestedJobReplays                     JobAttempt[]                           @relation("JobAttemptRequestedBy")
+  filesUploaded                           FileObject[]                           @relation("FileObjectUploadedBy")
+  fileCommands                            FileCommand[]                          @relation("FileCommandActor")
+  controlledDocumentsCreated              ControlledDocument[]                   @relation("ControlledDocumentCreatedBy")
+  controlledDocumentsVoided               ControlledDocument[]                   @relation("ControlledDocumentVoidedBy")
+  controlledDocumentVersionsCreated       ControlledDocumentVersion[]            @relation("ControlledDocumentVersionCreatedBy")
+  controlledDocumentVersionsPublished     ControlledDocumentVersion[]            @relation("ControlledDocumentVersionPublishedBy")
+  controlledDocumentVersionsVoided        ControlledDocumentVersion[]            @relation("ControlledDocumentVersionVoidedBy")
+  publicLibraryDocumentsCreated           PublicLibraryDocument[]                @relation("PublicLibraryDocumentCreatedBy")
+  publicLibraryDocumentsVoided            PublicLibraryDocument[]                @relation("PublicLibraryDocumentVoidedBy")
+  publicLibraryVersionsCreated            PublicLibraryDocumentVersion[]         @relation("PublicLibraryVersionCreatedBy")
+  publicLibraryVersionsPublished          PublicLibraryDocumentVersion[]         @relation("PublicLibraryVersionPublishedBy")
+  publicLibraryVersionsVoided             PublicLibraryDocumentVersion[]         @relation("PublicLibraryVersionVoidedBy")
+  projectPublicLibraryReferencesCreated   ProjectPublicLibraryReference[]        @relation("ProjectPublicLibraryReferenceCreatedBy")
+  projectPublicLibraryReferencesRetired   ProjectPublicLibraryReference[]        @relation("ProjectPublicLibraryReferenceRetiredBy")
+  mechanicalDrawingsCreated               MechanicalDrawing[]                    @relation("MechanicalDrawingCreatedBy")
+  mechanicalDrawingImportBatchesCreated   MechanicalDrawingImportBatch[]         @relation("MechanicalDrawingImportBatchCreatedBy")
+  notificationTemplateVersionsPublished   NotificationTemplateVersion[]          @relation("NotificationTemplatePublishedBy")
+  notificationsReceived                   Notification[]                         @relation("NotificationRecipient")
+  notificationReadReceipts                NotificationReadReceipt[]              @relation("NotificationReadRecipient")
+  apiIdempotencyRecords                   ApiIdempotencyRecord[]
+  templateComponentsCreated               TemplateComponent[]                    @relation("TemplateComponentCreatedBy")
+  templateComponentsUpdated               TemplateComponent[]                    @relation("TemplateComponentUpdatedBy")
+  templateComponentVersionsPublished      TemplateComponentVersion[]             @relation("TemplateComponentVersionPublishedBy")
+  projectTemplatesCreated                 ProjectTemplate[]                      @relation("ProjectTemplateCreatedBy")
+  projectTemplatesUpdated                 ProjectTemplate[]                      @relation("ProjectTemplateUpdatedBy")
+  projectTemplateVersionsPublished        ProjectTemplateVersion[]               @relation("ProjectTemplateVersionPublishedBy")
+  deliveryUnitsCreated                    DeliveryUnit[]                         @relation("DeliveryUnitCreatedBy")
+  deliveryUnitsUpdated                    DeliveryUnit[]                         @relation("DeliveryUnitUpdatedBy")
+  projectModulesCreated                   ProjectModule[]                        @relation("ProjectModuleCreatedBy")
+  projectModulesUpdated                   ProjectModule[]                        @relation("ProjectModuleUpdatedBy")
+  projectCapabilitiesCreated              ProjectCapability[]                    @relation("ProjectCapabilityCreatedBy")
+  projectCapabilitiesUpdated              ProjectCapability[]                    @relation("ProjectCapabilityUpdatedBy")
+  projectCapabilityRevisionsChanged       ProjectCapabilityRevision[]            @relation("ProjectCapabilityRevisionChangedBy")
+  procurementSettingsConfigured           ProjectProcurementSettings[]           @relation("ProcurementSettingsConfiguredBy")
+  procurementSettingsUpdated              ProjectProcurementSettings[]           @relation("ProcurementSettingsUpdatedBy")
+  materialReferencesCreated               MaterialReference[]                    @relation("MaterialReferenceCreatedBy")
+  materialReferencesUpdated               MaterialReference[]                    @relation("MaterialReferenceUpdatedBy")
+  supplierReferencesCreated               SupplierReference[]                    @relation("SupplierReferenceCreatedBy")
+  supplierReferencesUpdated               SupplierReference[]                    @relation("SupplierReferenceUpdatedBy")
+  materialRequirementsCreated             ProjectMaterialRequirement[]           @relation("MaterialRequirementCreatedBy")
+  materialRequirementsUpdated             ProjectMaterialRequirement[]           @relation("MaterialRequirementUpdatedBy")
+  materialRequirementRevisionsCreated     ProjectMaterialRequirementRevision[]   @relation("MaterialRequirementRevisionCreatedBy")
+  materialRequirementRevisionsConfirmed   ProjectMaterialRequirementRevision[]   @relation("MaterialRequirementRevisionConfirmedBy")
+  procurementTrackingLinesCreated         ProcurementTrackingLine[]              @relation("ProcurementTrackingLineCreatedBy")
+  procurementTrackingLinesUpdated         ProcurementTrackingLine[]              @relation("ProcurementTrackingLineUpdatedBy")
+  procurementFulfillmentEventsCreated     ProcurementFulfillmentEvent[]          @relation("ProcurementFulfillmentEventCreatedBy")
+  procurementReadinessPoliciesCreated     ProcurementReadinessPolicyVersion[]    @relation("ProcurementReadinessPolicyCreatedBy")
+  procurementChangeImpactsDetected        ProcurementChangeImpact[]              @relation("ProcurementChangeImpactDetectedBy")
+  procurementChangeImpactsResolved        ProcurementChangeImpact[]              @relation("ProcurementChangeImpactResolvedBy")
+  procurementChangeImpactResolutions      ProcurementChangeImpactResolution[]    @relation("ProcurementChangeImpactResolutionConfirmedBy")
+  acceptanceTemplatesCreated              AcceptanceTemplate[]                   @relation("AcceptanceTemplateCreatedBy")
+  acceptanceTemplateVersionsCreated       AcceptanceTemplateVersion[]            @relation("AcceptanceTemplateVersionCreatedBy")
+  acceptanceBatchesCreated                AcceptanceBatch[]                      @relation("AcceptanceBatchCreatedBy")
+  acceptanceBatchesStarted                AcceptanceBatch[]                      @relation("AcceptanceBatchStartedBy")
+  acceptanceBatchesLocked                 AcceptanceBatch[]                      @relation("AcceptanceBatchLockedBy")
+  acceptanceResultRevisionsCreated        AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionCreatedBy")
+  acceptanceResultRevisionEvidenceCreated AcceptanceTestResultRevisionEvidence[]
+  responsibilityPackagesCreated           ResponsibilityPackage[]                @relation("ResponsibilityPackageCreatedBy")
+  responsibilityPackagesUpdated           ResponsibilityPackage[]                @relation("ResponsibilityPackageUpdatedBy")
+  responsibilityPackageEventsActed        ResponsibilityPackageEvent[]           @relation("ResponsibilityPackageEventActor")
+  projectMilestonesCreated                ProjectMilestone[]                     @relation("ProjectMilestoneCreatedBy")
+  projectMilestonesUpdated                ProjectMilestone[]                     @relation("ProjectMilestoneUpdatedBy")
+  projectMilestoneTaskLinksCreated        ProjectMilestoneTaskLink[]             @relation("ProjectMilestoneTaskLinkCreatedBy")
+  projectMilestoneTaskLinksVoided         ProjectMilestoneTaskLink[]             @relation("ProjectMilestoneTaskLinkVoidedBy")
+  projectMilestoneEventsActed             ProjectMilestoneEvent[]                @relation("ProjectMilestoneEventActor")
+  projectStagesCreated                    ProjectStage[]                         @relation("ProjectStageCreatedBy")
+  projectStagesUpdated                    ProjectStage[]                         @relation("ProjectStageUpdatedBy")
+  deliveryUnitStagesCreated               DeliveryUnitStage[]                    @relation("DeliveryUnitStageCreatedBy")
+  deliveryUnitStagesUpdated               DeliveryUnitStage[]                    @relation("DeliveryUnitStageUpdatedBy")
+  stageReleaseAuthorizationsAuthorized    StageReleaseAuthorization[]            @relation("StageReleaseAuthorizationAuthorizedBy")
+  stageReleaseAuthorizationsRevoked       StageReleaseAuthorization[]            @relation("StageReleaseAuthorizationRevokedBy")
+  projectStageEventsActed                 ProjectStageEvent[]                    @relation("ProjectStageEventActor")
+  wbsNodesCreated                         WbsNode[]                              @relation("WbsNodeCreatedBy")
+  wbsNodesUpdated                         WbsNode[]                              @relation("WbsNodeUpdatedBy")
+  planningTasksCreated                    PlanningTask[]                         @relation("PlanningTaskCreatedBy")
+  planningTasksUpdated                    PlanningTask[]                         @relation("PlanningTaskUpdatedBy")
+  projectCalendarsCreated                 ProjectCalendar[]                      @relation("ProjectCalendarCreatedBy")
+  projectCalendarsUpdated                 ProjectCalendar[]                      @relation("ProjectCalendarUpdatedBy")
+  projectCalendarRevisionsCreated         ProjectCalendarRevision[]              @relation("ProjectCalendarRevisionCreatedBy")
+  taskDependenciesCreated                 TaskDependency[]                       @relation("TaskDependencyCreatedBy")
+  taskDependenciesUpdated                 TaskDependency[]                       @relation("TaskDependencyUpdatedBy")
+  scheduleRecalculationsRequested         ScheduleRecalculation[]                @relation("ScheduleRecalculationRequestedBy")
+  planningBaselinesCreated                PlanningBaseline[]                     @relation("PlanningBaselineCreatedBy")
+  gateSubmissionsSubmitted                GateSubmission[]                       @relation("GateSubmissionSubmittedBy")
+  gateSubmissionsWithdrawn                GateSubmission[]                       @relation("GateSubmissionWithdrawnBy")
+  gateSubmissionApprovers                 GateSubmissionApprover[]               @relation("GateSubmissionApproverUser")
+  gateApprovals                           GateApproval[]                         @relation("GateApprovalDecidedBy")
+  gateSubmissionEvents                    GateSubmissionEvent[]                  @relation("GateSubmissionEventActor")
+  gateConditionalReleases                 GateConditionalRelease[]               @relation("GateConditionalReleaseActor")
+  residualItemEvents                      ResidualItemEvent[]                    @relation("ResidualItemEventActor")
+  projectAlertEvents                      ProjectAlertEvent[]                    @relation("ProjectAlertEventActor")
+  projectAlertScansRequested              ProjectAlertScan[]                     @relation("ProjectAlertScanRequestedBy")
+  rndProjectsOwned                        RndProject[]                           @relation("RndProjectOwner")
+  rndProjectsCreated                      RndProject[]                           @relation("RndProjectCreatedBy")
+  rndProjectEventsActed                   RndProjectEvent[]                      @relation("RndProjectEventActor")
+  technicalAssetsOwned                    TechnicalAsset[]                       @relation("TechnicalAssetOwner")
+  technicalAssetsCreated                  TechnicalAsset[]                       @relation("TechnicalAssetCreatedBy")
+  technicalAssetEventsActed               TechnicalAssetEvent[]                  @relation("TechnicalAssetEventActor")
+  technicalAssetValidationsActed          TechnicalAssetValidation[]             @relation("TechnicalAssetValidationValidator")
+  issuesCreated                           Issue[]                                @relation("IssueCreatedBy")
+  issuesUpdated                           Issue[]                                @relation("IssueUpdatedBy")
+  issuesClosed                            Issue[]                                @relation("IssueClosedBy")
+  issueHistoriesActed                     IssueHistory[]                         @relation("IssueHistoryActor")
+  issueRelationsCreated                   IssueRelation[]                        @relation("IssueRelationCreatedBy")
+  issueRelationsClosed                    IssueRelation[]                        @relation("IssueRelationClosedBy")
+  documentReviewsRequested                DocumentReview[]                       @relation("DocumentReviewRequestedBy")
+  documentReviewsAssigned                 DocumentReview[]                       @relation("DocumentReviewReviewer")
+  documentReviewsDecided                  DocumentReview[]                       @relation("DocumentReviewDecidedBy")
+  documentReviewEvents                    DocumentReviewEvent[]                  @relation("DocumentReviewEventActor")
+  documentReviewComments                  DocumentReviewComment[]                @relation("DocumentReviewCommentCreatedBy")
+  documentReviewCommentResolutions        DocumentReviewCommentResolution[]      @relation("DocumentReviewCommentResolvedBy")
+  documentVersionRelationsCreated         DocumentVersionRelation[]              @relation("DocumentVersionRelationCreatedBy")
+  documentVersionRelationsVoided          DocumentVersionRelation[]              @relation("DocumentVersionRelationVoidedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -1599,107 +1643,111 @@ model UserRole {
 }
 
 model Project {
-  id                            String                               @id @default(cuid())
-  code                          String                               @unique
-  name                          String
-  departmentId                  String?                              @map("department_id")
-  status                        ProjectStatus                        @default(DRAFT)
-  initializationStatus          ProjectInitializationStatus          @default(LEGACY) @map("initialization_status")
-  projectType                   ProjectType                          @default(LEGACY) @map("project_type")
-  equipmentShape                EquipmentShape?                      @map("equipment_shape")
-  structureStatus               ProjectStructureStatus               @default(UNCONFIGURED) @map("structure_status")
-  capabilityConfigurationStatus ProjectCapabilityConfigurationStatus @default(UNCONFIGURED) @map("capability_configuration_status")
-  capabilitiesConfiguredAt      DateTime?                            @map("capabilities_configured_at")
-  sourceTemplateVersionId       String?                              @map("source_template_version_id")
-  sourceTemplateChecksum        String?                              @map("source_template_checksum")
-  initializedAt                 DateTime?                            @map("initialized_at")
-  mainControlStageId            String?                              @map("main_control_stage_id")
-  mainControlStageProjectId     String?                              @map("main_control_stage_project_id")
-  mainControlStageCode          String?                              @map("main_control_stage_code")
-  mainControlStageStatus        ProjectStageExecutionStatus?        @map("main_control_stage_status")
-  mainControlStageSequence      Int?                                 @map("main_control_stage_sequence")
-  mainControlStageUpdatedAt     DateTime?                            @map("main_control_stage_updated_at")
-  version                       Int                                  @default(1)
-  createdById                   String                               @map("created_by_id")
-  createdAt                     DateTime                             @default(now()) @map("created_at")
-  updatedAt                     DateTime                             @updatedAt @map("updated_at")
-  createdBy                     User                                 @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  sourceTemplateVersion         ProjectTemplateVersion?              @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
-  templateSnapshot              ProjectTemplateSnapshot?
-  mainControlStage              ProjectStage?                        @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
-  members                       ProjectMember[]
-  auditLogs                     AuditLog[]
-  files                         FileObject[]
-  controlledDocuments           ControlledDocument[]
-  controlledDocumentVersions    ControlledDocumentVersion[]
-  mechanicalDrawings            MechanicalDrawing[]
-  mechanicalDrawingVersionFiles MechanicalDrawingVersionFile[]
-  mechanicalDrawingImportBatches MechanicalDrawingImportBatch[]
-  mechanicalDrawingImportItems  MechanicalDrawingImportItem[]
-  mechanicalDrawingImportItemFiles MechanicalDrawingImportItemFile[]
-  documentReviews               DocumentReview[]
-  documentReviewEvents          DocumentReviewEvent[]
-  documentReviewComments        DocumentReviewComment[]
-  documentReviewCommentResolutions DocumentReviewCommentResolution[]
-  documentVersionRelations      DocumentVersionRelation[]
-  gateSubmissionDocumentReferences GateSubmissionDocumentReference[]
-  notifications                 Notification[]
-  deliveryUnits                 DeliveryUnit[]
-  projectModules                ProjectModule[]
-  projectCapabilities           ProjectCapability[]
-  procurementSettings              ProjectProcurementSettings?
-  materialReferences               MaterialReference[]
-  supplierReferences               SupplierReference[]
-  materialRequirements             ProjectMaterialRequirement[]
-  procurementTrackingLines        ProcurementTrackingLine[]
-  procurementExternalMappings     ExternalMapping[]
-  procurementFulfillmentEvents   ProcurementFulfillmentEvent[]
+  id                                 String                                 @id @default(cuid())
+  code                               String                                 @unique
+  name                               String
+  departmentId                       String?                                @map("department_id")
+  status                             ProjectStatus                          @default(DRAFT)
+  initializationStatus               ProjectInitializationStatus            @default(LEGACY) @map("initialization_status")
+  projectType                        ProjectType                            @default(LEGACY) @map("project_type")
+  equipmentShape                     EquipmentShape?                        @map("equipment_shape")
+  structureStatus                    ProjectStructureStatus                 @default(UNCONFIGURED) @map("structure_status")
+  capabilityConfigurationStatus      ProjectCapabilityConfigurationStatus   @default(UNCONFIGURED) @map("capability_configuration_status")
+  capabilitiesConfiguredAt           DateTime?                              @map("capabilities_configured_at")
+  sourceTemplateVersionId            String?                                @map("source_template_version_id")
+  sourceTemplateChecksum             String?                                @map("source_template_checksum")
+  initializedAt                      DateTime?                              @map("initialized_at")
+  mainControlStageId                 String?                                @map("main_control_stage_id")
+  mainControlStageProjectId          String?                                @map("main_control_stage_project_id")
+  mainControlStageCode               String?                                @map("main_control_stage_code")
+  mainControlStageStatus             ProjectStageExecutionStatus?           @map("main_control_stage_status")
+  mainControlStageSequence           Int?                                   @map("main_control_stage_sequence")
+  mainControlStageUpdatedAt          DateTime?                              @map("main_control_stage_updated_at")
+  version                            Int                                    @default(1)
+  createdById                        String                                 @map("created_by_id")
+  createdAt                          DateTime                               @default(now()) @map("created_at")
+  updatedAt                          DateTime                               @updatedAt @map("updated_at")
+  createdBy                          User                                   @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  sourceTemplateVersion              ProjectTemplateVersion?                @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
+  templateSnapshot                   ProjectTemplateSnapshot?
+  mainControlStage                   ProjectStage?                          @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
+  members                            ProjectMember[]
+  auditLogs                          AuditLog[]
+  files                              FileObject[]
+  controlledDocuments                ControlledDocument[]
+  controlledDocumentVersions         ControlledDocumentVersion[]
+  mechanicalDrawings                 MechanicalDrawing[]
+  mechanicalDrawingVersionFiles      MechanicalDrawingVersionFile[]
+  mechanicalDrawingImportBatches     MechanicalDrawingImportBatch[]
+  mechanicalDrawingImportItems       MechanicalDrawingImportItem[]
+  mechanicalDrawingImportItemFiles   MechanicalDrawingImportItemFile[]
+  documentReviews                    DocumentReview[]
+  documentReviewEvents               DocumentReviewEvent[]
+  documentReviewComments             DocumentReviewComment[]
+  documentReviewCommentResolutions   DocumentReviewCommentResolution[]
+  documentVersionRelations           DocumentVersionRelation[]
+  gateSubmissionDocumentReferences   GateSubmissionDocumentReference[]
+  notifications                      Notification[]
+  deliveryUnits                      DeliveryUnit[]
+  projectModules                     ProjectModule[]
+  projectCapabilities                ProjectCapability[]
+  procurementSettings                ProjectProcurementSettings?
+  materialReferences                 MaterialReference[]
+  supplierReferences                 SupplierReference[]
+  materialRequirements               ProjectMaterialRequirement[]
+  procurementTrackingLines           ProcurementTrackingLine[]
+  procurementExternalMappings        ExternalMapping[]
+  procurementFulfillmentEvents       ProcurementFulfillmentEvent[]
   procurementReadinessPolicyVersions ProcurementReadinessPolicyVersion[]
-  procurementReadinessResults     ProcurementReadinessResult[]
-  procurementChangeImpacts        ProcurementChangeImpact[]
+  procurementReadinessResults        ProcurementReadinessResult[]
+  procurementChangeImpacts           ProcurementChangeImpact[]
   procurementChangeImpactObligations ProcurementChangeImpactObligation[]
   procurementChangeImpactResolutions ProcurementChangeImpactResolution[]
-  materialRequirementRevisions     ProjectMaterialRequirementRevision[]
-  responsibilityPackages        ResponsibilityPackage[]
-  projectMilestones             ProjectMilestone[]
-  projectMilestoneTaskLinks     ProjectMilestoneTaskLink[]
-  projectMilestoneEvents        ProjectMilestoneEvent[]
-  projectStages                 ProjectStage[]                       @relation("ProjectStages")
-  deliveryUnitStages            DeliveryUnitStage[]
-  stageReleaseAuthorizations    StageReleaseAuthorization[]
-  projectStageEvents            ProjectStageEvent[]
-  gateDefinitions               ProjectGateDefinition[]
-  gateInstances                 ProjectGateInstance[]
-  gateCheckSnapshots            GateCheckSnapshot[]
-  gateCheckResults              GateCheckResult[]
-  gateSubmissions               GateSubmission[]
-  gateSubmissionApprovers       GateSubmissionApprover[]
-  gateApprovals                 GateApproval[]
-  gateSubmissionEvents          GateSubmissionEvent[]
-  gateConditionalReleases       GateConditionalRelease[]
-  residualItems                 ResidualItem[]
-  residualItemEvents            ResidualItemEvent[]
-  alertRules                    ProjectAlertRule[]
-  alerts                        ProjectAlert[]
-  alertEvents                   ProjectAlertEvent[]
-  alertScans                    ProjectAlertScan[]
-  wbsNodes                      WbsNode[]
-  planningTasks                 PlanningTask[]
-  planningCalendar              ProjectCalendar?
-  projectCalendarRevisions      ProjectCalendarRevision[]
-  taskDependencies              TaskDependency[]
-  scheduleState                 ProjectScheduleState?
-  scheduleRecalculations        ScheduleRecalculation[]
-  scheduleTaskForecasts         ScheduleTaskForecast[]
-  planningBaselines             PlanningBaseline[]
-  cockpitProjections            CockpitProjection[]
-  cockpitExceptionProjections   CockpitExceptionProjection[]
-  resourceLoadProjections       ResourceLoadProjection[]
-  resourceLoadPersonProjections ResourceLoadPersonProjection[]
-  publicLibraryReferences       ProjectPublicLibraryReference[]
-  issues                        Issue[]
-  issueHistories                IssueHistory[]
-  issueRelations                IssueRelation[]
+  acceptanceBatches                  AcceptanceBatch[]
+  acceptanceTestResults              AcceptanceTestResult[]
+  acceptanceResultRevisions          AcceptanceTestResultRevision[]
+  acceptanceResultRevisionEvidence   AcceptanceTestResultRevisionEvidence[]
+  materialRequirementRevisions       ProjectMaterialRequirementRevision[]
+  responsibilityPackages             ResponsibilityPackage[]
+  projectMilestones                  ProjectMilestone[]
+  projectMilestoneTaskLinks          ProjectMilestoneTaskLink[]
+  projectMilestoneEvents             ProjectMilestoneEvent[]
+  projectStages                      ProjectStage[]                         @relation("ProjectStages")
+  deliveryUnitStages                 DeliveryUnitStage[]
+  stageReleaseAuthorizations         StageReleaseAuthorization[]
+  projectStageEvents                 ProjectStageEvent[]
+  gateDefinitions                    ProjectGateDefinition[]
+  gateInstances                      ProjectGateInstance[]
+  gateCheckSnapshots                 GateCheckSnapshot[]
+  gateCheckResults                   GateCheckResult[]
+  gateSubmissions                    GateSubmission[]
+  gateSubmissionApprovers            GateSubmissionApprover[]
+  gateApprovals                      GateApproval[]
+  gateSubmissionEvents               GateSubmissionEvent[]
+  gateConditionalReleases            GateConditionalRelease[]
+  residualItems                      ResidualItem[]
+  residualItemEvents                 ResidualItemEvent[]
+  alertRules                         ProjectAlertRule[]
+  alerts                             ProjectAlert[]
+  alertEvents                        ProjectAlertEvent[]
+  alertScans                         ProjectAlertScan[]
+  wbsNodes                           WbsNode[]
+  planningTasks                      PlanningTask[]
+  planningCalendar                   ProjectCalendar?
+  projectCalendarRevisions           ProjectCalendarRevision[]
+  taskDependencies                   TaskDependency[]
+  scheduleState                      ProjectScheduleState?
+  scheduleRecalculations             ScheduleRecalculation[]
+  scheduleTaskForecasts              ScheduleTaskForecast[]
+  planningBaselines                  PlanningBaseline[]
+  cockpitProjections                 CockpitProjection[]
+  cockpitExceptionProjections        CockpitExceptionProjection[]
+  resourceLoadProjections            ResourceLoadProjection[]
+  resourceLoadPersonProjections      ResourceLoadPersonProjection[]
+  publicLibraryReferences            ProjectPublicLibraryReference[]
+  issues                             Issue[]
+  issueHistories                     IssueHistory[]
+  issueRelations                     IssueRelation[]
 
   @@unique([mainControlStageId, mainControlStageProjectId])
   @@index([departmentId])
@@ -1711,20 +1759,20 @@ model Project {
 }
 
 model RndProject {
-  id           String           @id @default(cuid())
-  code         String           @unique
+  id           String            @id @default(cuid())
+  code         String            @unique
   name         String
   description  String?
-  departmentId String?          @map("department_id")
-  ownerId      String           @map("owner_id")
-  status       RndProjectStatus @default(PROPOSED)
-  version      Int              @default(1)
-  createdById  String           @map("created_by_id")
-  createdAt    DateTime         @default(now()) @map("created_at")
-  updatedAt    DateTime         @updatedAt @map("updated_at")
-  owner        User             @relation("RndProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict)
-  createdBy    User             @relation("RndProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  assets       TechnicalAsset[] @relation("TechnicalAssetRndProject")
+  departmentId String?           @map("department_id")
+  ownerId      String            @map("owner_id")
+  status       RndProjectStatus  @default(PROPOSED)
+  version      Int               @default(1)
+  createdById  String            @map("created_by_id")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+  owner        User              @relation("RndProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdBy    User              @relation("RndProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  assets       TechnicalAsset[]  @relation("TechnicalAssetRndProject")
   events       RndProjectEvent[]
 
   @@index([departmentId, status, createdAt])
@@ -1753,21 +1801,21 @@ model RndProjectEvent {
 }
 
 model TechnicalAsset {
-  id           String               @id @default(cuid())
-  rndProjectId String               @map("rnd_project_id")
-  assetNumber  String               @unique @map("asset_number")
-  assetType    TechnicalAssetType   @map("asset_type")
+  id           String                     @id @default(cuid())
+  rndProjectId String                     @map("rnd_project_id")
+  assetNumber  String                     @unique @map("asset_number")
+  assetType    TechnicalAssetType         @map("asset_type")
   name         String
   description  String?
-  ownerId      String               @map("owner_id")
-  status       TechnicalAssetStatus @default(DRAFT)
-  version      Int                  @default(1)
-  createdById  String               @map("created_by_id")
-  createdAt    DateTime             @default(now()) @map("created_at")
-  updatedAt    DateTime             @updatedAt @map("updated_at")
-  rndProject   RndProject           @relation("TechnicalAssetRndProject", fields: [rndProjectId], references: [id], onDelete: Restrict)
-  owner        User                 @relation("TechnicalAssetOwner", fields: [ownerId], references: [id], onDelete: Restrict)
-  createdBy    User                 @relation("TechnicalAssetCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  ownerId      String                     @map("owner_id")
+  status       TechnicalAssetStatus       @default(DRAFT)
+  version      Int                        @default(1)
+  createdById  String                     @map("created_by_id")
+  createdAt    DateTime                   @default(now()) @map("created_at")
+  updatedAt    DateTime                   @updatedAt @map("updated_at")
+  rndProject   RndProject                 @relation("TechnicalAssetRndProject", fields: [rndProjectId], references: [id], onDelete: Restrict)
+  owner        User                       @relation("TechnicalAssetOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdBy    User                       @relation("TechnicalAssetCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   events       TechnicalAssetEvent[]
   validations  TechnicalAssetValidation[]
 
@@ -1799,17 +1847,17 @@ model TechnicalAssetEvent {
 }
 
 model TechnicalAssetValidation {
-  id               String                          @id @default(cuid())
-  rndProjectId     String                          @map("rnd_project_id")
-  technicalAssetId String                          @map("technical_asset_id")
-  assetVersion     Int                             @map("asset_version")
+  id               String                           @id @default(cuid())
+  rndProjectId     String                           @map("rnd_project_id")
+  technicalAssetId String                           @map("technical_asset_id")
+  assetVersion     Int                              @map("asset_version")
   decision         TechnicalAssetValidationDecision
   evidence         String
   reason           String
-  validatorId      String                          @map("validator_id")
-  validatedAt      DateTime                        @default(now()) @map("validated_at")
-  technicalAsset   TechnicalAsset                  @relation(fields: [technicalAssetId, rndProjectId], references: [id, rndProjectId], onDelete: Restrict)
-  validator        User                            @relation("TechnicalAssetValidationValidator", fields: [validatorId], references: [id], onDelete: Restrict)
+  validatorId      String                           @map("validator_id")
+  validatedAt      DateTime                         @default(now()) @map("validated_at")
+  technicalAsset   TechnicalAsset                   @relation(fields: [technicalAssetId, rndProjectId], references: [id, rndProjectId], onDelete: Restrict)
+  validator        User                             @relation("TechnicalAssetValidationValidator", fields: [validatorId], references: [id], onDelete: Restrict)
 
   @@unique([technicalAssetId, assetVersion])
   @@index([rndProjectId, validatedAt])
@@ -1847,33 +1895,33 @@ model ControlledDocument {
 }
 
 model ControlledDocumentVersion {
-  id                       String                            @id @default(cuid())
-  documentId               String                            @map("document_id")
-  projectId                String                            @map("project_id")
-  version                  Int
-  status                   ControlledDocumentVersionStatus   @default(DRAFT)
-  sourceFileId             String                            @map("source_file_id")
-  sourceFileSha256         String                            @map("source_file_sha256")
-  sourceMimeType           String                            @map("source_mime_type")
-  sourceFileSize           BigInt                            @map("source_file_size")
-  createdById              String                            @map("created_by_id")
-  publishedById            String?                           @map("published_by_id")
-  publishedAt              DateTime?                         @map("published_at")
-  voidedById               String?                           @map("voided_by_id")
-  voidedAt                 DateTime?                         @map("voided_at")
-  voidReason               String?                           @map("void_reason")
-  createdAt                DateTime                          @default(now()) @map("created_at")
-  document                 ControlledDocument                @relation("ControlledDocumentVersions", fields: [documentId, projectId], references: [id, projectId], onDelete: Restrict)
-  project                  Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  sourceFile               FileObject                        @relation("DocumentVersionSourceFile", fields: [sourceFileId, projectId], references: [id, projectId], onDelete: Restrict)
-  createdBy                User                              @relation("ControlledDocumentVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  publishedBy              User?                             @relation("ControlledDocumentVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
-  voidedBy                 User?                             @relation("ControlledDocumentVersionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
-  currentForDocument       ControlledDocument?               @relation("DocumentCurrentPublishedVersion")
-  reviews                  DocumentReview[]
-  reviewComments           DocumentReviewComment[]
-  relations                DocumentVersionRelation[]
-  gateSubmissionReferences GateSubmissionDocumentReference[]
+  id                            String                               @id @default(cuid())
+  documentId                    String                               @map("document_id")
+  projectId                     String                               @map("project_id")
+  version                       Int
+  status                        ControlledDocumentVersionStatus      @default(DRAFT)
+  sourceFileId                  String                               @map("source_file_id")
+  sourceFileSha256              String                               @map("source_file_sha256")
+  sourceMimeType                String                               @map("source_mime_type")
+  sourceFileSize                BigInt                               @map("source_file_size")
+  createdById                   String                               @map("created_by_id")
+  publishedById                 String?                              @map("published_by_id")
+  publishedAt                   DateTime?                            @map("published_at")
+  voidedById                    String?                              @map("voided_by_id")
+  voidedAt                      DateTime?                            @map("voided_at")
+  voidReason                    String?                              @map("void_reason")
+  createdAt                     DateTime                             @default(now()) @map("created_at")
+  document                      ControlledDocument                   @relation("ControlledDocumentVersions", fields: [documentId, projectId], references: [id, projectId], onDelete: Restrict)
+  project                       Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceFile                    FileObject                           @relation("DocumentVersionSourceFile", fields: [sourceFileId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                     User                                 @relation("ControlledDocumentVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy                   User?                                @relation("ControlledDocumentVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  voidedBy                      User?                                @relation("ControlledDocumentVersionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentForDocument            ControlledDocument?                  @relation("DocumentCurrentPublishedVersion")
+  reviews                       DocumentReview[]
+  reviewComments                DocumentReviewComment[]
+  relations                     DocumentVersionRelation[]
+  gateSubmissionReferences      GateSubmissionDocumentReference[]
   mechanicalDrawingVersionFiles MechanicalDrawingVersionFile[]
   materialRequirementRevisions  ProjectMaterialRequirementRevision[]
 
@@ -1885,20 +1933,20 @@ model ControlledDocumentVersion {
 }
 
 model MechanicalDrawing {
-  id            String             @id @default(cuid())
-  projectId     String             @map("project_id")
-  documentId    String             @unique @map("document_id")
-  drawingNumber String             @map("drawing_number")
-  drawingType   String             @map("drawing_type")
-  version       Int                @default(1)
-  createdById   String             @map("created_by_id")
-  createdAt     DateTime           @default(now()) @map("created_at")
-  updatedAt     DateTime           @updatedAt @map("updated_at")
-  project       Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  document      ControlledDocument @relation(fields: [documentId, projectId], references: [id, projectId], onDelete: Restrict)
-  createdBy     User               @relation("MechanicalDrawingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  versionFiles  MechanicalDrawingVersionFile[]
-  importItems   MechanicalDrawingImportItem[] @relation("ConfirmedMechanicalDrawing")
+  id                           String                               @id @default(cuid())
+  projectId                    String                               @map("project_id")
+  documentId                   String                               @unique @map("document_id")
+  drawingNumber                String                               @map("drawing_number")
+  drawingType                  String                               @map("drawing_type")
+  version                      Int                                  @default(1)
+  createdById                  String                               @map("created_by_id")
+  createdAt                    DateTime                             @default(now()) @map("created_at")
+  updatedAt                    DateTime                             @updatedAt @map("updated_at")
+  project                      Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  document                     ControlledDocument                   @relation(fields: [documentId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                    User                                 @relation("MechanicalDrawingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  versionFiles                 MechanicalDrawingVersionFile[]
+  importItems                  MechanicalDrawingImportItem[]        @relation("ConfirmedMechanicalDrawing")
   materialRequirementRevisions ProjectMaterialRequirementRevision[] @relation("RequirementDrawing")
 
   @@unique([id, projectId])
@@ -1909,19 +1957,19 @@ model MechanicalDrawing {
 }
 
 model ProjectProcurementSettings {
-  projectId                       String                           @id @map("project_id")
+  projectId                       String                             @id @map("project_id")
   mode                            ProcurementMode
-  sourceSystem                    String?                          @map("source_system")
-  currentReadinessPolicyVersionId String?                          @map("current_readiness_policy_version_id")
-  version                         Int                              @default(1)
-  configuredById                  String                           @map("configured_by_id")
-  configuredAt                    DateTime                         @default(now()) @map("configured_at")
-  updatedById                     String                           @map("updated_by_id")
-  updatedAt                       DateTime                         @updatedAt @map("updated_at")
-  project                         Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceSystem                    String?                            @map("source_system")
+  currentReadinessPolicyVersionId String?                            @map("current_readiness_policy_version_id")
+  version                         Int                                @default(1)
+  configuredById                  String                             @map("configured_by_id")
+  configuredAt                    DateTime                           @default(now()) @map("configured_at")
+  updatedById                     String                             @map("updated_by_id")
+  updatedAt                       DateTime                           @updatedAt @map("updated_at")
+  project                         Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   currentReadinessPolicyVersion   ProcurementReadinessPolicyVersion? @relation("ProjectCurrentReadinessPolicyVersion", fields: [currentReadinessPolicyVersionId, projectId], references: [id, projectId], onDelete: Restrict)
-  configuredBy                    User                             @relation("ProcurementSettingsConfiguredBy", fields: [configuredById], references: [id], onDelete: Restrict)
-  updatedBy                       User                             @relation("ProcurementSettingsUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  configuredBy                    User                               @relation("ProcurementSettingsConfiguredBy", fields: [configuredById], references: [id], onDelete: Restrict)
+  updatedBy                       User                               @relation("ProcurementSettingsUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
   @@unique([currentReadinessPolicyVersionId, projectId])
   @@index([mode, configuredAt])
@@ -1969,28 +2017,28 @@ model MaterialReference {
 }
 
 model SupplierReference {
-  id                   String                  @id @default(cuid())
-  projectId            String                  @map("project_id")
-  source               ProcurementSource
-  externalId           String?                 @map("external_id")
-  code                 String
-  name                 String
-  status               MaterialReferenceStatus @default(ACTIVE)
-  contactName          String?                 @map("contact_name")
-  contactPhone         String?                 @map("contact_phone")
-  procurementOwnerName String?                 @map("procurement_owner_name")
-  capabilityTagsJson   Json                    @default("[]") @map("capability_tags_json")
-  sourceVersion        String?                 @map("source_version")
-  sourceHash           String?                 @map("source_hash")
-  syncedAt             DateTime?               @map("synced_at")
-  version              Int                     @default(1)
-  createdById          String                  @map("created_by_id")
-  updatedById          String                  @map("updated_by_id")
-  createdAt            DateTime                @default(now()) @map("created_at")
-  updatedAt            DateTime                @updatedAt @map("updated_at")
-  project              Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  createdBy            User                    @relation("SupplierReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy            User                    @relation("SupplierReferenceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  id                       String                    @id @default(cuid())
+  projectId                String                    @map("project_id")
+  source                   ProcurementSource
+  externalId               String?                   @map("external_id")
+  code                     String
+  name                     String
+  status                   MaterialReferenceStatus   @default(ACTIVE)
+  contactName              String?                   @map("contact_name")
+  contactPhone             String?                   @map("contact_phone")
+  procurementOwnerName     String?                   @map("procurement_owner_name")
+  capabilityTagsJson       Json                      @default("[]") @map("capability_tags_json")
+  sourceVersion            String?                   @map("source_version")
+  sourceHash               String?                   @map("source_hash")
+  syncedAt                 DateTime?                 @map("synced_at")
+  version                  Int                       @default(1)
+  createdById              String                    @map("created_by_id")
+  updatedById              String                    @map("updated_by_id")
+  createdAt                DateTime                  @default(now()) @map("created_at")
+  updatedAt                DateTime                  @updatedAt @map("updated_at")
+  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                User                      @relation("SupplierReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                User                      @relation("SupplierReferenceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   procurementTrackingLines ProcurementTrackingLine[]
 
   @@unique([id, projectId])
@@ -2001,22 +2049,22 @@ model SupplierReference {
 }
 
 model ProjectMaterialRequirement {
-  id                String                               @id @default(cuid())
-  projectId         String                               @map("project_id")
-  currentRevisionId String?                              @unique @map("current_revision_id")
-  status            ProjectMaterialRequirementStatus     @default(DRAFT)
-  version           Int                                  @default(1)
-  createdById       String                               @map("created_by_id")
-  updatedById       String                               @map("updated_by_id")
-  createdAt         DateTime                             @default(now()) @map("created_at")
-  updatedAt         DateTime                             @updatedAt @map("updated_at")
-  project           Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  currentRevision   ProjectMaterialRequirementRevision?  @relation("CurrentMaterialRequirementRevision", fields: [currentRevisionId], references: [id], onDelete: Restrict)
-  revisions         ProjectMaterialRequirementRevision[] @relation("MaterialRequirementRevisions")
-  createdBy         User                                 @relation("MaterialRequirementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy         User                                 @relation("MaterialRequirementUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  id                       String                               @id @default(cuid())
+  projectId                String                               @map("project_id")
+  currentRevisionId        String?                              @unique @map("current_revision_id")
+  status                   ProjectMaterialRequirementStatus     @default(DRAFT)
+  version                  Int                                  @default(1)
+  createdById              String                               @map("created_by_id")
+  updatedById              String                               @map("updated_by_id")
+  createdAt                DateTime                             @default(now()) @map("created_at")
+  updatedAt                DateTime                             @updatedAt @map("updated_at")
+  project                  Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  currentRevision          ProjectMaterialRequirementRevision?  @relation("CurrentMaterialRequirementRevision", fields: [currentRevisionId], references: [id], onDelete: Restrict)
+  revisions                ProjectMaterialRequirementRevision[] @relation("MaterialRequirementRevisions")
+  createdBy                User                                 @relation("MaterialRequirementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                User                                 @relation("MaterialRequirementUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   procurementTrackingLines ProcurementTrackingLine[]
-  fulfillmentEvents       ProcurementFulfillmentEvent[]
+  fulfillmentEvents        ProcurementFulfillmentEvent[]
   procurementChangeImpacts ProcurementChangeImpact[]
 
   @@unique([id, projectId])
@@ -2025,56 +2073,56 @@ model ProjectMaterialRequirement {
 }
 
 model ProjectMaterialRequirementRevision {
-  id                            String                                   @id @default(cuid())
-  requirementId                 String                                   @map("requirement_id")
-  projectId                     String                                   @map("project_id")
-  revision                      Int
-  deliveryUnitId                String?                                  @map("delivery_unit_id")
-  moduleId                      String?                                  @map("module_id")
-  responsibilityPackageId       String?                                  @map("responsibility_package_id")
-  taskId                        String?                                  @map("task_id")
-  materialReferenceId           String                                   @map("material_reference_id")
-  materialCodeSnapshot          String                                   @map("material_code_snapshot")
-  materialNameSnapshot          String                                   @map("material_name_snapshot")
-  materialSpecificationSnapshot String?                                  @map("material_specification_snapshot")
-  quantity                      Decimal                                  @db.Decimal(18, 6)
-  trackingUnit                  String                                   @map("tracking_unit")
-  requiredOn                    DateTime                                 @map("required_on") @db.Date
-  predictedAssemblyStartOn      DateTime?                                @map("predicted_assembly_start_on") @db.Date
-  isCritical                    Boolean                                  @default(false) @map("is_critical")
-  isLongLead                    Boolean                                  @default(false) @map("is_long_lead")
-  businessType                  ProcurementBusinessType                  @map("business_type")
-  source                        MaterialRequirementSource
-  sourceReference               String?                                  @map("source_reference")
-  sourceVersion                 String?                                  @map("source_version")
-  drawingId                     String?                                  @map("drawing_id")
-  drawingVersionId              String?                                  @map("drawing_version_id")
-  outsourcedProcess             String?                                  @map("outsourced_process")
-  status                        ProjectMaterialRequirementRevisionStatus @default(DRAFT)
-  confirmedById                 String?                                  @map("confirmed_by_id")
-  confirmedAt                   DateTime?                                @map("confirmed_at")
-  supersedesRevisionId          String?                                  @unique @map("supersedes_revision_id")
-  reason                        String?                                  @map("reason")
-  createdById                   String                                   @map("created_by_id")
-  createdAt                     DateTime                                 @default(now()) @map("created_at")
-  project                       Project                                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  requirement                   ProjectMaterialRequirement               @relation("MaterialRequirementRevisions", fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
-  currentForRequirement         ProjectMaterialRequirement?              @relation("CurrentMaterialRequirementRevision")
-  deliveryUnit                  DeliveryUnit?                            @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
-  module                        ProjectModule?                           @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
-  responsibilityPackage         ResponsibilityPackage?                   @relation(fields: [responsibilityPackageId, projectId], references: [id, projectId], onDelete: Restrict)
-  task                          PlanningTask?                            @relation(fields: [taskId, projectId], references: [id, projectId], onDelete: Restrict)
-  materialReference             MaterialReference                        @relation(fields: [materialReferenceId, projectId], references: [id, projectId], onDelete: Restrict)
-  drawing                       MechanicalDrawing?                       @relation("RequirementDrawing", fields: [drawingId, projectId], references: [id, projectId], onDelete: Restrict)
-  drawingVersion                ControlledDocumentVersion?               @relation(fields: [drawingVersionId, projectId], references: [id, projectId], onDelete: Restrict)
-  confirmedBy                   User?                                    @relation("MaterialRequirementRevisionConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
-  supersedesRevision            ProjectMaterialRequirementRevision?      @relation("MaterialRequirementRevisionSupersession", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
-  supersededByRevision          ProjectMaterialRequirementRevision?      @relation("MaterialRequirementRevisionSupersession")
-  createdBy                     User                                     @relation("MaterialRequirementRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  procurementTrackingLines      ProcurementTrackingLine[]
-  fulfillmentEvents             ProcurementFulfillmentEvent[]
-  procurementChangeImpactsAsPrevious ProcurementChangeImpact[] @relation("ProcurementChangeImpactPreviousRevision")
-  procurementChangeImpactsAsNext     ProcurementChangeImpact[] @relation("ProcurementChangeImpactNextRevision")
+  id                                 String                                   @id @default(cuid())
+  requirementId                      String                                   @map("requirement_id")
+  projectId                          String                                   @map("project_id")
+  revision                           Int
+  deliveryUnitId                     String?                                  @map("delivery_unit_id")
+  moduleId                           String?                                  @map("module_id")
+  responsibilityPackageId            String?                                  @map("responsibility_package_id")
+  taskId                             String?                                  @map("task_id")
+  materialReferenceId                String                                   @map("material_reference_id")
+  materialCodeSnapshot               String                                   @map("material_code_snapshot")
+  materialNameSnapshot               String                                   @map("material_name_snapshot")
+  materialSpecificationSnapshot      String?                                  @map("material_specification_snapshot")
+  quantity                           Decimal                                  @db.Decimal(18, 6)
+  trackingUnit                       String                                   @map("tracking_unit")
+  requiredOn                         DateTime                                 @map("required_on") @db.Date
+  predictedAssemblyStartOn           DateTime?                                @map("predicted_assembly_start_on") @db.Date
+  isCritical                         Boolean                                  @default(false) @map("is_critical")
+  isLongLead                         Boolean                                  @default(false) @map("is_long_lead")
+  businessType                       ProcurementBusinessType                  @map("business_type")
+  source                             MaterialRequirementSource
+  sourceReference                    String?                                  @map("source_reference")
+  sourceVersion                      String?                                  @map("source_version")
+  drawingId                          String?                                  @map("drawing_id")
+  drawingVersionId                   String?                                  @map("drawing_version_id")
+  outsourcedProcess                  String?                                  @map("outsourced_process")
+  status                             ProjectMaterialRequirementRevisionStatus @default(DRAFT)
+  confirmedById                      String?                                  @map("confirmed_by_id")
+  confirmedAt                        DateTime?                                @map("confirmed_at")
+  supersedesRevisionId               String?                                  @unique @map("supersedes_revision_id")
+  reason                             String?                                  @map("reason")
+  createdById                        String                                   @map("created_by_id")
+  createdAt                          DateTime                                 @default(now()) @map("created_at")
+  project                            Project                                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requirement                        ProjectMaterialRequirement               @relation("MaterialRequirementRevisions", fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
+  currentForRequirement              ProjectMaterialRequirement?              @relation("CurrentMaterialRequirementRevision")
+  deliveryUnit                       DeliveryUnit?                            @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module                             ProjectModule?                           @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  responsibilityPackage              ResponsibilityPackage?                   @relation(fields: [responsibilityPackageId, projectId], references: [id, projectId], onDelete: Restrict)
+  task                               PlanningTask?                            @relation(fields: [taskId, projectId], references: [id, projectId], onDelete: Restrict)
+  materialReference                  MaterialReference                        @relation(fields: [materialReferenceId, projectId], references: [id, projectId], onDelete: Restrict)
+  drawing                            MechanicalDrawing?                       @relation("RequirementDrawing", fields: [drawingId, projectId], references: [id, projectId], onDelete: Restrict)
+  drawingVersion                     ControlledDocumentVersion?               @relation(fields: [drawingVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  confirmedBy                        User?                                    @relation("MaterialRequirementRevisionConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
+  supersedesRevision                 ProjectMaterialRequirementRevision?      @relation("MaterialRequirementRevisionSupersession", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
+  supersededByRevision               ProjectMaterialRequirementRevision?      @relation("MaterialRequirementRevisionSupersession")
+  createdBy                          User                                     @relation("MaterialRequirementRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  procurementTrackingLines           ProcurementTrackingLine[]
+  fulfillmentEvents                  ProcurementFulfillmentEvent[]
+  procurementChangeImpactsAsPrevious ProcurementChangeImpact[]                @relation("ProcurementChangeImpactPreviousRevision")
+  procurementChangeImpactsAsNext     ProcurementChangeImpact[]                @relation("ProcurementChangeImpactNextRevision")
 
   @@unique([requirementId, revision])
   @@unique([id, projectId])
@@ -2088,41 +2136,41 @@ model ProjectMaterialRequirementRevision {
 }
 
 model ProcurementTrackingLine {
-  id                      String                  @id @default(cuid())
-  projectId               String                  @map("project_id")
-  requirementId           String                  @map("requirement_id")
-  requirementRevisionId   String                  @map("requirement_revision_id")
-  supplierReferenceId     String?                 @map("supplier_reference_id")
-  responsibleMembershipId String?                 @map("responsible_membership_id")
-  businessType            ProcurementBusinessType @map("business_type")
-  source                  ProcurementSource
-  requisitionObjectType   String?                 @map("requisition_object_type")
-  requisitionExternalId   String?                 @map("requisition_external_id")
-  requisitionExternalLineId String?               @map("requisition_external_line_id")
-  orderObjectType         String?                 @map("order_object_type")
-  orderExternalId         String?                 @map("order_external_id")
-  orderExternalLineId     String?                 @map("order_external_line_id")
-  orderedQuantity         Decimal                 @map("ordered_quantity") @db.Decimal(18, 6)
-  orderedOn               DateTime?               @map("ordered_on") @db.Date
-  promisedOn              DateTime?               @map("promised_on") @db.Date
-  supplierConfirmationStatus String?              @map("supplier_confirmation_status")
-  externalStatus          String?                 @map("external_status")
-  sourceVersion           String?                 @map("source_version")
-  sourceHash              String?                 @map("source_hash")
-  syncedAt                DateTime?               @map("synced_at")
-  version                 Int                     @default(1)
-  createdById             String                  @map("created_by_id")
-  updatedById             String                  @map("updated_by_id")
-  createdAt               DateTime                @default(now()) @map("created_at")
-  updatedAt               DateTime                @updatedAt @map("updated_at")
-  project                 Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  requirement             ProjectMaterialRequirement @relation(fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
-  requirementRevision     ProjectMaterialRequirementRevision @relation(fields: [requirementRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
-  supplierReference       SupplierReference?     @relation(fields: [supplierReferenceId, projectId], references: [id, projectId], onDelete: Restrict)
-  responsibleMembership   ProjectMember?         @relation(fields: [responsibleMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
-  createdBy               User                    @relation("ProcurementTrackingLineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy               User                    @relation("ProcurementTrackingLineUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  fulfillmentEvents       ProcurementFulfillmentEvent[]
+  id                         String                             @id @default(cuid())
+  projectId                  String                             @map("project_id")
+  requirementId              String                             @map("requirement_id")
+  requirementRevisionId      String                             @map("requirement_revision_id")
+  supplierReferenceId        String?                            @map("supplier_reference_id")
+  responsibleMembershipId    String?                            @map("responsible_membership_id")
+  businessType               ProcurementBusinessType            @map("business_type")
+  source                     ProcurementSource
+  requisitionObjectType      String?                            @map("requisition_object_type")
+  requisitionExternalId      String?                            @map("requisition_external_id")
+  requisitionExternalLineId  String?                            @map("requisition_external_line_id")
+  orderObjectType            String?                            @map("order_object_type")
+  orderExternalId            String?                            @map("order_external_id")
+  orderExternalLineId        String?                            @map("order_external_line_id")
+  orderedQuantity            Decimal                            @map("ordered_quantity") @db.Decimal(18, 6)
+  orderedOn                  DateTime?                          @map("ordered_on") @db.Date
+  promisedOn                 DateTime?                          @map("promised_on") @db.Date
+  supplierConfirmationStatus String?                            @map("supplier_confirmation_status")
+  externalStatus             String?                            @map("external_status")
+  sourceVersion              String?                            @map("source_version")
+  sourceHash                 String?                            @map("source_hash")
+  syncedAt                   DateTime?                          @map("synced_at")
+  version                    Int                                @default(1)
+  createdById                String                             @map("created_by_id")
+  updatedById                String                             @map("updated_by_id")
+  createdAt                  DateTime                           @default(now()) @map("created_at")
+  updatedAt                  DateTime                           @updatedAt @map("updated_at")
+  project                    Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requirement                ProjectMaterialRequirement         @relation(fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
+  requirementRevision        ProjectMaterialRequirementRevision @relation(fields: [requirementRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  supplierReference          SupplierReference?                 @relation(fields: [supplierReferenceId, projectId], references: [id, projectId], onDelete: Restrict)
+  responsibleMembership      ProjectMember?                     @relation(fields: [responsibleMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                  User                               @relation("ProcurementTrackingLineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                  User                               @relation("ProcurementTrackingLineUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  fulfillmentEvents          ProcurementFulfillmentEvent[]
 
   @@unique([id, projectId])
   @@index([projectId, requirementId, createdAt])
@@ -2132,21 +2180,21 @@ model ProcurementTrackingLine {
 }
 
 model ExternalMapping {
-  id                String   @id @default(cuid())
-  sourceSystem      String   @map("source_system")
-  objectType        String   @map("object_type")
-  externalId        String   @map("external_id")
-  externalLineId    String   @map("external_line_id")
-  apmObjectType     String   @map("apm_object_type")
-  apmObjectId       String   @map("apm_object_id")
-  projectId         String   @map("project_id")
-  sourceVersion     String?  @map("source_version")
-  sourceHash        String?  @map("source_hash")
-  syncedAt          DateTime @map("synced_at")
-  version           Int      @default(1)
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-  project           Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  id             String   @id @default(cuid())
+  sourceSystem   String   @map("source_system")
+  objectType     String   @map("object_type")
+  externalId     String   @map("external_id")
+  externalLineId String   @map("external_line_id")
+  apmObjectType  String   @map("apm_object_type")
+  apmObjectId    String   @map("apm_object_id")
+  projectId      String   @map("project_id")
+  sourceVersion  String?  @map("source_version")
+  sourceHash     String?  @map("source_hash")
+  syncedAt       DateTime @map("synced_at")
+  version        Int      @default(1)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   @@unique([sourceSystem, objectType, externalId, externalLineId])
   @@unique([id, projectId])
@@ -2156,53 +2204,53 @@ model ExternalMapping {
 }
 
 model ProcurementSyncState {
-  id                String               @id @default(cuid())
-  sourceSystem      String               @map("source_system")
-  objectType        String               @map("object_type")
+  id                String                @id @default(cuid())
+  sourceSystem      String                @map("source_system")
+  objectType        String                @map("object_type")
   cursor            String?
-  lastSuccessfulAt  DateTime?            @map("last_successful_at")
-  lastAttemptedAt   DateTime?            @map("last_attempted_at")
+  lastSuccessfulAt  DateTime?             @map("last_successful_at")
+  lastAttemptedAt   DateTime?             @map("last_attempted_at")
   status            ProcurementSyncStatus @default(IDLE)
-  failureCode       String?              @map("failure_code")
-  failureMessage    String?              @map("failure_message")
-  replayRequestedAt DateTime?            @map("replay_requested_at")
-  version           Int                  @default(1)
-  updatedAt         DateTime             @updatedAt @map("updated_at")
-  createdAt         DateTime             @default(now()) @map("created_at")
+  failureCode       String?               @map("failure_code")
+  failureMessage    String?               @map("failure_message")
+  replayRequestedAt DateTime?             @map("replay_requested_at")
+  version           Int                   @default(1)
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+  createdAt         DateTime              @default(now()) @map("created_at")
 
   @@unique([sourceSystem, objectType])
   @@map("procurement_sync_states")
 }
 
 model ProcurementFulfillmentEvent {
-  id                    String                           @id @default(cuid())
-  projectId             String                           @map("project_id")
-  requirementId         String                           @map("requirement_id")
-  requirementRevisionId String                           @map("requirement_revision_id")
-  trackingLineId        String?                          @map("tracking_line_id")
-  eventType             ProcurementFulfillmentEventType  @map("event_type")
-  quantity              Decimal                          @db.Decimal(18, 6)
-  trackingUnit          String                           @map("tracking_unit")
-  businessOccurredAt    DateTime                         @map("business_occurred_at")
-  recordedAt            DateTime                         @default(now()) @map("recorded_at")
-  source                ProcurementSource
-  externalEventKey      String?                          @map("external_event_key")
-  externalDocumentRef   String?                          @map("external_document_ref")
-  evidenceFileId        String?                          @map("evidence_file_id")
-  reversesEventId       String?                          @unique @map("reverses_event_id")
-  derivedFromEventId    String?                          @unique @map("derived_from_event_id")
-  reason                String
-  createdById           String                           @map("created_by_id")
-  project               Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  requirement           ProjectMaterialRequirement       @relation(fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
-  requirementRevision   ProjectMaterialRequirementRevision @relation(fields: [requirementRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
-  trackingLine          ProcurementTrackingLine?        @relation(fields: [trackingLineId, projectId], references: [id, projectId], onDelete: Restrict)
-  evidenceFile          FileObject?                      @relation(fields: [evidenceFileId, projectId], references: [id, projectId], onDelete: Restrict)
-  reversesEvent         ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventReversal", fields: [reversesEventId], references: [id], onDelete: Restrict)
-  reversedBy             ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventReversal")
-  derivedFromEvent       ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventDerivation", fields: [derivedFromEventId], references: [id], onDelete: Restrict)
-  derivedAutoUsableEvent ProcurementFulfillmentEvent?    @relation("ProcurementFulfillmentEventDerivation")
-  createdBy             User                             @relation("ProcurementFulfillmentEventCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  id                     String                             @id @default(cuid())
+  projectId              String                             @map("project_id")
+  requirementId          String                             @map("requirement_id")
+  requirementRevisionId  String                             @map("requirement_revision_id")
+  trackingLineId         String?                            @map("tracking_line_id")
+  eventType              ProcurementFulfillmentEventType    @map("event_type")
+  quantity               Decimal                            @db.Decimal(18, 6)
+  trackingUnit           String                             @map("tracking_unit")
+  businessOccurredAt     DateTime                           @map("business_occurred_at")
+  recordedAt             DateTime                           @default(now()) @map("recorded_at")
+  source                 ProcurementSource
+  externalEventKey       String?                            @map("external_event_key")
+  externalDocumentRef    String?                            @map("external_document_ref")
+  evidenceFileId         String?                            @map("evidence_file_id")
+  reversesEventId        String?                            @unique @map("reverses_event_id")
+  derivedFromEventId     String?                            @unique @map("derived_from_event_id")
+  reason                 String
+  createdById            String                             @map("created_by_id")
+  project                Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requirement            ProjectMaterialRequirement         @relation(fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
+  requirementRevision    ProjectMaterialRequirementRevision @relation(fields: [requirementRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  trackingLine           ProcurementTrackingLine?           @relation(fields: [trackingLineId, projectId], references: [id, projectId], onDelete: Restrict)
+  evidenceFile           FileObject?                        @relation(fields: [evidenceFileId, projectId], references: [id, projectId], onDelete: Restrict)
+  reversesEvent          ProcurementFulfillmentEvent?       @relation("ProcurementFulfillmentEventReversal", fields: [reversesEventId], references: [id], onDelete: Restrict)
+  reversedBy             ProcurementFulfillmentEvent?       @relation("ProcurementFulfillmentEventReversal")
+  derivedFromEvent       ProcurementFulfillmentEvent?       @relation("ProcurementFulfillmentEventDerivation", fields: [derivedFromEventId], references: [id], onDelete: Restrict)
+  derivedAutoUsableEvent ProcurementFulfillmentEvent?       @relation("ProcurementFulfillmentEventDerivation")
+  createdBy              User                               @relation("ProcurementFulfillmentEventCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
   @@unique([source, externalEventKey])
   @@unique([id, projectId])
@@ -2269,27 +2317,27 @@ model ProcurementReadinessResult {
 }
 
 model ProcurementChangeImpact {
-  id                String                        @id @default(cuid())
-  projectId         String                        @map("project_id")
-  requirementId     String                        @map("requirement_id")
-  previousRevisionId String                       @map("previous_revision_id")
-  nextRevisionId    String?                       @map("next_revision_id")
-  type              ProcurementChangeImpactType
-  changedFieldsJson Json                          @map("changed_fields_json")
-  status            ProcurementChangeImpactStatus @default(OPEN)
-  version           Int                           @default(1)
-  detectedById      String                        @map("detected_by_id")
-  detectedAt        DateTime                      @default(now()) @map("detected_at")
-  resolvedById      String?                       @map("resolved_by_id")
-  resolvedAt        DateTime?                     @map("resolved_at")
-  project           Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  requirement       ProjectMaterialRequirement    @relation(fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
-  previousRevision  ProjectMaterialRequirementRevision @relation("ProcurementChangeImpactPreviousRevision", fields: [previousRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
-  nextRevision      ProjectMaterialRequirementRevision? @relation("ProcurementChangeImpactNextRevision", fields: [nextRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
-  detectedBy        User                          @relation("ProcurementChangeImpactDetectedBy", fields: [detectedById], references: [id], onDelete: Restrict)
-  resolvedBy        User?                         @relation("ProcurementChangeImpactResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
-  obligations       ProcurementChangeImpactObligation[]
-  resolutions       ProcurementChangeImpactResolution[]
+  id                 String                              @id @default(cuid())
+  projectId          String                              @map("project_id")
+  requirementId      String                              @map("requirement_id")
+  previousRevisionId String                              @map("previous_revision_id")
+  nextRevisionId     String?                             @map("next_revision_id")
+  type               ProcurementChangeImpactType
+  changedFieldsJson  Json                                @map("changed_fields_json")
+  status             ProcurementChangeImpactStatus       @default(OPEN)
+  version            Int                                 @default(1)
+  detectedById       String                              @map("detected_by_id")
+  detectedAt         DateTime                            @default(now()) @map("detected_at")
+  resolvedById       String?                             @map("resolved_by_id")
+  resolvedAt         DateTime?                           @map("resolved_at")
+  project            Project                             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requirement        ProjectMaterialRequirement          @relation(fields: [requirementId, projectId], references: [id, projectId], onDelete: Restrict)
+  previousRevision   ProjectMaterialRequirementRevision  @relation("ProcurementChangeImpactPreviousRevision", fields: [previousRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  nextRevision       ProjectMaterialRequirementRevision? @relation("ProcurementChangeImpactNextRevision", fields: [nextRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  detectedBy         User                                @relation("ProcurementChangeImpactDetectedBy", fields: [detectedById], references: [id], onDelete: Restrict)
+  resolvedBy         User?                               @relation("ProcurementChangeImpactResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+  obligations        ProcurementChangeImpactObligation[]
+  resolutions        ProcurementChangeImpactResolution[]
 
   @@unique([id, projectId])
   @@unique([projectId, previousRevisionId])
@@ -2299,14 +2347,14 @@ model ProcurementChangeImpact {
 }
 
 model ProcurementChangeImpactObligation {
-  id        String                               @id @default(cuid())
-  projectId String                               @map("project_id")
-  impactId  String                               @map("impact_id")
-  type      ProcurementChangeImpactObligationType
-  subjectId String                               @map("subject_id")
-  createdAt DateTime                             @default(now()) @map("created_at")
-  project   Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  impact    ProcurementChangeImpact              @relation(fields: [impactId, projectId], references: [id, projectId], onDelete: Restrict)
+  id         String                                @id @default(cuid())
+  projectId  String                                @map("project_id")
+  impactId   String                                @map("impact_id")
+  type       ProcurementChangeImpactObligationType
+  subjectId  String                                @map("subject_id")
+  createdAt  DateTime                              @default(now()) @map("created_at")
+  project    Project                               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  impact     ProcurementChangeImpact               @relation(fields: [impactId, projectId], references: [id, projectId], onDelete: Restrict)
   resolution ProcurementChangeImpactResolution?
 
   @@unique([id, impactId, projectId])
@@ -2316,43 +2364,199 @@ model ProcurementChangeImpactObligation {
 }
 
 model ProcurementChangeImpactResolution {
-  id                String                           @id @default(cuid())
-  projectId         String                           @map("project_id")
-  impactId          String                           @map("impact_id")
-  obligationId      String                           @unique @map("obligation_id")
+  id                String                             @id @default(cuid())
+  projectId         String                             @map("project_id")
+  impactId          String                             @map("impact_id")
+  obligationId      String                             @unique @map("obligation_id")
   disposition       ProcurementChangeImpactDisposition
-  evidenceReference String                           @map("evidence_reference")
+  evidenceReference String                             @map("evidence_reference")
   reason            String
-  confirmedById     String                           @map("confirmed_by_id")
-  confirmedAt       DateTime                         @default(now()) @map("confirmed_at")
-  project           Project                          @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  impact            ProcurementChangeImpact          @relation(fields: [impactId, projectId], references: [id, projectId], onDelete: Restrict)
-  obligation        ProcurementChangeImpactObligation @relation(fields: [obligationId, impactId, projectId], references: [id, impactId, projectId], onDelete: Restrict)
-  confirmedBy       User                             @relation("ProcurementChangeImpactResolutionConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
+  confirmedById     String                             @map("confirmed_by_id")
+  confirmedAt       DateTime                           @default(now()) @map("confirmed_at")
+  project           Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  impact            ProcurementChangeImpact            @relation(fields: [impactId, projectId], references: [id, projectId], onDelete: Restrict)
+  obligation        ProcurementChangeImpactObligation  @relation(fields: [obligationId, impactId, projectId], references: [id, impactId, projectId], onDelete: Restrict)
+  confirmedBy       User                               @relation("ProcurementChangeImpactResolutionConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
 
   @@unique([obligationId, impactId, projectId])
   @@index([projectId, impactId, confirmedAt])
   @@map("procurement_change_impact_resolutions")
 }
 
+model AcceptanceTemplate {
+  id             String                      @id @default(cuid())
+  code           String                      @unique
+  name           String
+  acceptanceType AcceptanceType              @map("acceptance_type")
+  enabled        Boolean                     @default(true)
+  currentVersion Int                         @default(0) @map("current_version")
+  version        Int                         @default(1)
+  createdById    String                      @map("created_by_id")
+  createdAt      DateTime                    @default(now()) @map("created_at")
+  updatedAt      DateTime                    @updatedAt @map("updated_at")
+  createdBy      User                        @relation("AcceptanceTemplateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  versions       AcceptanceTemplateVersion[]
+
+  @@index([acceptanceType, enabled, code])
+  @@map("acceptance_templates")
+}
+
+model AcceptanceTemplateVersion {
+  id               String                         @id @default(cuid())
+  templateId       String                         @map("template_id")
+  version          Int
+  acceptanceType   AcceptanceType                 @map("acceptance_type")
+  snapshotChecksum String                         @map("snapshot_checksum")
+  publishedAt      DateTime                       @default(now()) @map("published_at")
+  createdById      String                         @map("created_by_id")
+  createdAt        DateTime                       @default(now()) @map("created_at")
+  template         AcceptanceTemplate             @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  createdBy        User                           @relation("AcceptanceTemplateVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  items            AcceptanceTestItemDefinition[]
+  batches          AcceptanceBatch[]
+
+  @@unique([templateId, version])
+  @@index([acceptanceType, publishedAt])
+  @@map("acceptance_template_versions")
+}
+
+model AcceptanceTestItemDefinition {
+  id                 String                    @id @default(cuid())
+  templateVersionId  String                    @map("template_version_id")
+  code               String
+  name               String
+  position           Int
+  method             String
+  acceptanceCriteria String                    @map("acceptance_criteria")
+  unit               String?
+  required           Boolean
+  evidenceRequired   Boolean                   @map("evidence_required")
+  applicableScope    String                    @map("applicable_scope")
+  defaultDiscipline  String                    @map("default_discipline")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  templateVersion    AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  results            AcceptanceTestResult[]
+
+  @@unique([templateVersionId, code])
+  @@unique([templateVersionId, position])
+  @@index([templateVersionId, position])
+  @@map("acceptance_test_item_definitions")
+}
+
+model AcceptanceBatch {
+  id                String                    @id @default(cuid())
+  projectId         String                    @map("project_id")
+  acceptanceType    AcceptanceType            @map("acceptance_type")
+  scopeType         AcceptanceScopeType       @map("scope_type")
+  scopeId           String                    @map("scope_id")
+  templateVersionId String                    @map("template_version_id")
+  status            AcceptanceBatchStatus     @default(DRAFT)
+  retestOfBatchId   String?                   @map("retest_of_batch_id")
+  version           Int                       @default(1)
+  createdById       String                    @map("created_by_id")
+  startedById       String?                   @map("started_by_id")
+  lockedById        String?                   @map("locked_by_id")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  startedAt         DateTime?                 @map("started_at")
+  lockedAt          DateTime?                 @map("locked_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  templateVersion   AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  retestOfBatch     AcceptanceBatch?          @relation("AcceptanceBatchRetest", fields: [retestOfBatchId, projectId], references: [id, projectId], onDelete: Restrict)
+  retests           AcceptanceBatch[]         @relation("AcceptanceBatchRetest")
+  createdBy         User                      @relation("AcceptanceBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  startedBy         User?                     @relation("AcceptanceBatchStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  lockedBy          User?                     @relation("AcceptanceBatchLockedBy", fields: [lockedById], references: [id], onDelete: Restrict)
+  results           AcceptanceTestResult[]
+
+  @@unique([id, projectId])
+  @@index([projectId, acceptanceType, status, createdAt])
+  @@index([projectId, scopeType, scopeId])
+  @@index([templateVersionId, createdAt])
+  @@map("acceptance_batches")
+}
+
+model AcceptanceTestResult {
+  id        String                         @id @default(cuid())
+  projectId String                         @map("project_id")
+  batchId   String                         @map("batch_id")
+  itemId    String                         @map("item_id")
+  version   Int                            @default(1)
+  createdAt DateTime                       @default(now()) @map("created_at")
+  project   Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  batch     AcceptanceBatch                @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
+  item      AcceptanceTestItemDefinition   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  revisions AcceptanceTestResultRevision[]
+
+  @@unique([batchId, itemId])
+  @@unique([id, projectId])
+  @@index([projectId, batchId])
+  @@index([itemId, createdAt])
+  @@map("acceptance_test_results")
+}
+
+model AcceptanceTestResultRevision {
+  id                   String                                 @id @default(cuid())
+  projectId            String                                 @map("project_id")
+  resultId             String                                 @map("result_id")
+  revisionNo           Int                                    @map("revision_no")
+  supersedesRevisionId String?                                @map("supersedes_revision_id")
+  decision             AcceptanceDecision
+  measuredValue        String?                                @map("measured_value")
+  measuredUnit         String?                                @map("measured_unit")
+  note                 String?
+  correctionReason     String?                                @map("correction_reason")
+  createdById          String                                 @map("created_by_id")
+  createdAt            DateTime                               @default(now()) @map("created_at")
+  project              Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  result               AcceptanceTestResult                   @relation(fields: [resultId, projectId], references: [id, projectId], onDelete: Restrict)
+  supersedes           AcceptanceTestResultRevision?          @relation("AcceptanceResultRevisionSupersedes", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
+  corrections          AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
+  createdBy            User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  evidence             AcceptanceTestResultRevisionEvidence[]
+
+  @@unique([resultId, revisionNo])
+  @@unique([id, projectId])
+  @@index([projectId, resultId, revisionNo])
+  @@map("acceptance_test_result_revisions")
+}
+
+model AcceptanceTestResultRevisionEvidence {
+  id           String                       @id @default(cuid())
+  projectId    String                       @map("project_id")
+  revisionId   String                       @map("revision_id")
+  fileObjectId String                       @map("file_object_id")
+  createdById  String                       @map("created_by_id")
+  createdAt    DateTime                     @default(now()) @map("created_at")
+  project      Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  revision     AcceptanceTestResultRevision @relation(fields: [revisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  fileObject   FileObject                   @relation(fields: [fileObjectId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy    User                         @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([revisionId, fileObjectId])
+  @@index([projectId, revisionId])
+  @@index([fileObjectId, projectId])
+  @@map("acceptance_test_result_revision_evidence")
+}
+
 model PublicLibraryDocument {
-  id                        String                        @id @default(cuid())
-  code                      String                        @unique
+  id                        String                          @id @default(cuid())
+  code                      String                          @unique
   title                     String
-  materialType              PublicLibraryMaterialType     @map("material_type")
-  status                    PublicLibraryDocumentStatus   @default(ACTIVE)
-  currentPublishedVersionId String?                       @unique @map("current_published_version_id")
-  version                   Int                           @default(1)
-  createdById               String                        @map("created_by_id")
-  voidedById                String?                       @map("voided_by_id")
-  voidedAt                  DateTime?                     @map("voided_at")
-  voidReason                String?                       @map("void_reason")
-  createdAt                 DateTime                      @default(now()) @map("created_at")
-  updatedAt                 DateTime                      @updatedAt @map("updated_at")
-  createdBy                 User                          @relation("PublicLibraryDocumentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  voidedBy                  User?                         @relation("PublicLibraryDocumentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
-  currentPublishedVersion   PublicLibraryDocumentVersion? @relation("PublicLibraryDocumentCurrentPublishedVersion", fields: [currentPublishedVersionId], references: [id], onDelete: Restrict)
-  versions                  PublicLibraryDocumentVersion[] @relation("PublicLibraryDocumentVersions")
+  materialType              PublicLibraryMaterialType       @map("material_type")
+  status                    PublicLibraryDocumentStatus     @default(ACTIVE)
+  currentPublishedVersionId String?                         @unique @map("current_published_version_id")
+  version                   Int                             @default(1)
+  createdById               String                          @map("created_by_id")
+  voidedById                String?                         @map("voided_by_id")
+  voidedAt                  DateTime?                       @map("voided_at")
+  voidReason                String?                         @map("void_reason")
+  createdAt                 DateTime                        @default(now()) @map("created_at")
+  updatedAt                 DateTime                        @updatedAt @map("updated_at")
+  createdBy                 User                            @relation("PublicLibraryDocumentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voidedBy                  User?                           @relation("PublicLibraryDocumentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentPublishedVersion   PublicLibraryDocumentVersion?   @relation("PublicLibraryDocumentCurrentPublishedVersion", fields: [currentPublishedVersionId], references: [id], onDelete: Restrict)
+  versions                  PublicLibraryDocumentVersion[]  @relation("PublicLibraryDocumentVersions")
   projectReferences         ProjectPublicLibraryReference[]
 
   @@index([status, materialType, code])
@@ -2361,29 +2565,29 @@ model PublicLibraryDocument {
 }
 
 model PublicLibraryDocumentVersion {
-  id                  String                           @id @default(cuid())
-  documentId          String                           @map("document_id")
+  id                  String                             @id @default(cuid())
+  documentId          String                             @map("document_id")
   version             Int
   status              PublicLibraryDocumentVersionStatus @default(DRAFT)
-  sourceFileId        String                           @map("source_file_id")
-  sourceFileSha256    String                           @map("source_file_sha256")
-  sourceMimeType      String                           @map("source_mime_type")
-  sourceFileSize      BigInt                           @map("source_file_size")
-  applicableModels    Json                             @default("[]") @map("applicable_models")
-  applicablePlatforms Json                             @default("[]") @map("applicable_platforms")
-  createdById         String                           @map("created_by_id")
-  publishedById       String?                          @map("published_by_id")
-  publishedAt         DateTime?                        @map("published_at")
-  voidedById          String?                          @map("voided_by_id")
-  voidedAt            DateTime?                        @map("voided_at")
-  voidReason          String?                          @map("void_reason")
-  createdAt           DateTime                         @default(now()) @map("created_at")
-  document            PublicLibraryDocument            @relation("PublicLibraryDocumentVersions", fields: [documentId], references: [id], onDelete: Restrict)
-  sourceFile          FileObject                       @relation("PublicLibraryVersionSourceFile", fields: [sourceFileId], references: [id], onDelete: Restrict)
-  createdBy           User                             @relation("PublicLibraryVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  publishedBy         User?                            @relation("PublicLibraryVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
-  voidedBy            User?                            @relation("PublicLibraryVersionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
-  currentForDocument  PublicLibraryDocument?           @relation("PublicLibraryDocumentCurrentPublishedVersion")
+  sourceFileId        String                             @map("source_file_id")
+  sourceFileSha256    String                             @map("source_file_sha256")
+  sourceMimeType      String                             @map("source_mime_type")
+  sourceFileSize      BigInt                             @map("source_file_size")
+  applicableModels    Json                               @default("[]") @map("applicable_models")
+  applicablePlatforms Json                               @default("[]") @map("applicable_platforms")
+  createdById         String                             @map("created_by_id")
+  publishedById       String?                            @map("published_by_id")
+  publishedAt         DateTime?                          @map("published_at")
+  voidedById          String?                            @map("voided_by_id")
+  voidedAt            DateTime?                          @map("voided_at")
+  voidReason          String?                            @map("void_reason")
+  createdAt           DateTime                           @default(now()) @map("created_at")
+  document            PublicLibraryDocument              @relation("PublicLibraryDocumentVersions", fields: [documentId], references: [id], onDelete: Restrict)
+  sourceFile          FileObject                         @relation("PublicLibraryVersionSourceFile", fields: [sourceFileId], references: [id], onDelete: Restrict)
+  createdBy           User                               @relation("PublicLibraryVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy         User?                              @relation("PublicLibraryVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  voidedBy            User?                              @relation("PublicLibraryVersionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  currentForDocument  PublicLibraryDocument?             @relation("PublicLibraryDocumentCurrentPublishedVersion")
   projectReferences   ProjectPublicLibraryReference[]
 
   @@unique([documentId, version])
@@ -2448,15 +2652,15 @@ model MechanicalDrawingVersionFile {
 }
 
 model MechanicalDrawingImportBatch {
-  id          String                   @id @default(cuid())
-  projectId   String                   @map("project_id")
-  status      DrawingImportBatchStatus @default(PENDING_CONFIRMATION)
-  version     Int                      @default(1)
-  createdById String                   @map("created_by_id")
-  createdAt   DateTime                 @default(now()) @map("created_at")
-  updatedAt   DateTime                 @updatedAt @map("updated_at")
-  project     Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  createdBy   User                     @relation("MechanicalDrawingImportBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  id          String                        @id @default(cuid())
+  projectId   String                        @map("project_id")
+  status      DrawingImportBatchStatus      @default(PENDING_CONFIRMATION)
+  version     Int                           @default(1)
+  createdById String                        @map("created_by_id")
+  createdAt   DateTime                      @default(now()) @map("created_at")
+  updatedAt   DateTime                      @updatedAt @map("updated_at")
+  project     Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy   User                          @relation("MechanicalDrawingImportBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   items       MechanicalDrawingImportItem[]
 
   @@unique([id, projectId])
@@ -2465,21 +2669,21 @@ model MechanicalDrawingImportBatch {
 }
 
 model MechanicalDrawingImportItem {
-  id                 String                    @id @default(cuid())
-  projectId          String                    @map("project_id")
-  batchId            String                    @map("batch_id")
-  filenameStem       String                    @map("filename_stem")
-  pairingStatus      DrawingImportPairingStatus @map("pairing_status")
-  status             DrawingImportItemStatus   @default(PENDING)
-  confirmedDrawingId String?                   @map("confirmed_drawing_id")
-  drawingNumber      String?                   @map("drawing_number")
-  title              String?                   @map("title")
-  drawingType        String?                   @map("drawing_type")
-  createdAt          DateTime                  @default(now()) @map("created_at")
-  updatedAt          DateTime                  @updatedAt @map("updated_at")
-  project            Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  batch              MechanicalDrawingImportBatch @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
-  confirmedDrawing   MechanicalDrawing?        @relation("ConfirmedMechanicalDrawing", fields: [confirmedDrawingId, projectId], references: [id, projectId], onDelete: Restrict)
+  id                 String                            @id @default(cuid())
+  projectId          String                            @map("project_id")
+  batchId            String                            @map("batch_id")
+  filenameStem       String                            @map("filename_stem")
+  pairingStatus      DrawingImportPairingStatus        @map("pairing_status")
+  status             DrawingImportItemStatus           @default(PENDING)
+  confirmedDrawingId String?                           @map("confirmed_drawing_id")
+  drawingNumber      String?                           @map("drawing_number")
+  title              String?                           @map("title")
+  drawingType        String?                           @map("drawing_type")
+  createdAt          DateTime                          @default(now()) @map("created_at")
+  updatedAt          DateTime                          @updatedAt @map("updated_at")
+  project            Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  batch              MechanicalDrawingImportBatch      @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
+  confirmedDrawing   MechanicalDrawing?                @relation("ConfirmedMechanicalDrawing", fields: [confirmedDrawingId, projectId], references: [id, projectId], onDelete: Restrict)
   files              MechanicalDrawingImportItemFile[]
 
   @@unique([id, projectId])
@@ -2489,15 +2693,15 @@ model MechanicalDrawingImportItem {
 }
 
 model MechanicalDrawingImportItemFile {
-  id           String                   @id @default(cuid())
-  projectId    String                   @map("project_id")
-  itemId       String                   @map("item_id")
-  fileId       String                   @map("file_id")
-  inferredRole DrawingFileRole?         @map("inferred_role")
-  createdAt    DateTime                 @default(now()) @map("created_at")
-  project      Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  id           String                      @id @default(cuid())
+  projectId    String                      @map("project_id")
+  itemId       String                      @map("item_id")
+  fileId       String                      @map("file_id")
+  inferredRole DrawingFileRole?            @map("inferred_role")
+  createdAt    DateTime                    @default(now()) @map("created_at")
+  project      Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
   item         MechanicalDrawingImportItem @relation(fields: [itemId, projectId], references: [id, projectId], onDelete: Restrict)
-  file         FileObject               @relation("DrawingImportItemFile", fields: [fileId, projectId], references: [id, projectId], onDelete: Restrict)
+  file         FileObject                  @relation("DrawingImportItemFile", fields: [fileId, projectId], references: [id, projectId], onDelete: Restrict)
 
   @@unique([itemId, fileId])
   @@index([projectId, fileId])
@@ -2665,31 +2869,31 @@ model ProjectTemplateSnapshotComponent {
 }
 
 model DeliveryUnit {
-  id                         String                      @id @default(cuid())
-  projectId                  String                      @map("project_id")
-  parentId                   String?                     @map("parent_id")
-  unitType                   DeliveryUnitType            @map("unit_type")
-  code                       String
-  name                       String
-  status                     ProjectStructureNodeStatus  @default(ACTIVE)
-  position                   Int
-  version                    Int                         @default(1)
-  createdById                String                      @map("created_by_id")
-  updatedById                String                      @map("updated_by_id")
-  createdAt                  DateTime                    @default(now()) @map("created_at")
-  updatedAt                  DateTime                    @updatedAt @map("updated_at")
-  project                    Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  parent                     DeliveryUnit?               @relation("DeliveryUnitHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
-  children                   DeliveryUnit[]              @relation("DeliveryUnitHierarchy")
-  modules                    ProjectModule[]
+  id                           String                               @id @default(cuid())
+  projectId                    String                               @map("project_id")
+  parentId                     String?                              @map("parent_id")
+  unitType                     DeliveryUnitType                     @map("unit_type")
+  code                         String
+  name                         String
+  status                       ProjectStructureNodeStatus           @default(ACTIVE)
+  position                     Int
+  version                      Int                                  @default(1)
+  createdById                  String                               @map("created_by_id")
+  updatedById                  String                               @map("updated_by_id")
+  createdAt                    DateTime                             @default(now()) @map("created_at")
+  updatedAt                    DateTime                             @updatedAt @map("updated_at")
+  project                      Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  parent                       DeliveryUnit?                        @relation("DeliveryUnitHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children                     DeliveryUnit[]                       @relation("DeliveryUnitHierarchy")
+  modules                      ProjectModule[]
   materialRequirementRevisions ProjectMaterialRequirementRevision[]
-  responsibilityPackages     ResponsibilityPackage[]
-  planningTasks              PlanningTask[]
-  stageExecutions            DeliveryUnitStage[]
-  stageReleaseAuthorizations StageReleaseAuthorization[] @relation("DeliveryUnitStageReleaseAuthorizations")
-  gateInstances              ProjectGateInstance[]
-  createdBy                  User                        @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy                  User                        @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  responsibilityPackages       ResponsibilityPackage[]
+  planningTasks                PlanningTask[]
+  stageExecutions              DeliveryUnitStage[]
+  stageReleaseAuthorizations   StageReleaseAuthorization[]          @relation("DeliveryUnitStageReleaseAuthorizations")
+  gateInstances                ProjectGateInstance[]
+  createdBy                    User                                 @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                    User                                 @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -2700,26 +2904,26 @@ model DeliveryUnit {
 }
 
 model ProjectModule {
-  id                     String                     @id @default(cuid())
-  projectId              String                     @map("project_id")
-  deliveryUnitId         String                     @map("delivery_unit_id")
-  code                   String
-  name                   String
-  status                 ProjectStructureNodeStatus @default(ACTIVE)
-  position               Int
-  version                Int                        @default(1)
-  createdById            String                     @map("created_by_id")
-  updatedById            String                     @map("updated_by_id")
-  createdAt              DateTime                   @default(now()) @map("created_at")
-  updatedAt              DateTime                   @updatedAt @map("updated_at")
-  project                Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  deliveryUnit           DeliveryUnit               @relation(fields: [deliveryUnitId], references: [id], onDelete: Restrict)
-  createdBy              User                       @relation("ProjectModuleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy              User                       @relation("ProjectModuleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  responsibilityPackages ResponsibilityPackage[]
+  id                           String                               @id @default(cuid())
+  projectId                    String                               @map("project_id")
+  deliveryUnitId               String                               @map("delivery_unit_id")
+  code                         String
+  name                         String
+  status                       ProjectStructureNodeStatus           @default(ACTIVE)
+  position                     Int
+  version                      Int                                  @default(1)
+  createdById                  String                               @map("created_by_id")
+  updatedById                  String                               @map("updated_by_id")
+  createdAt                    DateTime                             @default(now()) @map("created_at")
+  updatedAt                    DateTime                             @updatedAt @map("updated_at")
+  project                      Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deliveryUnit                 DeliveryUnit                         @relation(fields: [deliveryUnitId], references: [id], onDelete: Restrict)
+  createdBy                    User                                 @relation("ProjectModuleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                    User                                 @relation("ProjectModuleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  responsibilityPackages       ResponsibilityPackage[]
   materialRequirementRevisions ProjectMaterialRequirementRevision[]
-  planningTasks          PlanningTask[]
-  gateInstances          ProjectGateInstance[]
+  planningTasks                PlanningTask[]
+  gateInstances                ProjectGateInstance[]
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -2780,37 +2984,37 @@ model ProjectCapabilityRevision {
 }
 
 model ResponsibilityPackage {
-  id                     String                       @id @default(cuid())
-  projectId              String                       @map("project_id")
-  deliveryUnitId         String?                      @map("delivery_unit_id")
-  moduleId               String?                      @map("module_id")
-  code                   String
-  name                   String
-  description            String?
-  ownerMembershipId      String                       @map("owner_membership_id")
-  inputsJson             Json                         @map("inputs_json")
-  outputsJson            Json                         @map("outputs_json")
-  acceptanceCriteriaJson Json                         @map("acceptance_criteria_json")
-  valueWeight            Int                          @map("value_weight")
-  status                 ResponsibilityPackageStatus  @default(OPEN)
-  acceptanceCycle        Int                          @default(0) @map("acceptance_cycle")
-  transitionSequence     Int                          @default(1) @map("transition_sequence")
-  acceptedAt             DateTime?                    @map("accepted_at")
-  closedAt               DateTime?                    @map("closed_at")
-  version                Int                          @default(1)
-  createdById            String                       @map("created_by_id")
-  updatedById            String                       @map("updated_by_id")
-  createdAt              DateTime                     @default(now()) @map("created_at")
-  updatedAt              DateTime                     @updatedAt @map("updated_at")
-  project                Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  deliveryUnit           DeliveryUnit?                @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
-  module                 ProjectModule?               @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
-  ownerMembership        ProjectMember                @relation(fields: [ownerMembershipId], references: [id], onDelete: Restrict)
-  createdBy              User                         @relation("ResponsibilityPackageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy              User                         @relation("ResponsibilityPackageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  events                 ResponsibilityPackageEvent[]
+  id                           String                               @id @default(cuid())
+  projectId                    String                               @map("project_id")
+  deliveryUnitId               String?                              @map("delivery_unit_id")
+  moduleId                     String?                              @map("module_id")
+  code                         String
+  name                         String
+  description                  String?
+  ownerMembershipId            String                               @map("owner_membership_id")
+  inputsJson                   Json                                 @map("inputs_json")
+  outputsJson                  Json                                 @map("outputs_json")
+  acceptanceCriteriaJson       Json                                 @map("acceptance_criteria_json")
+  valueWeight                  Int                                  @map("value_weight")
+  status                       ResponsibilityPackageStatus          @default(OPEN)
+  acceptanceCycle              Int                                  @default(0) @map("acceptance_cycle")
+  transitionSequence           Int                                  @default(1) @map("transition_sequence")
+  acceptedAt                   DateTime?                            @map("accepted_at")
+  closedAt                     DateTime?                            @map("closed_at")
+  version                      Int                                  @default(1)
+  createdById                  String                               @map("created_by_id")
+  updatedById                  String                               @map("updated_by_id")
+  createdAt                    DateTime                             @default(now()) @map("created_at")
+  updatedAt                    DateTime                             @updatedAt @map("updated_at")
+  project                      Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deliveryUnit                 DeliveryUnit?                        @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module                       ProjectModule?                       @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership              ProjectMember                        @relation(fields: [ownerMembershipId], references: [id], onDelete: Restrict)
+  createdBy                    User                                 @relation("ResponsibilityPackageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                    User                                 @relation("ResponsibilityPackageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  events                       ResponsibilityPackageEvent[]
   materialRequirementRevisions ProjectMaterialRequirementRevision[]
-  planningTasks          PlanningTask[]
+  planningTasks                PlanningTask[]
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -3581,45 +3785,45 @@ model WbsNode {
 }
 
 model PlanningTask {
-  id                       String                     @id @default(cuid())
-  projectId                String                     @map("project_id")
-  wbsNodeId                String                     @map("wbs_node_id")
-  responsibilityPackageId  String?                    @map("responsibility_package_id")
-  deliveryUnitId           String?                    @map("delivery_unit_id")
-  moduleId                 String?                    @map("module_id")
-  ownerMembershipId        String                     @map("owner_membership_id")
-  code                     String
-  name                     String
-  description              String?
-  position                 Int
-  plannedStartAt           DateTime                   @map("planned_start_at")
-  plannedFinishAt          DateTime                   @map("planned_finish_at")
-  plannedDurationMinutes   Int                        @map("planned_duration_minutes")
-  weight                   Int
-  status                   PlanningTaskStatus         @default(NOT_STARTED)
-  actualStartAt            DateTime?                  @map("actual_start_at")
-  actualFinishAt           DateTime?                  @map("actual_finish_at")
-  remainingDurationMinutes Int                        @map("remaining_duration_minutes")
-  forecastFinishAt         DateTime                   @map("forecast_finish_at")
-  version                  Int                        @default(1)
-  closedAt                 DateTime?                  @map("closed_at")
-  createdById              String                     @map("created_by_id")
-  updatedById              String                     @map("updated_by_id")
-  createdAt                DateTime                   @default(now()) @map("created_at")
-  updatedAt                DateTime                   @updatedAt @map("updated_at")
-  project                  Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  wbsNode                  WbsNode                    @relation(fields: [wbsNodeId, projectId], references: [id, projectId], onDelete: Restrict)
-  responsibilityPackage    ResponsibilityPackage?     @relation(fields: [responsibilityPackageId, projectId], references: [id, projectId], onDelete: Restrict)
-  deliveryUnit             DeliveryUnit?              @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
-  module                   ProjectModule?             @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
-  ownerMembership          ProjectMember              @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
-  createdBy                User                       @relation("PlanningTaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy                User                       @relation("PlanningTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  predecessorDependencies  TaskDependency[]           @relation("TaskDependencyPredecessor")
-  successorDependencies    TaskDependency[]           @relation("TaskDependencySuccessor")
-  milestoneLinks           ProjectMilestoneTaskLink[] @relation("PlanningTaskMilestoneLinks")
+  id                           String                               @id @default(cuid())
+  projectId                    String                               @map("project_id")
+  wbsNodeId                    String                               @map("wbs_node_id")
+  responsibilityPackageId      String?                              @map("responsibility_package_id")
+  deliveryUnitId               String?                              @map("delivery_unit_id")
+  moduleId                     String?                              @map("module_id")
+  ownerMembershipId            String                               @map("owner_membership_id")
+  code                         String
+  name                         String
+  description                  String?
+  position                     Int
+  plannedStartAt               DateTime                             @map("planned_start_at")
+  plannedFinishAt              DateTime                             @map("planned_finish_at")
+  plannedDurationMinutes       Int                                  @map("planned_duration_minutes")
+  weight                       Int
+  status                       PlanningTaskStatus                   @default(NOT_STARTED)
+  actualStartAt                DateTime?                            @map("actual_start_at")
+  actualFinishAt               DateTime?                            @map("actual_finish_at")
+  remainingDurationMinutes     Int                                  @map("remaining_duration_minutes")
+  forecastFinishAt             DateTime                             @map("forecast_finish_at")
+  version                      Int                                  @default(1)
+  closedAt                     DateTime?                            @map("closed_at")
+  createdById                  String                               @map("created_by_id")
+  updatedById                  String                               @map("updated_by_id")
+  createdAt                    DateTime                             @default(now()) @map("created_at")
+  updatedAt                    DateTime                             @updatedAt @map("updated_at")
+  project                      Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  wbsNode                      WbsNode                              @relation(fields: [wbsNodeId, projectId], references: [id, projectId], onDelete: Restrict)
+  responsibilityPackage        ResponsibilityPackage?               @relation(fields: [responsibilityPackageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit                 DeliveryUnit?                        @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module                       ProjectModule?                       @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership              ProjectMember                        @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                    User                                 @relation("PlanningTaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                    User                                 @relation("PlanningTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  predecessorDependencies      TaskDependency[]                     @relation("TaskDependencyPredecessor")
+  successorDependencies        TaskDependency[]                     @relation("TaskDependencySuccessor")
+  milestoneLinks               ProjectMilestoneTaskLink[]           @relation("PlanningTaskMilestoneLinks")
   materialRequirementRevisions ProjectMaterialRequirementRevision[]
-  scheduleForecasts        ScheduleTaskForecast[]
+  scheduleForecasts            ScheduleTaskForecast[]
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -3816,14 +4020,14 @@ model PlanningBaselineCalendarSnapshot {
 }
 
 model CockpitProjection {
-  id                 String              @id @default(cuid())
-  projectId          String              @map("project_id")
-  sourceChecksum     String              @map("source_checksum")
-  sourceVersionsJson Json                @map("source_versions_json")
+  id                 String                       @id @default(cuid())
+  projectId          String                       @map("project_id")
+  sourceChecksum     String                       @map("source_checksum")
+  sourceVersionsJson Json                         @map("source_versions_json")
   health             CockpitHealthStatus
-  calculatedAt       DateTime            @map("calculated_at")
-  createdAt          DateTime            @default(now()) @map("created_at")
-  project            Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  calculatedAt       DateTime                     @map("calculated_at")
+  createdAt          DateTime                     @default(now()) @map("created_at")
+  project            Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
   exceptions         CockpitExceptionProjection[]
 
   @@unique([projectId, sourceChecksum])
@@ -3869,20 +4073,20 @@ model ResourceLoadProjection {
 }
 
 model ResourceLoadPersonProjection {
-  id                String                 @id @default(cuid())
-  projectionId      String                 @map("projection_id")
-  projectId         String                 @map("project_id")
-  ownerMembershipId String                 @map("owner_membership_id")
-  personId          String                 @map("person_id")
-  personName        String                 @map("person_name")
-  departmentId      String                 @map("department_id")
+  id                String                       @id @default(cuid())
+  projectionId      String                       @map("projection_id")
+  projectId         String                       @map("project_id")
+  ownerMembershipId String                       @map("owner_membership_id")
+  personId          String                       @map("person_id")
+  personName        String                       @map("person_name")
+  departmentId      String                       @map("department_id")
   discipline        ProjectRole
-  plannedDays       Int                    @map("planned_days")
-  activeTaskCount   Int                    @map("active_task_count")
-  createdAt         DateTime               @default(now()) @map("created_at")
-  projection        ResourceLoadProjection @relation(fields: [projectionId, projectId], references: [id, projectId], onDelete: Restrict)
-  project           Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  ownerMembership   ProjectMember          @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  plannedDays       Int                          @map("planned_days")
+  activeTaskCount   Int                          @map("active_task_count")
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  projection        ResourceLoadProjection       @relation(fields: [projectionId, projectId], references: [id, projectId], onDelete: Restrict)
+  project           Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  ownerMembership   ProjectMember                @relation(fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
   tasks             ResourceLoadTaskProjection[]
 
   @@unique([projectionId, ownerMembershipId])
@@ -3982,28 +4186,28 @@ model ScheduleTaskForecast {
 }
 
 model ProjectMember {
-  id                          String                  @id @default(cuid())
-  projectId                   String                  @map("project_id")
-  userId                      String                  @map("user_id")
-  projectRole                 ProjectRole             @map("project_role")
-  departmentId                String?                 @map("department_id")
-  assignedById                String                  @map("assigned_by_id")
-  joinedAt                    DateTime                @default(now()) @map("joined_at")
-  leftAt                      DateTime?               @map("left_at")
-  leftById                    String?                 @map("left_by_id")
-  version                     Int                     @default(1)
-  project                     Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  user                        User                    @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Restrict)
-  assignedBy                  User                    @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
-  leftBy                      User?                   @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
-  ownedResponsibilityPackages ResponsibilityPackage[]
-  assignedPlanningTasks       PlanningTask[]
+  id                            String                         @id @default(cuid())
+  projectId                     String                         @map("project_id")
+  userId                        String                         @map("user_id")
+  projectRole                   ProjectRole                    @map("project_role")
+  departmentId                  String?                        @map("department_id")
+  assignedById                  String                         @map("assigned_by_id")
+  joinedAt                      DateTime                       @default(now()) @map("joined_at")
+  leftAt                        DateTime?                      @map("left_at")
+  leftById                      String?                        @map("left_by_id")
+  version                       Int                            @default(1)
+  project                       Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  user                          User                           @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Restrict)
+  assignedBy                    User                           @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+  leftBy                        User?                          @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
+  ownedResponsibilityPackages   ResponsibilityPackage[]
+  assignedPlanningTasks         PlanningTask[]
   resourceLoadPersonProjections ResourceLoadPersonProjection[]
-  ownedIssues                 Issue[]                 @relation("IssueOwnerMembership")
-  verifiedIssues              Issue[]                 @relation("IssueVerifierMembership")
-  ownedResidualItems          ResidualItem[]             @relation("ResidualItemOwnerMembership")
-  verifiedResidualItems       ResidualItem[]             @relation("ResidualItemVerifierMembership")
-  procurementTrackingLines    ProcurementTrackingLine[]
+  ownedIssues                   Issue[]                        @relation("IssueOwnerMembership")
+  verifiedIssues                Issue[]                        @relation("IssueVerifierMembership")
+  ownedResidualItems            ResidualItem[]                 @relation("ResidualItemOwnerMembership")
+  verifiedResidualItems         ResidualItem[]                 @relation("ResidualItemVerifierMembership")
+  procurementTrackingLines      ProcurementTrackingLine[]
 
   @@unique([id, projectId])
   @@index([projectId, leftAt])

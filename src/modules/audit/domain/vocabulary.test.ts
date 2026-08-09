@@ -12,6 +12,7 @@ import {
   GATE_APPROVAL_AUDIT_FIELDS,
   GATE_SUBMISSION_AUDIT_FIELDS,
   PROCUREMENT_AUDIT_FIELDS,
+  ACCEPTANCE_AUDIT_FIELDS,
   PROJECT_STAGE_AUDIT_FIELDS,
   STAGE_RELEASE_AUTHORIZATION_AUDIT_FIELDS
 } from "./vocabulary";
@@ -133,6 +134,59 @@ describe("procurement change impact audit vocabulary", () => {
     ]) {
       expect(schema).toContain(value);
       expect(migration).toContain("ADD VALUE IF NOT EXISTS '" + value + "'");
+    }
+  });
+});
+
+describe("acceptance audit vocabulary", () => {
+  it("keeps APM-100 immutable template, batch, result and evidence facts aligned", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260809020000_apm_100_acceptance_foundation/migration.sql"
+      ),
+      "utf8"
+    );
+
+    expect(AUDIT_ACTIONS).toMatchObject({
+      ACCEPTANCE_TEMPLATE_PUBLISHED: "ACCEPTANCE_TEMPLATE_PUBLISHED",
+      ACCEPTANCE_BATCH_CREATED: "ACCEPTANCE_BATCH_CREATED",
+      ACCEPTANCE_BATCH_STARTED: "ACCEPTANCE_BATCH_STARTED",
+      ACCEPTANCE_BATCH_LOCKED: "ACCEPTANCE_BATCH_LOCKED",
+      ACCEPTANCE_RESULT_RECORDED: "ACCEPTANCE_RESULT_RECORDED",
+      ACCEPTANCE_RESULT_CORRECTED: "ACCEPTANCE_RESULT_CORRECTED",
+      ACCEPTANCE_EVIDENCE_REFERENCED: "ACCEPTANCE_EVIDENCE_REFERENCED"
+    });
+    expect(AUDIT_OBJECT_TYPES).toMatchObject({
+      ACCEPTANCE_TEMPLATE_VERSION: "ACCEPTANCE_TEMPLATE_VERSION",
+      ACCEPTANCE_BATCH: "ACCEPTANCE_BATCH",
+      ACCEPTANCE_TEST_RESULT_REVISION: "ACCEPTANCE_TEST_RESULT_REVISION"
+    });
+    expect(ACCEPTANCE_AUDIT_FIELDS).toEqual(
+      expect.arrayContaining([
+        "projectId",
+        "templateVersionId",
+        "batchId",
+        "resultRevisionId",
+        "evidenceFileId",
+        "version"
+      ])
+    );
+    for (const value of [
+      "ACCEPTANCE_TEMPLATE_PUBLISHED",
+      "ACCEPTANCE_BATCH_CREATED",
+      "ACCEPTANCE_BATCH_STARTED",
+      "ACCEPTANCE_BATCH_LOCKED",
+      "ACCEPTANCE_RESULT_RECORDED",
+      "ACCEPTANCE_RESULT_CORRECTED",
+      "ACCEPTANCE_EVIDENCE_REFERENCED",
+      "ACCEPTANCE_TEMPLATE_VERSION",
+      "ACCEPTANCE_BATCH",
+      "ACCEPTANCE_TEST_RESULT_REVISION"
+    ]) {
+      expect(schema).toContain(value);
+      expect(migration).toContain(`ADD VALUE IF NOT EXISTS '${value}'`);
     }
   });
 });
