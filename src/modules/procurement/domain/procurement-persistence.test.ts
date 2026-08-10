@@ -283,10 +283,8 @@ describe("APM-090A procurement persistence", () => {
       expect(readinessScopeDefinition).toContain(scopeType);
     }
 
-    const alertSourceDefinition = schema.slice(
-      schema.indexOf("enum AlertSourceType"),
-      schema.indexOf("\n}\n", schema.indexOf("enum AlertSourceType"))
-    );
+    const alertSourceDefinition =
+      schema.match(/enum AlertSourceType\s*\{([\s\S]*?)\r?\n\}/u)?.[1] ?? "";
     const procurementAlertSources =
       alertSourceDefinition.match(/^\s+(PROCUREMENT_[A-Z_]+)$/gmu)?.map((value) => value.trim()) ??
       [];
