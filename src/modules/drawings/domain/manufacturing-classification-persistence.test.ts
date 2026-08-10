@@ -105,6 +105,13 @@ describe("APM-053 manufacturing classification persistence", () => {
     );
   });
 
+  it("uses the shared stable-code grammar for category, tag, and snapshot codes", async () => {
+    const migration = await readMigration();
+    const stableCodeGrammar = "'^[A-Z][A-Z0-9._-]{0,63}$'";
+
+    expect(migration.split(stableCodeGrammar)).toHaveLength(5);
+  });
+
   it("requires a classified exact published drawing version with verified controlled files", async () => {
     const migration = await readMigration();
 

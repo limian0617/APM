@@ -298,6 +298,41 @@ describeDatabase("APM-053 PostgreSQL manufacturing classification persistence", 
     await expect(assertLegacyNullCategoryUpdateIsAllowed()).resolves.toBe(1);
   });
 
+  it("allows a version-only drawing update after its assigned category is disabled", async () => {
+    const [category, cad] = await Promise.all([
+      db.manufacturingCategory.create({
+        data: { code: nextCode("CATEGORY"), name: "Disabled drawing category" }
+      }),
+      availableCadFile(ids.projectA, "disabled-category-drawing")
+    ]);
+    const drawingNumber = nextCode("DWG");
+    const drawing = await db.$transaction(async (tx) => {
+      const { document } = await createPublishedDocument(tx, ids.projectA, drawingNumber, cad);
+      return tx.mechanicalDrawing.create({
+        data: {
+          projectId: ids.projectA,
+          documentId: document.id,
+          drawingNumber,
+          drawingType: "PART",
+          manufacturingCategoryId: category.id,
+          createdById: ids.actor
+        }
+      });
+    });
+
+    await db.manufacturingCategory.update({
+      where: { id: category.id },
+      data: { isActive: false, version: { increment: 1 } }
+    });
+
+    await expect(
+      db.mechanicalDrawing.update({
+        where: { id: drawing.id },
+        data: { version: { increment: 1 } }
+      })
+    ).resolves.toMatchObject({ manufacturingCategoryId: category.id, version: 2 });
+  });
+
   it("rejects cross-project, mismatched, and unpublished drawing versions", async () => {
     const [drawingA, drawingAOther, drawingB] = await Promise.all([
       createPublishedDrawing(ids.projectA, "same-project-primary"),

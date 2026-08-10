@@ -15,7 +15,7 @@ CREATE TABLE "manufacturing_categories" (
   CONSTRAINT "manufacturing_categories_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "manufacturing_categories_code_key" UNIQUE ("code"),
   CONSTRAINT "manufacturing_categories_code_check" CHECK (
-    "code" ~ '^[A-Z][A-Z0-9_]{0,63}$'
+    "code" ~ '^[A-Z][A-Z0-9._-]{0,63}$'
   ),
   CONSTRAINT "manufacturing_categories_name_check" CHECK (
     length(btrim("name")) BETWEEN 1 AND 191
@@ -36,7 +36,7 @@ CREATE TABLE "process_tags" (
   CONSTRAINT "process_tags_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "process_tags_code_key" UNIQUE ("code"),
   CONSTRAINT "process_tags_code_check" CHECK (
-    "code" ~ '^[A-Z][A-Z0-9_]{0,63}$'
+    "code" ~ '^[A-Z][A-Z0-9._-]{0,63}$'
   ),
   CONSTRAINT "process_tags_name_check" CHECK (
     length(btrim("name")) BETWEEN 1 AND 191
@@ -127,7 +127,7 @@ CREATE TABLE "drawing_selection_items" (
   "updated_at" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "drawing_selection_items_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "drawing_selection_items_category_snapshot_code_check" CHECK (
-    "manufacturing_category_code_snapshot" ~ '^[A-Z][A-Z0-9_]{0,63}$'
+    "manufacturing_category_code_snapshot" ~ '^[A-Z][A-Z0-9._-]{0,63}$'
   ),
   CONSTRAINT "drawing_selection_items_drawing_number_snapshot_check" CHECK (
     "drawing_number_snapshot" ~ '^[A-Z0-9][A-Z0-9._-]{0,63}$'
@@ -306,6 +306,10 @@ BEGIN
       RAISE EXCEPTION 'mechanical drawings require a manufacturing category'
         USING ERRCODE = '23514';
     END IF;
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE'
+    AND NEW."manufacturing_category_id" IS NOT DISTINCT FROM OLD."manufacturing_category_id" THEN
     RETURN NEW;
   END IF;
   SELECT "is_active" INTO category_active
@@ -512,7 +516,7 @@ BEGIN
   LOOP
     snapshot_tag_code := snapshot_tag #>> '{}';
     IF jsonb_typeof(snapshot_tag) IS DISTINCT FROM 'string'
-      OR snapshot_tag_code !~ '^[A-Z][A-Z0-9_]{0,63}$'
+      OR snapshot_tag_code !~ '^[A-Z][A-Z0-9._-]{0,63}$'
       OR (previous_snapshot_tag_code IS NOT NULL AND previous_snapshot_tag_code >= snapshot_tag_code) THEN
       RAISE EXCEPTION 'drawing selection item process tag snapshot must be sorted and unique'
         USING ERRCODE = '23514';
