@@ -302,6 +302,10 @@ DECLARE
   category_active BOOLEAN;
 BEGIN
   IF NEW."manufacturing_category_id" IS NULL THEN
+    IF TG_OP = 'INSERT' OR OLD."manufacturing_category_id" IS NOT NULL THEN
+      RAISE EXCEPTION 'mechanical drawings require a manufacturing category'
+        USING ERRCODE = '23514';
+    END IF;
     RETURN NEW;
   END IF;
   SELECT "is_active" INTO category_active
@@ -595,7 +599,7 @@ CREATE TRIGGER process_tags_reject_truncate
   BEFORE TRUNCATE ON "process_tags"
   FOR EACH STATEMENT EXECUTE FUNCTION reject_manufacturing_configuration_delete();
 CREATE TRIGGER mechanical_drawings_validate_manufacturing_category
-  BEFORE INSERT OR UPDATE OF "manufacturing_category_id" ON "mechanical_drawings"
+  BEFORE INSERT OR UPDATE ON "mechanical_drawings"
   FOR EACH ROW EXECUTE FUNCTION validate_active_manufacturing_category_assignment();
 CREATE TRIGGER mechanical_drawing_process_tags_validate_active_tag
   BEFORE INSERT OR UPDATE OF "process_tag_id" ON "mechanical_drawing_process_tags"
@@ -606,12 +610,18 @@ CREATE TRIGGER supplier_reference_manufacturing_capabilities_validate_active_cat
 CREATE TRIGGER supplier_reference_manufacturing_capabilities_validate_mutation
   BEFORE UPDATE OR DELETE ON "supplier_reference_manufacturing_capabilities"
   FOR EACH ROW EXECUTE FUNCTION validate_supplier_manufacturing_capability_mutation();
+CREATE TRIGGER supplier_reference_manufacturing_capabilities_reject_truncate
+  BEFORE TRUNCATE ON "supplier_reference_manufacturing_capabilities"
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_manufacturing_configuration_delete();
 CREATE TRIGGER supplier_reference_process_capabilities_validate_active_tag
   BEFORE INSERT OR UPDATE OF "process_tag_id" ON "supplier_reference_process_capabilities"
   FOR EACH ROW EXECUTE FUNCTION validate_supplier_process_capability();
 CREATE TRIGGER supplier_reference_process_capabilities_validate_mutation
   BEFORE UPDATE OR DELETE ON "supplier_reference_process_capabilities"
   FOR EACH ROW EXECUTE FUNCTION validate_supplier_process_capability_mutation();
+CREATE TRIGGER supplier_reference_process_capabilities_reject_truncate
+  BEFORE TRUNCATE ON "supplier_reference_process_capabilities"
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_manufacturing_configuration_delete();
 CREATE TRIGGER drawing_selection_sets_validate_mutation
   BEFORE UPDATE OR DELETE ON "drawing_selection_sets"
   FOR EACH ROW EXECUTE FUNCTION validate_drawing_selection_set_mutation();

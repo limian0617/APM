@@ -2669,21 +2669,21 @@ model AcceptanceTemplateVersion {
 }
 
 model AcceptanceTestItemDefinition {
-  id                      String                             @id @default(cuid())
-  templateVersionId       String                             @map("template_version_id")
-  code                    String
-  name                    String
-  position                Int
-  method                  String
-  acceptanceCriteria      String                             @map("acceptance_criteria")
-  unit                    String?
-  required                Boolean
-  evidenceRequired        Boolean                            @map("evidence_required")
-  applicableScope         String                             @map("applicable_scope")
-  defaultDiscipline       String                             @map("default_discipline")
-  createdAt               DateTime                           @default(now()) @map("created_at")
-  templateVersion         AcceptanceTemplateVersion          @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
-  results                 AcceptanceTestResult[]
+  id                 String                    @id @default(cuid())
+  templateVersionId  String                    @map("template_version_id")
+  code               String
+  name               String
+  position           Int
+  method             String
+  acceptanceCriteria String                    @map("acceptance_criteria")
+  unit               String?
+  required           Boolean
+  evidenceRequired   Boolean                   @map("evidence_required")
+  applicableScope    String                    @map("applicable_scope")
+  defaultDiscipline  String                    @map("default_discipline")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  templateVersion    AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  results            AcceptanceTestResult[]
   offlineDraftSubmissions OfflineAcceptanceDraftSubmission[]
 
   @@unique([templateVersionId, code])
@@ -2693,32 +2693,32 @@ model AcceptanceTestItemDefinition {
 }
 
 model AcceptanceBatch {
-  id                      String                             @id @default(cuid())
-  projectId               String                             @map("project_id")
-  acceptanceType          AcceptanceType                     @map("acceptance_type")
-  scopeType               AcceptanceScopeType                @map("scope_type")
-  scopeId                 String                             @map("scope_id")
-  templateVersionId       String                             @map("template_version_id")
-  status                  AcceptanceBatchStatus              @default(DRAFT)
-  retestOfBatchId         String?                            @map("retest_of_batch_id")
-  version                 Int                                @default(1)
-  createdById             String                             @map("created_by_id")
-  startedById             String?                            @map("started_by_id")
-  lockedById              String?                            @map("locked_by_id")
-  createdAt               DateTime                           @default(now()) @map("created_at")
-  startedAt               DateTime?                          @map("started_at")
-  lockedAt                DateTime?                          @map("locked_at")
-  updatedAt               DateTime                           @updatedAt @map("updated_at")
-  project                 Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  templateVersion         AcceptanceTemplateVersion          @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
-  retestOfBatch           AcceptanceBatch?                   @relation("AcceptanceBatchRetest", fields: [retestOfBatchId, projectId], references: [id, projectId], onDelete: Restrict)
-  retests                 AcceptanceBatch[]                  @relation("AcceptanceBatchRetest")
-  createdBy               User                               @relation("AcceptanceBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  startedBy               User?                              @relation("AcceptanceBatchStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
-  lockedBy                User?                              @relation("AcceptanceBatchLockedBy", fields: [lockedById], references: [id], onDelete: Restrict)
-  results                 AcceptanceTestResult[]
-  reportsAsSource         AcceptanceReport[]                 @relation("AcceptanceReportSourceBatch")
-  reportsAsFinal          AcceptanceReport[]                 @relation("AcceptanceReportFinalBatch")
+  id                String                    @id @default(cuid())
+  projectId         String                    @map("project_id")
+  acceptanceType    AcceptanceType            @map("acceptance_type")
+  scopeType         AcceptanceScopeType       @map("scope_type")
+  scopeId           String                    @map("scope_id")
+  templateVersionId String                    @map("template_version_id")
+  status            AcceptanceBatchStatus     @default(DRAFT)
+  retestOfBatchId   String?                   @map("retest_of_batch_id")
+  version           Int                       @default(1)
+  createdById       String                    @map("created_by_id")
+  startedById       String?                   @map("started_by_id")
+  lockedById        String?                   @map("locked_by_id")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  startedAt         DateTime?                 @map("started_at")
+  lockedAt          DateTime?                 @map("locked_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  templateVersion   AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  retestOfBatch     AcceptanceBatch?          @relation("AcceptanceBatchRetest", fields: [retestOfBatchId, projectId], references: [id, projectId], onDelete: Restrict)
+  retests           AcceptanceBatch[]         @relation("AcceptanceBatchRetest")
+  createdBy         User                      @relation("AcceptanceBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  startedBy         User?                     @relation("AcceptanceBatchStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  lockedBy          User?                     @relation("AcceptanceBatchLockedBy", fields: [lockedById], references: [id], onDelete: Restrict)
+  results           AcceptanceTestResult[]
+  reportsAsSource   AcceptanceReport[]        @relation("AcceptanceReportSourceBatch")
+  reportsAsFinal    AcceptanceReport[]        @relation("AcceptanceReportFinalBatch")
   offlineDraftSubmissions OfflineAcceptanceDraftSubmission[]
 
   @@unique([id, projectId])
@@ -2748,27 +2748,27 @@ model AcceptanceTestResult {
 }
 
 model AcceptanceTestResultRevision {
-  id                              String                                 @id @default(cuid())
-  projectId                       String                                 @map("project_id")
-  resultId                        String                                 @map("result_id")
-  revisionNo                      Int                                    @map("revision_no")
-  supersedesRevisionId            String?                                @map("supersedes_revision_id")
-  decision                        AcceptanceDecision
-  measuredValue                   String?                                @map("measured_value")
-  measuredUnit                    String?                                @map("measured_unit")
-  note                            String?
-  correctionReason                String?                                @map("correction_reason")
-  createdById                     String                                 @map("created_by_id")
-  createdAt                       DateTime                               @default(now()) @map("created_at")
-  project                         Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  result                          AcceptanceTestResult                   @relation(fields: [resultId, projectId], references: [id, projectId], onDelete: Restrict)
-  supersedes                      AcceptanceTestResultRevision?          @relation("AcceptanceResultRevisionSupersedes", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
-  corrections                     AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
-  createdBy                       User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  evidence                        AcceptanceTestResultRevisionEvidence[]
-  acceptanceResidualItems         ResidualItem[]                         @relation("AcceptanceResidualResultRevision")
-  offlineDraftBaselineSubmissions OfflineAcceptanceDraftSubmission[]     @relation("OfflineAcceptanceDraftBaselineRevision")
-  offlineDraftReviews             OfflineAcceptanceDraftReview[]         @relation("OfflineAcceptanceDraftReviewedResultRevision")
+  id                      String                                 @id @default(cuid())
+  projectId               String                                 @map("project_id")
+  resultId                String                                 @map("result_id")
+  revisionNo              Int                                    @map("revision_no")
+  supersedesRevisionId    String?                                @map("supersedes_revision_id")
+  decision                AcceptanceDecision
+  measuredValue           String?                                @map("measured_value")
+  measuredUnit            String?                                @map("measured_unit")
+  note                    String?
+  correctionReason        String?                                @map("correction_reason")
+  createdById             String                                 @map("created_by_id")
+  createdAt               DateTime                               @default(now()) @map("created_at")
+  project                 Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  result                  AcceptanceTestResult                   @relation(fields: [resultId, projectId], references: [id, projectId], onDelete: Restrict)
+  supersedes              AcceptanceTestResultRevision?          @relation("AcceptanceResultRevisionSupersedes", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
+  corrections             AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
+  createdBy               User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  evidence                AcceptanceTestResultRevisionEvidence[]
+  acceptanceResidualItems ResidualItem[]                         @relation("AcceptanceResidualResultRevision")
+  offlineDraftBaselineSubmissions OfflineAcceptanceDraftSubmission[] @relation("OfflineAcceptanceDraftBaselineRevision")
+  offlineDraftReviews             OfflineAcceptanceDraftReview[]     @relation("OfflineAcceptanceDraftReviewedResultRevision")
 
   @@unique([resultId, revisionNo])
   @@unique([id, projectId])
@@ -2795,32 +2795,32 @@ model AcceptanceTestResultRevisionEvidence {
 }
 
 model OfflineAcceptanceDraftSubmission {
-  id                       String                         @id @default(cuid())
-  projectId                String                         @map("project_id")
-  batchId                  String                         @map("batch_id")
-  itemId                   String                         @map("item_id")
-  clientDraftId            String                         @map("client_draft_id")
-  baselineBatchVersion     Int                            @map("baseline_batch_version")
-  baselineResultRevisionId String?                        @map("baseline_result_revision_id")
-  decision                 AcceptanceDecision
-  measuredValue            String?                        @map("measured_value")
-  measuredUnit             String?                        @map("measured_unit")
-  note                     String?
-  capturedAt               DateTime                       @map("captured_at")
-  submittedAt              DateTime                       @default(now()) @map("submitted_at")
-  submittedById            String                         @map("submitted_by_id")
-  payloadChecksum          String                         @map("payload_checksum")
-  serverResultSnapshot     Json?                          @map("server_result_snapshot")
-  status                   OfflineAcceptanceDraftStatus   @default(PENDING_REVIEW)
-  version                  Int                            @default(1)
-  createdAt                DateTime                       @default(now()) @map("created_at")
-  updatedAt                DateTime                       @updatedAt @map("updated_at")
-  project                  Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  batch                    AcceptanceBatch                @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
-  item                     AcceptanceTestItemDefinition   @relation(fields: [itemId], references: [id], onDelete: Restrict)
-  baselineResultRevision   AcceptanceTestResultRevision?  @relation("OfflineAcceptanceDraftBaselineRevision", fields: [baselineResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
-  submittedBy              User                           @relation("OfflineAcceptanceDraftSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
-  reviews                  OfflineAcceptanceDraftReview[]
+  id                     String                       @id @default(cuid())
+  projectId              String                       @map("project_id")
+  batchId                String                       @map("batch_id")
+  itemId                 String                       @map("item_id")
+  clientDraftId          String                       @map("client_draft_id")
+  baselineBatchVersion   Int                          @map("baseline_batch_version")
+  baselineResultRevisionId String?                     @map("baseline_result_revision_id")
+  decision               AcceptanceDecision
+  measuredValue          String?                      @map("measured_value")
+  measuredUnit           String?                      @map("measured_unit")
+  note                   String?
+  capturedAt             DateTime                     @map("captured_at")
+  submittedAt            DateTime                     @default(now()) @map("submitted_at")
+  submittedById          String                       @map("submitted_by_id")
+  payloadChecksum        String                       @map("payload_checksum")
+  serverResultSnapshot   Json?                        @map("server_result_snapshot")
+  status                 OfflineAcceptanceDraftStatus @default(PENDING_REVIEW)
+  version                Int                          @default(1)
+  createdAt              DateTime                     @default(now()) @map("created_at")
+  updatedAt              DateTime                     @updatedAt @map("updated_at")
+  project                Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  batch                  AcceptanceBatch              @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
+  item                   AcceptanceTestItemDefinition @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  baselineResultRevision AcceptanceTestResultRevision? @relation("OfflineAcceptanceDraftBaselineRevision", fields: [baselineResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  submittedBy            User                         @relation("OfflineAcceptanceDraftSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviews                OfflineAcceptanceDraftReview[]
 
   @@unique([id, projectId])
   @@unique([projectId, clientDraftId])
@@ -2830,25 +2830,25 @@ model OfflineAcceptanceDraftSubmission {
 }
 
 model OfflineAcceptanceDraftReview {
-  id                       String                               @id @default(cuid())
-  projectId                String                               @map("project_id")
-  submissionId             String                               @map("submission_id")
-  reviewNo                 Int                                  @map("review_no")
+  id                       String                                @id @default(cuid())
+  projectId                String                                @map("project_id")
+  submissionId             String                                @map("submission_id")
+  reviewNo                 Int                                   @map("review_no")
   decision                 OfflineAcceptanceDraftReviewDecision
   reason                   String
-  correctedDecision        AcceptanceDecision?                  @map("corrected_decision")
-  correctedMeasuredValue   String?                              @map("corrected_measured_value")
-  correctedMeasuredUnit    String?                              @map("corrected_measured_unit")
-  correctedNote            String?                              @map("corrected_note")
-  evidenceFileIds          Json                                 @default("[]") @map("evidence_file_ids")
-  reviewedResultRevisionId String?                              @map("reviewed_result_revision_id")
-  reviewChecksum           String                               @map("review_checksum")
-  reviewedById             String                               @map("reviewed_by_id")
-  reviewedAt               DateTime                             @default(now()) @map("reviewed_at")
-  project                  Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  submission               OfflineAcceptanceDraftSubmission     @relation(fields: [submissionId, projectId], references: [id, projectId], onDelete: Restrict)
-  reviewedBy               User                                 @relation("OfflineAcceptanceDraftReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
-  reviewedResultRevision   AcceptanceTestResultRevision?        @relation("OfflineAcceptanceDraftReviewedResultRevision", fields: [reviewedResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  correctedDecision        AcceptanceDecision?                   @map("corrected_decision")
+  correctedMeasuredValue   String?                               @map("corrected_measured_value")
+  correctedMeasuredUnit    String?                               @map("corrected_measured_unit")
+  correctedNote            String?                               @map("corrected_note")
+  evidenceFileIds          Json                                  @default("[]") @map("evidence_file_ids")
+  reviewedResultRevisionId String?                               @map("reviewed_result_revision_id")
+  reviewChecksum           String                                @map("review_checksum")
+  reviewedById             String                                @map("reviewed_by_id")
+  reviewedAt               DateTime                              @default(now()) @map("reviewed_at")
+  project                  Project                               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  submission               OfflineAcceptanceDraftSubmission       @relation(fields: [submissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  reviewedBy               User                                  @relation("OfflineAcceptanceDraftReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewedResultRevision   AcceptanceTestResultRevision?          @relation("OfflineAcceptanceDraftReviewedResultRevision", fields: [reviewedResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
 
   @@unique([id, projectId])
   @@unique([submissionId, reviewNo])

@@ -124,6 +124,17 @@ describe("APM-053 manufacturing classification persistence", () => {
     expect(migration).toContain('"role" = \'CAD_SOURCE\'::"DrawingFileRole"');
   });
 
+  it("rejects new or cleared null drawing categories while preserving uncategorized legacy rows", async () => {
+    const migration = await readMigration();
+
+    expect(migration).toContain('IF NEW."manufacturing_category_id" IS NULL THEN');
+    expect(migration).toContain(
+      "IF TG_OP = 'INSERT' OR OLD.\"manufacturing_category_id\" IS NOT NULL THEN"
+    );
+    expect(migration).toContain("'mechanical drawings require a manufacturing category'");
+    expect(migration).toContain('BEFORE INSERT OR UPDATE ON "mechanical_drawings"');
+  });
+
   it("enforces project-scoped foreign keys, snapshot shape, and locked selection immutability", async () => {
     const migration = await readMigration();
 
@@ -146,5 +157,11 @@ describe("APM-053 manufacturing classification persistence", () => {
     expect(migration).toContain("locked drawing selection items are immutable");
     expect(migration).toContain("drawing_selection_sets_reject_truncate");
     expect(migration).toContain("drawing_selection_items_reject_truncate");
+    expect(migration).toContain("supplier_reference_manufacturing_capabilities_reject_truncate");
+    expect(migration).toContain("supplier_reference_process_capabilities_reject_truncate");
+    expect(migration).toContain(
+      'BEFORE TRUNCATE ON "supplier_reference_manufacturing_capabilities"'
+    );
+    expect(migration).toContain('BEFORE TRUNCATE ON "supplier_reference_process_capabilities"');
   });
 });
