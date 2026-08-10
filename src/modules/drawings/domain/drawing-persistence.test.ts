@@ -13,8 +13,12 @@ describe("APM-052 drawing persistence", () => {
     expect(schema).toContain("model MechanicalDrawing {");
     expect(schema).toContain("model MechanicalDrawingVersionFile {");
     expect(schema).toContain("model MechanicalDrawingImportBatch {");
-    expect(schema).not.toContain("manufacturingCategory");
-    expect(schema).not.toContain("supplierCapability");
+    const mechanicalDrawingModel = schema.match(/model MechanicalDrawing \{[\s\S]*?^\}/mu)?.[0];
+
+    expect(mechanicalDrawingModel).toContain("drawingType");
+    expect(mechanicalDrawingModel).not.toMatch(
+      /\b(quantity|spareQuantity|requiredOn|supplierReferenceId|purpose)\b/u
+    );
     expect(migration).toContain('ON "mechanical_drawings"("project_id", "drawing_number")');
     expect(migration).toContain("mechanical drawing number must equal controlled document code");
     expect(migration).toContain("drawing version file facts are immutable");
