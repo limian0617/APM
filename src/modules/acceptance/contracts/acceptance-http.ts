@@ -39,6 +39,11 @@ export const acceptanceBatchPathSchema = z.strictObject({
   batchId: identifierSchema
 });
 
+export const offlineDraftSubmissionPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  submissionId: identifierSchema
+});
+
 export const acceptanceResultPathSchema = z.strictObject({
   projectId: identifierSchema,
   batchId: identifierSchema,
@@ -119,11 +124,48 @@ export const acceptanceBatchTransitionBodySchema = z.strictObject({
   reason: reasonSchema.optional()
 });
 
+export const offlineDraftSubmissionBodySchema = z.strictObject({
+  clientDraftId: identifierSchema,
+  batchId: identifierSchema,
+  itemId: identifierSchema,
+  baselineBatchVersion: positiveVersionSchema,
+  baselineResultRevisionId: identifierSchema.nullable(),
+  decision: decisionSchema,
+  measuredValue: z.string().trim().max(2000).nullable(),
+  measuredUnit: z.string().trim().max(64).nullable(),
+  note: z.string().trim().max(4096).nullable(),
+  capturedAt: z.string().datetime({ offset: true })
+});
+
+export const offlineDraftQuerySchema = z.strictObject({
+  status: z.enum(["PENDING_REVIEW", "CONFLICT", "ACCEPTED", "REJECTED"]).optional(),
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
+
+export const offlineDraftReviewBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  decision: z.enum(["ACCEPT", "ACCEPT_WITH_CORRECTION", "REJECT"]),
+  reason: reasonSchema.max(2048),
+  correctedDecision: decisionSchema.optional(),
+  correctedMeasuredValue: z.string().trim().max(2000).nullable().optional(),
+  correctedMeasuredUnit: z.string().trim().max(64).nullable().optional(),
+  correctedNote: z.string().trim().max(4096).nullable().optional(),
+  evidenceFileIds: z.array(identifierSchema).max(100).optional().default([])
+});
+
 export type AcceptanceBatchPath = z.infer<typeof acceptanceBatchPathSchema>;
 export type AcceptanceBatchQuery = z.infer<typeof acceptanceBatchQuerySchema>;
 export type CreateAcceptanceBatchBody = z.infer<typeof createAcceptanceBatchBodySchema>;
 export type CreateAcceptanceTemplateBody = z.infer<typeof createAcceptanceTemplateBodySchema>;
 export type AcceptanceResultBody = z.infer<typeof acceptanceResultBodySchema>;
+export type OfflineDraftSubmissionBody = z.infer<typeof offlineDraftSubmissionBodySchema>;
+export type OfflineDraftReviewBody = z.infer<typeof offlineDraftReviewBodySchema>;
 
 export function acceptanceServiceErrorResponse(error: unknown): Response | null {
   if (error instanceof AcceptanceServiceError || error instanceof AcceptancePolicyError) {

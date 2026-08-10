@@ -656,6 +656,19 @@ enum AcceptanceConfirmationStatus {
   SUPERSEDED
 }
 
+enum OfflineAcceptanceDraftStatus {
+  PENDING_REVIEW
+  CONFLICT
+  ACCEPTED
+  REJECTED
+}
+
+enum OfflineAcceptanceDraftReviewDecision {
+  ACCEPT
+  ACCEPT_WITH_CORRECTION
+  REJECT
+}
+
 enum JobStatus {
   PENDING
   RUNNING
@@ -1376,6 +1389,8 @@ enum AuditAction {
   ACCEPTANCE_CONFIRMATION_RECORDED
   ACCEPTANCE_CONFIRMATION_SUPERSEDED
   ACCEPTANCE_CONFIRMATION_READ
+  ACCEPTANCE_OFFLINE_DRAFT_SUBMITTED
+  ACCEPTANCE_OFFLINE_DRAFT_REVIEWED
   RND_PROJECT_CREATED
   RND_PROJECT_STATUS_CHANGED
   TECHNICAL_ASSET_CREATED
@@ -1463,6 +1478,8 @@ enum AuditObjectType {
   ACCEPTANCE_REPORT
   ACCEPTANCE_CONFIRMATION
   ACCEPTANCE_CONFIRMATION_EVIDENCE
+  ACCEPTANCE_OFFLINE_DRAFT_SUBMISSION
+  ACCEPTANCE_OFFLINE_DRAFT_REVIEW
   RND_PROJECT
   RND_PROJECT_EVENT
   TECHNICAL_ASSET
@@ -1569,6 +1586,8 @@ model User {
   acceptanceReportsRequested              AcceptanceReport[]                     @relation("AcceptanceReportRequestedBy")
   acceptanceConfirmationsRecorded         AcceptanceConfirmation[]               @relation("AcceptanceConfirmationRecordedBy")
   acceptanceConfirmationEvidenceCreated   AcceptanceConfirmationEvidence[]
+  offlineAcceptanceDraftsSubmitted        OfflineAcceptanceDraftSubmission[]     @relation("OfflineAcceptanceDraftSubmittedBy")
+  offlineAcceptanceDraftsReviewed         OfflineAcceptanceDraftReview[]         @relation("OfflineAcceptanceDraftReviewedBy")
   responsibilityPackagesCreated           ResponsibilityPackage[]                @relation("ResponsibilityPackageCreatedBy")
   responsibilityPackagesUpdated           ResponsibilityPackage[]                @relation("ResponsibilityPackageUpdatedBy")
   responsibilityPackageEventsActed        ResponsibilityPackageEvent[]           @relation("ResponsibilityPackageEventActor")
@@ -1750,6 +1769,8 @@ model Project {
   acceptanceReports                  AcceptanceReport[]
   acceptanceConfirmations            AcceptanceConfirmation[]
   acceptanceConfirmationEvidence     AcceptanceConfirmationEvidence[]
+  offlineAcceptanceDraftSubmissions  OfflineAcceptanceDraftSubmission[]
+  offlineAcceptanceDraftReviews      OfflineAcceptanceDraftReview[]
   materialRequirementRevisions       ProjectMaterialRequirementRevision[]
   responsibilityPackages             ResponsibilityPackage[]
   projectMilestones                  ProjectMilestone[]
@@ -2482,6 +2503,7 @@ model AcceptanceTestItemDefinition {
   createdAt          DateTime                  @default(now()) @map("created_at")
   templateVersion    AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
   results            AcceptanceTestResult[]
+  offlineDraftSubmissions OfflineAcceptanceDraftSubmission[]
 
   @@unique([templateVersionId, code])
   @@unique([templateVersionId, position])
@@ -2516,6 +2538,7 @@ model AcceptanceBatch {
   results           AcceptanceTestResult[]
   reportsAsSource   AcceptanceReport[]        @relation("AcceptanceReportSourceBatch")
   reportsAsFinal    AcceptanceReport[]        @relation("AcceptanceReportFinalBatch")
+  offlineDraftSubmissions OfflineAcceptanceDraftSubmission[]
 
   @@unique([id, projectId])
   @@index([projectId, acceptanceType, status, createdAt])
@@ -2563,6 +2586,8 @@ model AcceptanceTestResultRevision {
   createdBy               User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   evidence                AcceptanceTestResultRevisionEvidence[]
   acceptanceResidualItems ResidualItem[]                         @relation("AcceptanceResidualResultRevision")
+  offlineDraftBaselineSubmissions OfflineAcceptanceDraftSubmission[] @relation("OfflineAcceptanceDraftBaselineRevision")
+  offlineDraftReviews             OfflineAcceptanceDraftReview[]     @relation("OfflineAcceptanceDraftReviewedResultRevision")
 
   @@unique([resultId, revisionNo])
   @@unique([id, projectId])
@@ -2586,6 +2611,68 @@ model AcceptanceTestResultRevisionEvidence {
   @@index([projectId, revisionId])
   @@index([fileObjectId, projectId])
   @@map("acceptance_test_result_revision_evidence")
+}
+
+model OfflineAcceptanceDraftSubmission {
+  id                     String                       @id @default(cuid())
+  projectId              String                       @map("project_id")
+  batchId                String                       @map("batch_id")
+  itemId                 String                       @map("item_id")
+  clientDraftId          String                       @map("client_draft_id")
+  baselineBatchVersion   Int                          @map("baseline_batch_version")
+  baselineResultRevisionId String?                     @map("baseline_result_revision_id")
+  decision               AcceptanceDecision
+  measuredValue          String?                      @map("measured_value")
+  measuredUnit           String?                      @map("measured_unit")
+  note                   String?
+  capturedAt             DateTime                     @map("captured_at")
+  submittedAt            DateTime                     @default(now()) @map("submitted_at")
+  submittedById          String                       @map("submitted_by_id")
+  payloadChecksum        String                       @map("payload_checksum")
+  serverResultSnapshot   Json?                        @map("server_result_snapshot")
+  status                 OfflineAcceptanceDraftStatus @default(PENDING_REVIEW)
+  version                Int                          @default(1)
+  createdAt              DateTime                     @default(now()) @map("created_at")
+  updatedAt              DateTime                     @updatedAt @map("updated_at")
+  project                Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  batch                  AcceptanceBatch              @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
+  item                   AcceptanceTestItemDefinition @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  baselineResultRevision AcceptanceTestResultRevision? @relation("OfflineAcceptanceDraftBaselineRevision", fields: [baselineResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  submittedBy            User                         @relation("OfflineAcceptanceDraftSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviews                OfflineAcceptanceDraftReview[]
+
+  @@unique([id, projectId])
+  @@unique([projectId, clientDraftId])
+  @@index([projectId, status, submittedAt])
+  @@index([batchId, itemId, submittedAt])
+  @@map("offline_acceptance_draft_submissions")
+}
+
+model OfflineAcceptanceDraftReview {
+  id                       String                                @id @default(cuid())
+  projectId                String                                @map("project_id")
+  submissionId             String                                @map("submission_id")
+  reviewNo                 Int                                   @map("review_no")
+  decision                 OfflineAcceptanceDraftReviewDecision
+  reason                   String
+  correctedDecision        AcceptanceDecision?                   @map("corrected_decision")
+  correctedMeasuredValue   String?                               @map("corrected_measured_value")
+  correctedMeasuredUnit    String?                               @map("corrected_measured_unit")
+  correctedNote            String?                               @map("corrected_note")
+  evidenceFileIds          Json                                  @default("[]") @map("evidence_file_ids")
+  reviewedResultRevisionId String?                               @map("reviewed_result_revision_id")
+  reviewChecksum           String                                @map("review_checksum")
+  reviewedById             String                                @map("reviewed_by_id")
+  reviewedAt               DateTime                              @default(now()) @map("reviewed_at")
+  project                  Project                               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  submission               OfflineAcceptanceDraftSubmission       @relation(fields: [submissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  reviewedBy               User                                  @relation("OfflineAcceptanceDraftReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewedResultRevision   AcceptanceTestResultRevision?          @relation("OfflineAcceptanceDraftReviewedResultRevision", fields: [reviewedResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@unique([submissionId, reviewNo])
+  @@index([projectId, decision, reviewedAt])
+  @@map("offline_acceptance_draft_reviews")
 }
 
 model AcceptanceReport {

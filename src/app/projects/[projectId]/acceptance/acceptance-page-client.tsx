@@ -19,6 +19,20 @@ import {
   type AcceptanceReportFetchResult,
   type AcceptanceReportPageState
 } from "@/modules/acceptance/contracts/acceptance-report-page-state";
+import {
+  buildSatOfflineDraftQueueState,
+  type SatOfflineDraftQueueState
+} from "@/modules/acceptance/contracts/sat-offline-draft-page-state";
+import {
+  createOfflineSatDraftRecord,
+  listOfflineSatDrafts,
+  markOfflineSatDraftForSync,
+  markOfflineSatDraftSyncFailed,
+  markOfflineSatDraftSyncResult,
+  offlineDraftDisplayState,
+  saveOfflineSatDraft,
+  type OfflineSatDraftRecord
+} from "@/modules/acceptance/infrastructure/sat-offline-draft-store";
 
 type AcceptancePageClientProps = Readonly<{
   projectId: string;
@@ -37,6 +51,17 @@ type AcceptancePageContentProps = Readonly<{
   reportState?: AcceptanceReportPageState;
   onReportCommand?: (path: string, body: Record<string, unknown>) => Promise<void>;
   reportCommandError?: string | null;
+  offlineDraftQueueState?: SatOfflineDraftQueueState;
+  localOfflineDrafts?: readonly OfflineSatDraftRecord[];
+  onSaveOfflineDraft?: (
+    draft: Omit<
+      OfflineSatDraftRecord,
+      "localStatus" | "serverStatus" | "submissionId" | "lastError" | "updatedAt"
+    >
+  ) => Promise<void>;
+  onSyncOfflineDraft?: (draft: OfflineSatDraftRecord) => Promise<void>;
+  onReviewOfflineDraft?: (submissionId: string, body: Record<string, unknown>) => Promise<void>;
+  offlineDraftError?: string | null;
 }>;
 
 export function acceptanceCommandsForBatch(input: {
@@ -338,7 +363,9 @@ function ResultRevisionForm({
   frozenUnit,
   current,
   requireCorrection,
-  onCommand
+  onCommand,
+  isSat,
+  onSaveOfflineDraft
 }: {
   projectId: string;
   batchId: string;
@@ -348,6 +375,8 @@ function ResultRevisionForm({
   current: Record<string, unknown> | null;
   requireCorrection: boolean;
   onCommand: (path: string, body: Record<string, unknown>) => Promise<void>;
+  isSat: boolean;
+  onSaveOfflineDraft?: AcceptancePageContentProps["onSaveOfflineDraft"];
 }) {
   const [decision, setDecision] = useState(text(current?.decision, "NA"));
   const [measuredValue, setMeasuredValue] = useState(text(current?.measuredValue, ""));
@@ -415,6 +444,29 @@ function ResultRevisionForm({
       <button className="acceptance-command" type="submit">
         {requireCorrection ? "追加修订" : "录入结果"}
       </button>
+      {isSat && onSaveOfflineDraft ? (
+        <button
+          className="acceptance-command"
+          type="button"
+          onClick={() =>
+            void onSaveOfflineDraft({
+              clientDraftId: crypto.randomUUID(),
+              projectId,
+              batchId,
+              itemId,
+              baselineBatchVersion: version,
+              baselineResultRevisionId: typeof current?.id === "string" ? current.id : null,
+              decision: decision as "PASS" | "FAIL" | "NA",
+              measuredValue: measuredValue || null,
+              measuredUnit: frozenUnit,
+              note: note || null,
+              capturedAt: new Date().toISOString()
+            })
+          }
+        >
+          保存 SAT 离线草稿
+        </button>
+      ) : null}
     </form>
   );
 }
@@ -580,11 +632,13 @@ function FailureIssueActions({
 function BatchDetail({
   projectId,
   state,
-  onCommand
+  onCommand,
+  onSaveOfflineDraft
 }: {
   projectId: string;
   state: AcceptancePageDataState;
   onCommand: (path: string, body: Record<string, unknown>) => Promise<void>;
+  onSaveOfflineDraft?: AcceptancePageContentProps["onSaveOfflineDraft"];
 }) {
   const detail = state.batchDetail;
   const batch = detail && isRecord(detail.batch) ? detail.batch : null;
@@ -609,6 +663,7 @@ function BatchDetail({
     typeof summary.unlinkedFailureCount === "number" ? summary.unlinkedFailureCount : 0;
   const batchId = typeof batch.id === "string" ? batch.id : null;
   const version = typeof batch.version === "number" ? batch.version : null;
+  const isSat = batch.acceptanceType === "SAT";
   return (
     <section className="acceptance-detail" aria-label="验收测试项与结果">
       <div className="acceptance-section-heading">
@@ -712,6 +767,8 @@ function BatchDetail({
                           current={current}
                           requireCorrection={Boolean(current)}
                           onCommand={onCommand}
+                          isSat={isSat}
+                          onSaveOfflineDraft={onSaveOfflineDraft}
                         />
                       ) : null}
                     </td>
@@ -1098,6 +1155,231 @@ function ConfirmationForm({
   );
 }
 
+function OfflineDraftReviewForm({
+  submissionId,
+  version,
+  status,
+  onReview
+}: {
+  submissionId: string;
+  version: number;
+  status: string;
+  onReview: (submissionId: string, body: Record<string, unknown>) => Promise<void>;
+}) {
+  const [decision, setDecision] = useState(
+    status === "CONFLICT" ? "ACCEPT_WITH_CORRECTION" : "ACCEPT"
+  );
+  const [reason, setReason] = useState("");
+  const [correctedDecision, setCorrectedDecision] = useState("PASS");
+  const [correctedMeasuredValue, setCorrectedMeasuredValue] = useState("");
+  const [correctedMeasuredUnit, setCorrectedMeasuredUnit] = useState("");
+  const [correctedNote, setCorrectedNote] = useState("");
+  const [evidenceFileIds, setEvidenceFileIds] = useState("");
+  return (
+    <form
+      className="acceptance-issue-form"
+      aria-label="质量复核 SAT 离线草稿"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onReview(submissionId, {
+          version,
+          decision,
+          reason,
+          ...(decision === "ACCEPT_WITH_CORRECTION"
+            ? {
+                correctedDecision,
+                ...(correctedMeasuredValue ? { correctedMeasuredValue } : {}),
+                ...(correctedMeasuredUnit ? { correctedMeasuredUnit } : {}),
+                ...(correctedNote ? { correctedNote } : {})
+              }
+            : {}),
+          evidenceFileIds: evidenceFileIds
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean)
+        });
+      }}
+    >
+      <label>
+        复核决定
+        <select value={decision} onChange={(event) => setDecision(event.target.value)}>
+          {status !== "CONFLICT" ? <option value="ACCEPT">接受</option> : null}
+          <option value="ACCEPT_WITH_CORRECTION">修正后接受</option>
+          <option value="REJECT">拒绝</option>
+        </select>
+      </label>
+      {decision === "ACCEPT_WITH_CORRECTION" ? (
+        <>
+          <label>
+            修正判定
+            <select
+              value={correctedDecision}
+              onChange={(event) => setCorrectedDecision(event.target.value)}
+            >
+              <option value="PASS">PASS</option>
+              <option value="FAIL">FAIL</option>
+              <option value="NA">NA</option>
+            </select>
+          </label>
+          <label>
+            修正实测值（留空沿用草稿）
+            <input
+              value={correctedMeasuredValue}
+              onChange={(event) => setCorrectedMeasuredValue(event.target.value)}
+            />
+          </label>
+          <label>
+            修正单位（必须与冻结测试项一致）
+            <input
+              value={correctedMeasuredUnit}
+              onChange={(event) => setCorrectedMeasuredUnit(event.target.value)}
+            />
+          </label>
+          <label>
+            修正备注
+            <input
+              value={correctedNote}
+              onChange={(event) => setCorrectedNote(event.target.value)}
+            />
+          </label>
+        </>
+      ) : null}
+      <label>
+        复核理由
+        <input required value={reason} onChange={(event) => setReason(event.target.value)} />
+      </label>
+      <label>
+        已扫描复核证据文件 ID（逗号分隔）
+        <input
+          value={evidenceFileIds}
+          onChange={(event) => setEvidenceFileIds(event.target.value)}
+        />
+      </label>
+      <button className="acceptance-command" type="submit">
+        提交质量复核
+      </button>
+    </form>
+  );
+}
+
+function SatOfflineDraftSection({
+  selectedBatchId,
+  isSat,
+  queueState,
+  localDrafts,
+  onSync,
+  onReview,
+  commandError
+}: {
+  selectedBatchId: string | null;
+  isSat: boolean;
+  queueState: SatOfflineDraftQueueState;
+  localDrafts: readonly OfflineSatDraftRecord[];
+  onSync?: (draft: OfflineSatDraftRecord) => Promise<void>;
+  onReview?: (submissionId: string, body: Record<string, unknown>) => Promise<void>;
+  commandError?: string | null;
+}) {
+  if (!selectedBatchId || !isSat) return null;
+  const remoteDrafts =
+    queueState.status === "ready" || queueState.status === "stale"
+      ? queueState.drafts.filter((draft) => draft.batchId === selectedBatchId)
+      : [];
+  const canReview =
+    (queueState.status === "ready" || queueState.status === "stale") &&
+    queueState.allowedActions.includes("REVIEW_OFFLINE_DRAFT");
+  return (
+    <section className="acceptance-offline-drafts" aria-label="SAT 离线草稿与质量复核">
+      <div className="acceptance-section-heading">
+        <h2>SAT 离线草稿</h2>
+        <span>仅作为待复核输入，不构成正式验收事实</span>
+      </div>
+      {commandError ? (
+        <p className="acceptance-command-error" role="alert">
+          {commandError}
+        </p>
+      ) : null}
+      {queueState.status === "denied" ? (
+        <p>无权查看服务端离线草稿队列；本地草稿不会因此被删除。</p>
+      ) : null}
+      {queueState.status === "error" ? (
+        <p role="status">服务端草稿队列暂不可用；已保存的本地草稿可在恢复联网后重试。</p>
+      ) : null}
+      {queueState.status === "loading" ? <p aria-busy="true">正在读取离线草稿状态…</p> : null}
+      {localDrafts.length === 0 && remoteDrafts.length === 0 && queueState.status === "empty" ? (
+        <p className="acceptance-empty-inline">当前 SAT 批次没有本地草稿或待复核提交。</p>
+      ) : null}
+      {localDrafts.length > 0 ? (
+        <ul className="acceptance-offline-draft-list" aria-label="本地 SAT 离线草稿">
+          {localDrafts.map((draft) => (
+            <li key={draft.clientDraftId}>
+              <strong>{draft.itemId}</strong>
+              <span>
+                {draft.decision} · {offlineDraftDisplayState(draft)}
+              </span>
+              <small>客户端采集：{dateTime(draft.capturedAt)}</small>
+              {draft.lastError ? <small role="status">{draft.lastError}</small> : null}
+              {onSync &&
+              (draft.localStatus === "LOCAL_ONLY" || draft.localStatus === "SYNC_FAILED") ? (
+                <button
+                  className="acceptance-command"
+                  type="button"
+                  onClick={() => void onSync(draft)}
+                >
+                  联网提交草稿
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {remoteDrafts.length > 0 ? (
+        <ul className="acceptance-offline-draft-list" aria-label="服务端 SAT 离线草稿队列">
+          {remoteDrafts.map((draft, index) => {
+            const status = typeof draft.status === "string" ? draft.status : "PENDING_REVIEW";
+            const snapshot = isRecord(draft.serverResultSnapshot)
+              ? draft.serverResultSnapshot
+              : null;
+            const item = isRecord(draft.item) ? draft.item : {};
+            const submissionId = typeof draft.id === "string" ? draft.id : null;
+            const version = typeof draft.version === "number" ? draft.version : null;
+            return (
+              <li key={text(draft.id, `remote-offline-draft-${index}`)}>
+                <strong>{text(item.code, text(draft.itemId, "测试项"))}</strong>
+                <span>
+                  {text(draft.decision)} ·{" "}
+                  {offlineDraftDisplayState({
+                    localStatus: "SYNCED",
+                    serverStatus: status as OfflineSatDraftRecord["serverStatus"]
+                  })}
+                </span>
+                {status === "CONFLICT" ? (
+                  <small>
+                    已保留离线草稿值和当前服务器修订{" "}
+                    {text(snapshot?.currentRevisionId, "无正式结果")}
+                    ；质量复核后才可能形成正式修订。
+                  </small>
+                ) : null}
+                {canReview &&
+                submissionId &&
+                version !== null &&
+                ["PENDING_REVIEW", "CONFLICT"].includes(status) &&
+                onReview ? (
+                  <OfflineDraftReviewForm
+                    submissionId={submissionId}
+                    version={version}
+                    status={status}
+                    onReview={onReview}
+                  />
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 export function AcceptancePageContent({
   projectId,
   state,
@@ -1108,7 +1390,13 @@ export function AcceptancePageContent({
   commandError,
   reportState,
   onReportCommand,
-  reportCommandError
+  reportCommandError,
+  offlineDraftQueueState = { projectId, status: "loading" },
+  localOfflineDrafts = [],
+  onSaveOfflineDraft,
+  onSyncOfflineDraft,
+  onReviewOfflineDraft,
+  offlineDraftError
 }: AcceptancePageContentProps) {
   const executeCommand = onCommand ?? (async () => undefined);
   const reportViewState = reportState ?? {
@@ -1177,7 +1465,23 @@ export function AcceptancePageContent({
           fixture={fixture}
         />
       </div>
-      <BatchDetail projectId={projectId} state={state} onCommand={executeCommand} />
+      <BatchDetail
+        projectId={projectId}
+        state={state}
+        onCommand={executeCommand}
+        onSaveOfflineDraft={onSaveOfflineDraft}
+      />
+      <SatOfflineDraftSection
+        selectedBatchId={selectedBatchId}
+        isSat={
+          isRecord(state.batchDetail?.batch) && state.batchDetail.batch.acceptanceType === "SAT"
+        }
+        queueState={offlineDraftQueueState}
+        localDrafts={localOfflineDrafts}
+        onSync={onSyncOfflineDraft}
+        onReview={onReviewOfflineDraft}
+        commandError={offlineDraftError}
+      />
       <ReportList
         projectId={projectId}
         state={reportViewState}
@@ -1259,6 +1563,33 @@ export async function loadAcceptanceReportPageState(
   return buildAcceptanceReportPageState({ projectId, result });
 }
 
+export async function loadSatOfflineDraftQueueState(
+  projectId: string
+): Promise<SatOfflineDraftQueueState> {
+  try {
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/acceptance/offline-drafts?limit=100`,
+      { cache: "no-store" }
+    );
+    const body = await response.json().catch(() => undefined);
+    return buildSatOfflineDraftQueueState({
+      projectId,
+      result: {
+        status: response.ok && body === undefined ? 502 : response.status,
+        body,
+        fetchedAt: new Date().toISOString(),
+        stale: false,
+        retryable: response.status === 502 || response.status === 503 || response.status === 504
+      }
+    });
+  } catch {
+    return buildSatOfflineDraftQueueState({
+      projectId,
+      result: { status: 0, fetchedAt: null, retryable: true }
+    });
+  }
+}
+
 export function AcceptancePageClient({
   projectId,
   initialState,
@@ -1281,6 +1612,12 @@ export function AcceptancePageClient({
   const [reportCommandError, setReportCommandError] = useState<string | null>(
     reportFixture === "conflict" ? "报告或确认已被其他成员更新，请刷新后重试。" : null
   );
+  const [offlineDraftQueueState, setOfflineDraftQueueState] = useState<SatOfflineDraftQueueState>({
+    projectId,
+    status: "loading"
+  });
+  const [localOfflineDrafts, setLocalOfflineDrafts] = useState<OfflineSatDraftRecord[]>([]);
+  const [offlineDraftError, setOfflineDraftError] = useState<string | null>(null);
   const reload = useCallback(async () => {
     const [next, nextReports] = await Promise.all([
       loadAcceptancePageState(projectId, requestedBatchId),
@@ -1321,6 +1658,31 @@ export function AcceptancePageClient({
         : null,
     [projectId, requestedBatchId, state]
   );
+  const refreshOfflineDrafts = useCallback(
+    async (batchId: string | null) => {
+      const queue = await loadSatOfflineDraftQueueState(projectId);
+      const local = batchId ? await listOfflineSatDrafts(projectId, batchId).catch(() => []) : [];
+      setOfflineDraftQueueState(queue);
+      setLocalOfflineDrafts(local);
+    },
+    [projectId]
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      loadSatOfflineDraftQueueState(projectId),
+      selectedBatchId
+        ? listOfflineSatDrafts(projectId, selectedBatchId).catch(() => [])
+        : Promise.resolve([])
+    ]).then(([queue, local]) => {
+      if (cancelled) return;
+      setOfflineDraftQueueState(queue);
+      setLocalOfflineDrafts(local);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, selectedBatchId]);
   const runCommand = useCallback(
     async (path: string, body: Record<string, unknown>) => {
       setCommandError(null);
@@ -1376,6 +1738,119 @@ export function AcceptancePageClient({
     },
     [reload]
   );
+  const saveOfflineDraft = useCallback(
+    async (
+      draft: Omit<
+        OfflineSatDraftRecord,
+        "localStatus" | "serverStatus" | "submissionId" | "lastError" | "updatedAt"
+      >
+    ) => {
+      setOfflineDraftError(null);
+      try {
+        const saved = await saveOfflineSatDraft(createOfflineSatDraftRecord(draft));
+        setLocalOfflineDrafts((current) => [
+          saved,
+          ...current.filter((item) => item.clientDraftId !== saved.clientDraftId)
+        ]);
+      } catch (error) {
+        setOfflineDraftError(error instanceof Error ? error.message : "无法保存 SAT 离线草稿。");
+      }
+    },
+    []
+  );
+  const syncOfflineDraft = useCallback(
+    async (draft: OfflineSatDraftRecord) => {
+      setOfflineDraftError(null);
+      try {
+        const pending = await markOfflineSatDraftForSync(draft.clientDraftId);
+        setLocalOfflineDrafts((current) =>
+          current.map((item) => (item.clientDraftId === pending.clientDraftId ? pending : item))
+        );
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(draft.projectId)}/acceptance/offline-drafts`,
+          {
+            method: "POST",
+            cache: "no-store",
+            headers: { "content-type": "application/json", "idempotency-key": draft.clientDraftId },
+            body: JSON.stringify({
+              clientDraftId: draft.clientDraftId,
+              batchId: draft.batchId,
+              itemId: draft.itemId,
+              baselineBatchVersion: draft.baselineBatchVersion,
+              baselineResultRevisionId: draft.baselineResultRevisionId,
+              decision: draft.decision,
+              measuredValue: draft.measuredValue,
+              measuredUnit: draft.measuredUnit,
+              note: draft.note,
+              capturedAt: draft.capturedAt
+            })
+          }
+        );
+        const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+        const submission = payload && isRecord(payload.submission) ? payload.submission : null;
+        const status = payload?.status;
+        if (
+          !response.ok ||
+          !submission ||
+          typeof submission.id !== "string" ||
+          typeof status !== "string"
+        ) {
+          const message =
+            isRecord(payload?.error) && typeof payload.error.message === "string"
+              ? payload.error.message
+              : "离线草稿未能提交，可在恢复联网后重试。";
+          throw new Error(message);
+        }
+        const synced = await markOfflineSatDraftSyncResult({
+          clientDraftId: draft.clientDraftId,
+          submissionId: submission.id,
+          serverStatus: status as OfflineSatDraftRecord["serverStatus"] &
+            NonNullable<OfflineSatDraftRecord["serverStatus"]>
+        });
+        setLocalOfflineDrafts((current) =>
+          current.map((item) => (item.clientDraftId === synced.clientDraftId ? synced : item))
+        );
+        await refreshOfflineDrafts(draft.batchId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "离线草稿同步失败。";
+        const failed = await markOfflineSatDraftSyncFailed(draft.clientDraftId, message).catch(
+          () => null
+        );
+        if (failed)
+          setLocalOfflineDrafts((current) =>
+            current.map((item) => (item.clientDraftId === failed.clientDraftId ? failed : item))
+          );
+        setOfflineDraftError(message);
+      }
+    },
+    [refreshOfflineDrafts]
+  );
+  const reviewOfflineDraft = useCallback(
+    async (submissionId: string, body: Record<string, unknown>) => {
+      setOfflineDraftError(null);
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/acceptance/offline-drafts/${encodeURIComponent(submissionId)}/review`,
+          {
+            method: "POST",
+            cache: "no-store",
+            headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
+            body: JSON.stringify(body)
+          }
+        );
+        const payload = (await response.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        if (!response.ok) {
+          throw new Error(payload?.error?.message ?? "离线草稿复核未完成。");
+        }
+        await Promise.all([reload(), refreshOfflineDrafts(selectedBatchId)]);
+      } catch (error) {
+        setOfflineDraftError(error instanceof Error ? error.message : "离线草稿复核未完成。");
+      }
+    },
+    [projectId, refreshOfflineDrafts, reload, selectedBatchId]
+  );
   return (
     <AcceptancePageContent
       projectId={projectId}
@@ -1388,6 +1863,12 @@ export function AcceptancePageClient({
       reportState={reportState}
       onReportCommand={runReportCommand}
       reportCommandError={reportCommandError}
+      offlineDraftQueueState={offlineDraftQueueState}
+      localOfflineDrafts={localOfflineDrafts}
+      onSaveOfflineDraft={saveOfflineDraft}
+      onSyncOfflineDraft={syncOfflineDraft}
+      onReviewOfflineDraft={reviewOfflineDraft}
+      offlineDraftError={offlineDraftError}
     />
   );
 }

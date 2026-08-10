@@ -7,7 +7,8 @@ export const ACCEPTANCE_PAGE_FIXTURES = [
   "stale",
   "generating",
   "failed",
-  "conflict"
+  "conflict",
+  "offline"
 ] as const;
 
 export type AcceptancePageFixture = (typeof ACCEPTANCE_PAGE_FIXTURES)[number];

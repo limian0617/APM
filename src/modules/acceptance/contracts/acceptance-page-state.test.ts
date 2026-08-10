@@ -15,6 +15,7 @@ describe("acceptance page state", () => {
     expect(resolveAcceptanceFixture("generating", "development")).toBe("generating");
     expect(resolveAcceptanceFixture("failed", "development")).toBe("failed");
     expect(resolveAcceptanceFixture("conflict", "development")).toBe("conflict");
+    expect(resolveAcceptanceFixture("offline", "development")).toBe("offline");
     expect(resolveAcceptanceFixture("unknown", "development")).toBeNull();
     expect(resolveAcceptanceFixture("denied", "production")).toBeNull();
   });

@@ -45,10 +45,13 @@ export function developmentAcceptanceFixture(
       : [
           {
             id: "acceptance-template-demo",
-            acceptanceType: "FAT",
+            acceptanceType: allowed === "offline" ? "SAT" : "FAT",
             version: 1,
-            template: { code: "FAT.DEMO", name: "FAT 演示模板" },
-            items: [{ id: "acceptance-item-demo" }]
+            template: {
+              code: allowed === "offline" ? "SAT.DEMO" : "FAT.DEMO",
+              name: allowed === "offline" ? "SAT 离线草稿演示模板" : "FAT 演示模板"
+            },
+            items: [{ id: "acceptance-item-demo", unit: "V" }]
           }
         ];
   const batches =
@@ -58,11 +61,11 @@ export function developmentAcceptanceFixture(
           {
             id: "acceptance-batch-demo",
             projectId,
-            acceptanceType: "FAT",
+            acceptanceType: allowed === "offline" ? "SAT" : "FAT",
             scopeType: "MACHINE",
             scopeId: "machine-demo",
-            status: "LOCKED",
-            version: 3
+            status: allowed === "offline" ? "IN_PROGRESS" : "LOCKED",
+            version: allowed === "offline" ? 2 : 3
           }
         ];
   return buildAcceptancePageState({
@@ -105,19 +108,26 @@ export function developmentAcceptanceFixture(
                 results: [
                   {
                     itemId: "acceptance-item-demo",
-                    revisions: [
-                      {
-                        id: "acceptance-revision-demo",
-                        decision: "PASS",
-                        measuredValue: "230V",
-                        measuredUnit: "V"
-                      }
-                    ]
+                    revisions:
+                      allowed === "offline"
+                        ? []
+                        : [
+                            {
+                              id: "acceptance-revision-demo",
+                              decision: "PASS",
+                              measuredValue: "230V",
+                              measuredUnit: "V"
+                            }
+                          ]
                   }
                 ]
               },
-              summary: { passRate: 1, denominator: 1, outcome: "PASS" },
-              allowedActions: []
+              summary:
+                allowed === "offline"
+                  ? { passRate: null, denominator: 0, outcome: "NOT_CALCULABLE" }
+                  : { passRate: 1, denominator: 1, outcome: "PASS" },
+              allowedActions:
+                allowed === "offline" ? ["RECORD_RESULT", "REVISE_RESULT", "LOCK_BATCH"] : []
             }
           })
   });

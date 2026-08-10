@@ -7,6 +7,8 @@ import {
   acceptanceFailurePathSchema,
   acceptanceFailureIssueCreateBodySchema,
   acceptanceFailureIssueLinkBodySchema,
+  offlineDraftReviewBodySchema,
+  offlineDraftSubmissionBodySchema,
   createAcceptanceBatchBodySchema,
   createAcceptanceTemplateBodySchema,
   acceptanceServiceErrorResponse
@@ -81,6 +83,38 @@ describe("acceptance HTTP contracts", () => {
         targetId: "cross-project"
       }).success
     ).toBe(false);
+  });
+
+  it("accepts only strict SAT offline submission and review command data", () => {
+    expect(
+      offlineDraftSubmissionBodySchema.safeParse({
+        clientDraftId: "client-draft-1",
+        batchId: "batch-1",
+        itemId: "item-1",
+        baselineBatchVersion: 2,
+        baselineResultRevisionId: null,
+        decision: "FAIL",
+        measuredValue: "180",
+        measuredUnit: "V",
+        note: "离线采集",
+        capturedAt: "2026-08-10T10:00:00.000Z"
+      }).success
+    ).toBe(true);
+    expect(
+      offlineDraftSubmissionBodySchema.safeParse({
+        clientDraftId: "draft-1",
+        unsafeProjectId: "p-2"
+      }).success
+    ).toBe(false);
+    expect(
+      offlineDraftReviewBodySchema.safeParse({
+        version: 1,
+        decision: "ACCEPT_WITH_CORRECTION",
+        correctedDecision: "PASS",
+        reason: "现场复核",
+        evidenceFileIds: []
+      }).success
+    ).toBe(true);
   });
 
   it("maps service errors to structured responses", async () => {

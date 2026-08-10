@@ -11,6 +11,10 @@ describe("developmentAcceptanceFixture", () => {
     });
     expect(developmentAcceptanceFixture("project-1", "unknown")).toBeNull();
     expect(developmentAcceptanceFixture("project-1", "denied")).toMatchObject({ status: "denied" });
+    expect(developmentAcceptanceFixture("project-1", "offline")).toMatchObject({
+      status: "ready",
+      batches: [{ acceptanceType: "SAT", status: "IN_PROGRESS" }]
+    });
   });
 });
 

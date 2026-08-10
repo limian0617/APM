@@ -2619,6 +2619,53 @@ a {
   resize: vertical;
 }
 
+.acceptance-offline-drafts {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 24px;
+  border-top: 2px solid #b77300;
+  padding-top: 16px;
+}
+
+.acceptance-offline-draft-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.acceptance-offline-draft-list li {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border-left: 3px solid #b77300;
+  padding: 10px 12px;
+  background: #fff8e6;
+}
+
+.acceptance-offline-draft-list strong,
+.acceptance-offline-draft-list span,
+.acceptance-offline-draft-list small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.acceptance-offline-draft-list strong {
+  color: #27394a;
+}
+
+.acceptance-offline-draft-list span,
+.acceptance-offline-draft-list small {
+  color: #5c4100;
+  font-size: 12px;
+}
+
+.acceptance-offline-draft-list .acceptance-command {
+  justify-self: start;
+}
+
 .acceptance-reports {
   display: grid;
   gap: 14px;
