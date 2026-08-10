@@ -307,8 +307,13 @@ describeDatabase("APM-053 PostgreSQL manufacturing classification persistence", 
     ]);
     const drawingNumber = nextCode("DWG");
     const drawing = await db.$transaction(async (tx) => {
-      const { document } = await createPublishedDocument(tx, ids.projectA, drawingNumber, cad);
-      return tx.mechanicalDrawing.create({
+      const { document, version } = await createPublishedDocument(
+        tx,
+        ids.projectA,
+        drawingNumber,
+        cad
+      );
+      const drawing = await tx.mechanicalDrawing.create({
         data: {
           projectId: ids.projectA,
           documentId: document.id,
@@ -318,6 +323,19 @@ describeDatabase("APM-053 PostgreSQL manufacturing classification persistence", 
           createdById: ids.actor
         }
       });
+      await tx.mechanicalDrawingVersionFile.create({
+        data: {
+          projectId: ids.projectA,
+          drawingId: drawing.id,
+          documentVersionId: version.id,
+          fileId: cad.id,
+          role: "CAD_SOURCE",
+          fileSha256: cad.sha256!,
+          fileMimeType: cad.verifiedMimeType!,
+          fileSize: cad.verifiedSize!
+        }
+      });
+      return drawing;
     });
 
     await db.manufacturingCategory.update({
