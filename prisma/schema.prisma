@@ -716,6 +716,24 @@ enum FileStorageArea {
   CONTROLLED
 }
 
+enum DrawingSelectionSetStatus {
+  DRAFT
+  LOCKED
+}
+
+enum DrawingSelectionItemPurpose {
+  INQUIRY
+  MANUFACTURING
+  CHANGE
+  REFERENCE
+}
+
+enum DrawingSelectionItemMatchState {
+  DEFAULT_MATCH
+  EXCEPTION
+  NO_MATCH
+}
+
 enum FileSensitivity {
   INTERNAL
   RESTRICTED
@@ -1542,6 +1560,8 @@ model User {
   projectPublicLibraryReferencesRetired   ProjectPublicLibraryReference[]        @relation("ProjectPublicLibraryReferenceRetiredBy")
   mechanicalDrawingsCreated               MechanicalDrawing[]                    @relation("MechanicalDrawingCreatedBy")
   mechanicalDrawingImportBatchesCreated   MechanicalDrawingImportBatch[]         @relation("MechanicalDrawingImportBatchCreatedBy")
+  drawingSelectionSetsCreated             DrawingSelectionSet[]                  @relation("DrawingSelectionSetCreatedBy")
+  drawingSelectionItemsCreated            DrawingSelectionItem[]                 @relation("DrawingSelectionItemCreatedBy")
   notificationTemplateVersionsPublished   NotificationTemplateVersion[]          @relation("NotificationTemplatePublishedBy")
   notificationsReceived                   Notification[]                         @relation("NotificationRecipient")
   notificationReadReceipts                NotificationReadReceipt[]              @relation("NotificationReadRecipient")
@@ -1702,34 +1722,34 @@ model UserRole {
 }
 
 model Project {
-  id                                 String                                 @id @default(cuid())
-  code                               String                                 @unique
+  id                                 String                                     @id @default(cuid())
+  code                               String                                     @unique
   name                               String
-  departmentId                       String?                                @map("department_id")
-  status                             ProjectStatus                          @default(DRAFT)
-  initializationStatus               ProjectInitializationStatus            @default(LEGACY) @map("initialization_status")
-  projectType                        ProjectType                            @default(LEGACY) @map("project_type")
-  equipmentShape                     EquipmentShape?                        @map("equipment_shape")
-  structureStatus                    ProjectStructureStatus                 @default(UNCONFIGURED) @map("structure_status")
-  capabilityConfigurationStatus      ProjectCapabilityConfigurationStatus   @default(UNCONFIGURED) @map("capability_configuration_status")
-  capabilitiesConfiguredAt           DateTime?                              @map("capabilities_configured_at")
-  sourceTemplateVersionId            String?                                @map("source_template_version_id")
-  sourceTemplateChecksum             String?                                @map("source_template_checksum")
-  initializedAt                      DateTime?                              @map("initialized_at")
-  mainControlStageId                 String?                                @map("main_control_stage_id")
-  mainControlStageProjectId          String?                                @map("main_control_stage_project_id")
-  mainControlStageCode               String?                                @map("main_control_stage_code")
-  mainControlStageStatus             ProjectStageExecutionStatus?           @map("main_control_stage_status")
-  mainControlStageSequence           Int?                                   @map("main_control_stage_sequence")
-  mainControlStageUpdatedAt          DateTime?                              @map("main_control_stage_updated_at")
-  version                            Int                                    @default(1)
-  createdById                        String                                 @map("created_by_id")
-  createdAt                          DateTime                               @default(now()) @map("created_at")
-  updatedAt                          DateTime                               @updatedAt @map("updated_at")
-  createdBy                          User                                   @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  sourceTemplateVersion              ProjectTemplateVersion?                @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
+  departmentId                       String?                                    @map("department_id")
+  status                             ProjectStatus                              @default(DRAFT)
+  initializationStatus               ProjectInitializationStatus                @default(LEGACY) @map("initialization_status")
+  projectType                        ProjectType                                @default(LEGACY) @map("project_type")
+  equipmentShape                     EquipmentShape?                            @map("equipment_shape")
+  structureStatus                    ProjectStructureStatus                     @default(UNCONFIGURED) @map("structure_status")
+  capabilityConfigurationStatus      ProjectCapabilityConfigurationStatus       @default(UNCONFIGURED) @map("capability_configuration_status")
+  capabilitiesConfiguredAt           DateTime?                                  @map("capabilities_configured_at")
+  sourceTemplateVersionId            String?                                    @map("source_template_version_id")
+  sourceTemplateChecksum             String?                                    @map("source_template_checksum")
+  initializedAt                      DateTime?                                  @map("initialized_at")
+  mainControlStageId                 String?                                    @map("main_control_stage_id")
+  mainControlStageProjectId          String?                                    @map("main_control_stage_project_id")
+  mainControlStageCode               String?                                    @map("main_control_stage_code")
+  mainControlStageStatus             ProjectStageExecutionStatus?               @map("main_control_stage_status")
+  mainControlStageSequence           Int?                                       @map("main_control_stage_sequence")
+  mainControlStageUpdatedAt          DateTime?                                  @map("main_control_stage_updated_at")
+  version                            Int                                        @default(1)
+  createdById                        String                                     @map("created_by_id")
+  createdAt                          DateTime                                   @default(now()) @map("created_at")
+  updatedAt                          DateTime                                   @updatedAt @map("updated_at")
+  createdBy                          User                                       @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  sourceTemplateVersion              ProjectTemplateVersion?                    @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
   templateSnapshot                   ProjectTemplateSnapshot?
-  mainControlStage                   ProjectStage?                          @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
+  mainControlStage                   ProjectStage?                              @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
   members                            ProjectMember[]
   auditLogs                          AuditLog[]
   files                              FileObject[]
@@ -1740,6 +1760,10 @@ model Project {
   mechanicalDrawingImportBatches     MechanicalDrawingImportBatch[]
   mechanicalDrawingImportItems       MechanicalDrawingImportItem[]
   mechanicalDrawingImportItemFiles   MechanicalDrawingImportItemFile[]
+  supplierManufacturingCapabilities  SupplierReferenceManufacturingCapability[]
+  supplierProcessCapabilities        SupplierReferenceProcessCapability[]
+  drawingSelectionSets               DrawingSelectionSet[]
+  drawingSelectionItems              DrawingSelectionItem[]
   documentReviews                    DocumentReview[]
   documentReviewEvents               DocumentReviewEvent[]
   documentReviewComments             DocumentReviewComment[]
@@ -1776,7 +1800,7 @@ model Project {
   projectMilestones                  ProjectMilestone[]
   projectMilestoneTaskLinks          ProjectMilestoneTaskLink[]
   projectMilestoneEvents             ProjectMilestoneEvent[]
-  projectStages                      ProjectStage[]                         @relation("ProjectStages")
+  projectStages                      ProjectStage[]                             @relation("ProjectStages")
   deliveryUnitStages                 DeliveryUnitStage[]
   stageReleaseAuthorizations         StageReleaseAuthorization[]
   projectStageEvents                 ProjectStageEvent[]
@@ -1812,6 +1836,7 @@ model Project {
   issues                             Issue[]
   issueHistories                     IssueHistory[]
   issueRelations                     IssueRelation[]
+  mechanicalDrawingProcessTags       MechanicalDrawingProcessTag[]
 
   @@unique([mainControlStageId, mainControlStageProjectId])
   @@index([departmentId])
@@ -1987,6 +2012,7 @@ model ControlledDocumentVersion {
   relations                     DocumentVersionRelation[]
   gateSubmissionReferences      GateSubmissionDocumentReference[]
   mechanicalDrawingVersionFiles MechanicalDrawingVersionFile[]
+  drawingSelectionItems         DrawingSelectionItem[]
   materialRequirementRevisions  ProjectMaterialRequirementRevision[]
   acceptanceReports             AcceptanceReport[]
   acceptanceConfirmations       AcceptanceConfirmation[]
@@ -2004,6 +2030,7 @@ model MechanicalDrawing {
   documentId                   String                               @unique @map("document_id")
   drawingNumber                String                               @map("drawing_number")
   drawingType                  String                               @map("drawing_type")
+  manufacturingCategoryId      String?                              @map("manufacturing_category_id")
   version                      Int                                  @default(1)
   createdById                  String                               @map("created_by_id")
   createdAt                    DateTime                             @default(now()) @map("created_at")
@@ -2011,7 +2038,10 @@ model MechanicalDrawing {
   project                      Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
   document                     ControlledDocument                   @relation(fields: [documentId, projectId], references: [id, projectId], onDelete: Restrict)
   createdBy                    User                                 @relation("MechanicalDrawingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  manufacturingCategory        ManufacturingCategory?               @relation(fields: [manufacturingCategoryId], references: [id], onDelete: Restrict)
   versionFiles                 MechanicalDrawingVersionFile[]
+  processTags                  MechanicalDrawingProcessTag[]
+  drawingSelectionItems        DrawingSelectionItem[]
   importItems                  MechanicalDrawingImportItem[]        @relation("ConfirmedMechanicalDrawing")
   materialRequirementRevisions ProjectMaterialRequirementRevision[] @relation("RequirementDrawing")
 
@@ -2019,7 +2049,58 @@ model MechanicalDrawing {
   @@unique([documentId, projectId])
   @@unique([projectId, drawingNumber])
   @@index([projectId, drawingType, drawingNumber])
+  @@index([projectId, manufacturingCategoryId])
   @@map("mechanical_drawings")
+}
+
+model ManufacturingCategory {
+  id                            String                                     @id @default(cuid())
+  code                          String                                     @unique
+  name                          String
+  sortOrder                     Int                                        @default(0) @map("sort_order")
+  isActive                      Boolean                                    @default(true) @map("is_active")
+  version                       Int                                        @default(1)
+  createdAt                     DateTime                                   @default(now()) @map("created_at")
+  updatedAt                     DateTime                                   @updatedAt @map("updated_at")
+  mechanicalDrawings            MechanicalDrawing[]
+  supplierCapabilities          SupplierReferenceManufacturingCapability[]
+  drawingSelectionItemSnapshots DrawingSelectionItem[]                     @relation("DrawingSelectionItemSnapshotCategory")
+
+  @@index([isActive, sortOrder])
+  @@map("manufacturing_categories")
+}
+
+model ProcessTag {
+  id                   String                               @id @default(cuid())
+  code                 String                               @unique
+  name                 String
+  sortOrder            Int                                  @default(0) @map("sort_order")
+  isActive             Boolean                              @default(true) @map("is_active")
+  version              Int                                  @default(1)
+  createdAt            DateTime                             @default(now()) @map("created_at")
+  updatedAt            DateTime                             @updatedAt @map("updated_at")
+  drawingLinks         MechanicalDrawingProcessTag[]
+  supplierCapabilities SupplierReferenceProcessCapability[]
+
+  @@index([isActive, sortOrder])
+  @@map("process_tags")
+}
+
+model MechanicalDrawingProcessTag {
+  id           String            @id @default(cuid())
+  projectId    String            @map("project_id")
+  drawingId    String            @map("drawing_id")
+  processTagId String            @map("process_tag_id")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  drawing      MechanicalDrawing @relation(fields: [drawingId, projectId], references: [id, projectId], onDelete: Restrict)
+  processTag   ProcessTag        @relation(fields: [processTagId], references: [id], onDelete: Restrict)
+
+  @@unique([drawingId, processTagId])
+  @@unique([id, projectId])
+  @@index([projectId, drawingId])
+  @@index([processTagId])
+  @@map("mechanical_drawing_process_tags")
 }
 
 model ProjectProcurementSettings {
@@ -2083,35 +2164,135 @@ model MaterialReference {
 }
 
 model SupplierReference {
-  id                       String                    @id @default(cuid())
-  projectId                String                    @map("project_id")
-  source                   ProcurementSource
-  externalId               String?                   @map("external_id")
-  code                     String
-  name                     String
-  status                   MaterialReferenceStatus   @default(ACTIVE)
-  contactName              String?                   @map("contact_name")
-  contactPhone             String?                   @map("contact_phone")
-  procurementOwnerName     String?                   @map("procurement_owner_name")
-  capabilityTagsJson       Json                      @default("[]") @map("capability_tags_json")
-  sourceVersion            String?                   @map("source_version")
-  sourceHash               String?                   @map("source_hash")
-  syncedAt                 DateTime?                 @map("synced_at")
-  version                  Int                       @default(1)
-  createdById              String                    @map("created_by_id")
-  updatedById              String                    @map("updated_by_id")
-  createdAt                DateTime                  @default(now()) @map("created_at")
-  updatedAt                DateTime                  @updatedAt @map("updated_at")
-  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  createdBy                User                      @relation("SupplierReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy                User                      @relation("SupplierReferenceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  procurementTrackingLines ProcurementTrackingLine[]
+  id                        String                                     @id @default(cuid())
+  projectId                 String                                     @map("project_id")
+  source                    ProcurementSource
+  externalId                String?                                    @map("external_id")
+  code                      String
+  name                      String
+  status                    MaterialReferenceStatus                    @default(ACTIVE)
+  contactName               String?                                    @map("contact_name")
+  contactPhone              String?                                    @map("contact_phone")
+  procurementOwnerName      String?                                    @map("procurement_owner_name")
+  capabilityTagsJson        Json                                       @default("[]") @map("capability_tags_json")
+  sourceVersion             String?                                    @map("source_version")
+  sourceHash                String?                                    @map("source_hash")
+  syncedAt                  DateTime?                                  @map("synced_at")
+  version                   Int                                        @default(1)
+  createdById               String                                     @map("created_by_id")
+  updatedById               String                                     @map("updated_by_id")
+  createdAt                 DateTime                                   @default(now()) @map("created_at")
+  updatedAt                 DateTime                                   @updatedAt @map("updated_at")
+  project                   Project                                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                 User                                       @relation("SupplierReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                 User                                       @relation("SupplierReferenceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  procurementTrackingLines  ProcurementTrackingLine[]
+  manufacturingCapabilities SupplierReferenceManufacturingCapability[]
+  drawingSelectionItems     DrawingSelectionItem[]
 
   @@unique([id, projectId])
   @@unique([projectId, code])
   @@unique([source, externalId])
   @@index([projectId, status, code])
   @@map("supplier_references")
+}
+
+model SupplierReferenceManufacturingCapability {
+  id                      String                               @id @default(cuid())
+  projectId               String                               @map("project_id")
+  supplierReferenceId     String                               @map("supplier_reference_id")
+  manufacturingCategoryId String                               @map("manufacturing_category_id")
+  isActive                Boolean                              @default(true) @map("is_active")
+  version                 Int                                  @default(1)
+  createdAt               DateTime                             @default(now()) @map("created_at")
+  updatedAt               DateTime                             @updatedAt @map("updated_at")
+  project                 Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  supplierReference       SupplierReference                    @relation(fields: [supplierReferenceId, projectId], references: [id, projectId], onDelete: Restrict)
+  manufacturingCategory   ManufacturingCategory                @relation(fields: [manufacturingCategoryId], references: [id], onDelete: Restrict)
+  processCapabilities     SupplierReferenceProcessCapability[]
+
+  @@unique([supplierReferenceId, manufacturingCategoryId])
+  @@unique([id, projectId])
+  @@index([projectId, supplierReferenceId, isActive])
+  @@index([manufacturingCategoryId, isActive])
+  @@map("supplier_reference_manufacturing_capabilities")
+}
+
+model SupplierReferenceProcessCapability {
+  id                   String                                   @id @default(cuid())
+  projectId            String                                   @map("project_id")
+  supplierCapabilityId String                                   @map("supplier_capability_id")
+  processTagId         String                                   @map("process_tag_id")
+  isActive             Boolean                                  @default(true) @map("is_active")
+  version              Int                                      @default(1)
+  createdAt            DateTime                                 @default(now()) @map("created_at")
+  updatedAt            DateTime                                 @updatedAt @map("updated_at")
+  project              Project                                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  supplierCapability   SupplierReferenceManufacturingCapability @relation(fields: [supplierCapabilityId, projectId], references: [id, projectId], onDelete: Restrict)
+  processTag           ProcessTag                               @relation(fields: [processTagId], references: [id], onDelete: Restrict)
+
+  @@unique([supplierCapabilityId, processTagId])
+  @@index([projectId, supplierCapabilityId, isActive])
+  @@index([processTagId, isActive])
+  @@map("supplier_reference_process_capabilities")
+}
+
+model DrawingSelectionSet {
+  id          String                    @id @default(cuid())
+  projectId   String                    @map("project_id")
+  code        String
+  title       String
+  status      DrawingSelectionSetStatus @default(DRAFT)
+  version     Int                       @default(1)
+  createdById String                    @map("created_by_id")
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  updatedAt   DateTime                  @updatedAt @map("updated_at")
+  project     Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy   User                      @relation("DrawingSelectionSetCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  items       DrawingSelectionItem[]
+
+  @@unique([projectId, code])
+  @@unique([id, projectId])
+  @@index([projectId, status, createdAt])
+  @@map("drawing_selection_sets")
+}
+
+model DrawingSelectionItem {
+  id                                String                         @id @default(cuid())
+  projectId                         String                         @map("project_id")
+  selectionSetId                    String                         @map("selection_set_id")
+  drawingId                         String                         @map("drawing_id")
+  documentVersionId                 String                         @map("document_version_id")
+  manufacturingCategoryCodeSnapshot String                         @map("manufacturing_category_code_snapshot")
+  processTagCodesSnapshotJson       Json                           @default("[]") @map("process_tag_codes_snapshot_json")
+  drawingNumberSnapshot             String                         @map("drawing_number_snapshot")
+  drawingVersionSnapshot            Int                            @map("drawing_version_snapshot")
+  version                           Int                            @default(1)
+  quantity                          Decimal                        @db.Decimal(18, 6)
+  spareQuantity                     Decimal                        @default(0) @map("spare_quantity") @db.Decimal(18, 6)
+  requiredOn                        DateTime                       @map("required_on") @db.Date
+  supplierReferenceId               String?                        @map("supplier_reference_id")
+  purpose                           DrawingSelectionItemPurpose
+  supplierMatchState                DrawingSelectionItemMatchState @map("supplier_match_state")
+  supplierExceptionReason           String?                        @map("supplier_exception_reason")
+  supplierCapabilitySnapshotJson    Json?                          @map("supplier_capability_snapshot_json")
+  createdById                       String                         @map("created_by_id")
+  createdAt                         DateTime                       @default(now()) @map("created_at")
+  updatedAt                         DateTime                       @updatedAt @map("updated_at")
+  project                           Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  selectionSet                      DrawingSelectionSet            @relation(fields: [selectionSetId, projectId], references: [id, projectId], onDelete: Restrict)
+  drawing                           MechanicalDrawing              @relation(fields: [drawingId, projectId], references: [id, projectId], onDelete: Restrict)
+  documentVersion                   ControlledDocumentVersion      @relation(fields: [documentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  manufacturingCategorySnapshot     ManufacturingCategory          @relation("DrawingSelectionItemSnapshotCategory", fields: [manufacturingCategoryCodeSnapshot], references: [code], onDelete: Restrict)
+  supplierReference                 SupplierReference?             @relation(fields: [supplierReferenceId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                         User                           @relation("DrawingSelectionItemCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([selectionSetId, documentVersionId])
+  @@unique([id, projectId])
+  @@index([projectId, selectionSetId])
+  @@index([projectId, drawingId])
+  @@index([supplierReferenceId])
+  @@map("drawing_selection_items")
 }
 
 model ProjectMaterialRequirement {
@@ -2488,21 +2669,21 @@ model AcceptanceTemplateVersion {
 }
 
 model AcceptanceTestItemDefinition {
-  id                 String                    @id @default(cuid())
-  templateVersionId  String                    @map("template_version_id")
-  code               String
-  name               String
-  position           Int
-  method             String
-  acceptanceCriteria String                    @map("acceptance_criteria")
-  unit               String?
-  required           Boolean
-  evidenceRequired   Boolean                   @map("evidence_required")
-  applicableScope    String                    @map("applicable_scope")
-  defaultDiscipline  String                    @map("default_discipline")
-  createdAt          DateTime                  @default(now()) @map("created_at")
-  templateVersion    AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
-  results            AcceptanceTestResult[]
+  id                      String                             @id @default(cuid())
+  templateVersionId       String                             @map("template_version_id")
+  code                    String
+  name                    String
+  position                Int
+  method                  String
+  acceptanceCriteria      String                             @map("acceptance_criteria")
+  unit                    String?
+  required                Boolean
+  evidenceRequired        Boolean                            @map("evidence_required")
+  applicableScope         String                             @map("applicable_scope")
+  defaultDiscipline       String                             @map("default_discipline")
+  createdAt               DateTime                           @default(now()) @map("created_at")
+  templateVersion         AcceptanceTemplateVersion          @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  results                 AcceptanceTestResult[]
   offlineDraftSubmissions OfflineAcceptanceDraftSubmission[]
 
   @@unique([templateVersionId, code])
@@ -2512,32 +2693,32 @@ model AcceptanceTestItemDefinition {
 }
 
 model AcceptanceBatch {
-  id                String                    @id @default(cuid())
-  projectId         String                    @map("project_id")
-  acceptanceType    AcceptanceType            @map("acceptance_type")
-  scopeType         AcceptanceScopeType       @map("scope_type")
-  scopeId           String                    @map("scope_id")
-  templateVersionId String                    @map("template_version_id")
-  status            AcceptanceBatchStatus     @default(DRAFT)
-  retestOfBatchId   String?                   @map("retest_of_batch_id")
-  version           Int                       @default(1)
-  createdById       String                    @map("created_by_id")
-  startedById       String?                   @map("started_by_id")
-  lockedById        String?                   @map("locked_by_id")
-  createdAt         DateTime                  @default(now()) @map("created_at")
-  startedAt         DateTime?                 @map("started_at")
-  lockedAt          DateTime?                 @map("locked_at")
-  updatedAt         DateTime                  @updatedAt @map("updated_at")
-  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  templateVersion   AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
-  retestOfBatch     AcceptanceBatch?          @relation("AcceptanceBatchRetest", fields: [retestOfBatchId, projectId], references: [id, projectId], onDelete: Restrict)
-  retests           AcceptanceBatch[]         @relation("AcceptanceBatchRetest")
-  createdBy         User                      @relation("AcceptanceBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  startedBy         User?                     @relation("AcceptanceBatchStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
-  lockedBy          User?                     @relation("AcceptanceBatchLockedBy", fields: [lockedById], references: [id], onDelete: Restrict)
-  results           AcceptanceTestResult[]
-  reportsAsSource   AcceptanceReport[]        @relation("AcceptanceReportSourceBatch")
-  reportsAsFinal    AcceptanceReport[]        @relation("AcceptanceReportFinalBatch")
+  id                      String                             @id @default(cuid())
+  projectId               String                             @map("project_id")
+  acceptanceType          AcceptanceType                     @map("acceptance_type")
+  scopeType               AcceptanceScopeType                @map("scope_type")
+  scopeId                 String                             @map("scope_id")
+  templateVersionId       String                             @map("template_version_id")
+  status                  AcceptanceBatchStatus              @default(DRAFT)
+  retestOfBatchId         String?                            @map("retest_of_batch_id")
+  version                 Int                                @default(1)
+  createdById             String                             @map("created_by_id")
+  startedById             String?                            @map("started_by_id")
+  lockedById              String?                            @map("locked_by_id")
+  createdAt               DateTime                           @default(now()) @map("created_at")
+  startedAt               DateTime?                          @map("started_at")
+  lockedAt                DateTime?                          @map("locked_at")
+  updatedAt               DateTime                           @updatedAt @map("updated_at")
+  project                 Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  templateVersion         AcceptanceTemplateVersion          @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  retestOfBatch           AcceptanceBatch?                   @relation("AcceptanceBatchRetest", fields: [retestOfBatchId, projectId], references: [id, projectId], onDelete: Restrict)
+  retests                 AcceptanceBatch[]                  @relation("AcceptanceBatchRetest")
+  createdBy               User                               @relation("AcceptanceBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  startedBy               User?                              @relation("AcceptanceBatchStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  lockedBy                User?                              @relation("AcceptanceBatchLockedBy", fields: [lockedById], references: [id], onDelete: Restrict)
+  results                 AcceptanceTestResult[]
+  reportsAsSource         AcceptanceReport[]                 @relation("AcceptanceReportSourceBatch")
+  reportsAsFinal          AcceptanceReport[]                 @relation("AcceptanceReportFinalBatch")
   offlineDraftSubmissions OfflineAcceptanceDraftSubmission[]
 
   @@unique([id, projectId])
@@ -2567,27 +2748,27 @@ model AcceptanceTestResult {
 }
 
 model AcceptanceTestResultRevision {
-  id                      String                                 @id @default(cuid())
-  projectId               String                                 @map("project_id")
-  resultId                String                                 @map("result_id")
-  revisionNo              Int                                    @map("revision_no")
-  supersedesRevisionId    String?                                @map("supersedes_revision_id")
-  decision                AcceptanceDecision
-  measuredValue           String?                                @map("measured_value")
-  measuredUnit            String?                                @map("measured_unit")
-  note                    String?
-  correctionReason        String?                                @map("correction_reason")
-  createdById             String                                 @map("created_by_id")
-  createdAt               DateTime                               @default(now()) @map("created_at")
-  project                 Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  result                  AcceptanceTestResult                   @relation(fields: [resultId, projectId], references: [id, projectId], onDelete: Restrict)
-  supersedes              AcceptanceTestResultRevision?          @relation("AcceptanceResultRevisionSupersedes", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
-  corrections             AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
-  createdBy               User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  evidence                AcceptanceTestResultRevisionEvidence[]
-  acceptanceResidualItems ResidualItem[]                         @relation("AcceptanceResidualResultRevision")
-  offlineDraftBaselineSubmissions OfflineAcceptanceDraftSubmission[] @relation("OfflineAcceptanceDraftBaselineRevision")
-  offlineDraftReviews             OfflineAcceptanceDraftReview[]     @relation("OfflineAcceptanceDraftReviewedResultRevision")
+  id                              String                                 @id @default(cuid())
+  projectId                       String                                 @map("project_id")
+  resultId                        String                                 @map("result_id")
+  revisionNo                      Int                                    @map("revision_no")
+  supersedesRevisionId            String?                                @map("supersedes_revision_id")
+  decision                        AcceptanceDecision
+  measuredValue                   String?                                @map("measured_value")
+  measuredUnit                    String?                                @map("measured_unit")
+  note                            String?
+  correctionReason                String?                                @map("correction_reason")
+  createdById                     String                                 @map("created_by_id")
+  createdAt                       DateTime                               @default(now()) @map("created_at")
+  project                         Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  result                          AcceptanceTestResult                   @relation(fields: [resultId, projectId], references: [id, projectId], onDelete: Restrict)
+  supersedes                      AcceptanceTestResultRevision?          @relation("AcceptanceResultRevisionSupersedes", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
+  corrections                     AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
+  createdBy                       User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  evidence                        AcceptanceTestResultRevisionEvidence[]
+  acceptanceResidualItems         ResidualItem[]                         @relation("AcceptanceResidualResultRevision")
+  offlineDraftBaselineSubmissions OfflineAcceptanceDraftSubmission[]     @relation("OfflineAcceptanceDraftBaselineRevision")
+  offlineDraftReviews             OfflineAcceptanceDraftReview[]         @relation("OfflineAcceptanceDraftReviewedResultRevision")
 
   @@unique([resultId, revisionNo])
   @@unique([id, projectId])
@@ -2614,32 +2795,32 @@ model AcceptanceTestResultRevisionEvidence {
 }
 
 model OfflineAcceptanceDraftSubmission {
-  id                     String                       @id @default(cuid())
-  projectId              String                       @map("project_id")
-  batchId                String                       @map("batch_id")
-  itemId                 String                       @map("item_id")
-  clientDraftId          String                       @map("client_draft_id")
-  baselineBatchVersion   Int                          @map("baseline_batch_version")
-  baselineResultRevisionId String?                     @map("baseline_result_revision_id")
-  decision               AcceptanceDecision
-  measuredValue          String?                      @map("measured_value")
-  measuredUnit           String?                      @map("measured_unit")
-  note                   String?
-  capturedAt             DateTime                     @map("captured_at")
-  submittedAt            DateTime                     @default(now()) @map("submitted_at")
-  submittedById          String                       @map("submitted_by_id")
-  payloadChecksum        String                       @map("payload_checksum")
-  serverResultSnapshot   Json?                        @map("server_result_snapshot")
-  status                 OfflineAcceptanceDraftStatus @default(PENDING_REVIEW)
-  version                Int                          @default(1)
-  createdAt              DateTime                     @default(now()) @map("created_at")
-  updatedAt              DateTime                     @updatedAt @map("updated_at")
-  project                Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  batch                  AcceptanceBatch              @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
-  item                   AcceptanceTestItemDefinition @relation(fields: [itemId], references: [id], onDelete: Restrict)
-  baselineResultRevision AcceptanceTestResultRevision? @relation("OfflineAcceptanceDraftBaselineRevision", fields: [baselineResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
-  submittedBy            User                         @relation("OfflineAcceptanceDraftSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
-  reviews                OfflineAcceptanceDraftReview[]
+  id                       String                         @id @default(cuid())
+  projectId                String                         @map("project_id")
+  batchId                  String                         @map("batch_id")
+  itemId                   String                         @map("item_id")
+  clientDraftId            String                         @map("client_draft_id")
+  baselineBatchVersion     Int                            @map("baseline_batch_version")
+  baselineResultRevisionId String?                        @map("baseline_result_revision_id")
+  decision                 AcceptanceDecision
+  measuredValue            String?                        @map("measured_value")
+  measuredUnit             String?                        @map("measured_unit")
+  note                     String?
+  capturedAt               DateTime                       @map("captured_at")
+  submittedAt              DateTime                       @default(now()) @map("submitted_at")
+  submittedById            String                         @map("submitted_by_id")
+  payloadChecksum          String                         @map("payload_checksum")
+  serverResultSnapshot     Json?                          @map("server_result_snapshot")
+  status                   OfflineAcceptanceDraftStatus   @default(PENDING_REVIEW)
+  version                  Int                            @default(1)
+  createdAt                DateTime                       @default(now()) @map("created_at")
+  updatedAt                DateTime                       @updatedAt @map("updated_at")
+  project                  Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  batch                    AcceptanceBatch                @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
+  item                     AcceptanceTestItemDefinition   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  baselineResultRevision   AcceptanceTestResultRevision?  @relation("OfflineAcceptanceDraftBaselineRevision", fields: [baselineResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  submittedBy              User                           @relation("OfflineAcceptanceDraftSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviews                  OfflineAcceptanceDraftReview[]
 
   @@unique([id, projectId])
   @@unique([projectId, clientDraftId])
@@ -2649,25 +2830,25 @@ model OfflineAcceptanceDraftSubmission {
 }
 
 model OfflineAcceptanceDraftReview {
-  id                       String                                @id @default(cuid())
-  projectId                String                                @map("project_id")
-  submissionId             String                                @map("submission_id")
-  reviewNo                 Int                                   @map("review_no")
+  id                       String                               @id @default(cuid())
+  projectId                String                               @map("project_id")
+  submissionId             String                               @map("submission_id")
+  reviewNo                 Int                                  @map("review_no")
   decision                 OfflineAcceptanceDraftReviewDecision
   reason                   String
-  correctedDecision        AcceptanceDecision?                   @map("corrected_decision")
-  correctedMeasuredValue   String?                               @map("corrected_measured_value")
-  correctedMeasuredUnit    String?                               @map("corrected_measured_unit")
-  correctedNote            String?                               @map("corrected_note")
-  evidenceFileIds          Json                                  @default("[]") @map("evidence_file_ids")
-  reviewedResultRevisionId String?                               @map("reviewed_result_revision_id")
-  reviewChecksum           String                                @map("review_checksum")
-  reviewedById             String                                @map("reviewed_by_id")
-  reviewedAt               DateTime                              @default(now()) @map("reviewed_at")
-  project                  Project                               @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  submission               OfflineAcceptanceDraftSubmission       @relation(fields: [submissionId, projectId], references: [id, projectId], onDelete: Restrict)
-  reviewedBy               User                                  @relation("OfflineAcceptanceDraftReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
-  reviewedResultRevision   AcceptanceTestResultRevision?          @relation("OfflineAcceptanceDraftReviewedResultRevision", fields: [reviewedResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  correctedDecision        AcceptanceDecision?                  @map("corrected_decision")
+  correctedMeasuredValue   String?                              @map("corrected_measured_value")
+  correctedMeasuredUnit    String?                              @map("corrected_measured_unit")
+  correctedNote            String?                              @map("corrected_note")
+  evidenceFileIds          Json                                 @default("[]") @map("evidence_file_ids")
+  reviewedResultRevisionId String?                              @map("reviewed_result_revision_id")
+  reviewChecksum           String                               @map("review_checksum")
+  reviewedById             String                               @map("reviewed_by_id")
+  reviewedAt               DateTime                             @default(now()) @map("reviewed_at")
+  project                  Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  submission               OfflineAcceptanceDraftSubmission     @relation(fields: [submissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  reviewedBy               User                                 @relation("OfflineAcceptanceDraftReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewedResultRevision   AcceptanceTestResultRevision?        @relation("OfflineAcceptanceDraftReviewedResultRevision", fields: [reviewedResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
 
   @@unique([id, projectId])
   @@unique([submissionId, reviewNo])
