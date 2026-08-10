@@ -1722,34 +1722,34 @@ model UserRole {
 }
 
 model Project {
-  id                                 String                                     @id @default(cuid())
-  code                               String                                     @unique
+  id                                 String                                 @id @default(cuid())
+  code                               String                                 @unique
   name                               String
-  departmentId                       String?                                    @map("department_id")
-  status                             ProjectStatus                              @default(DRAFT)
-  initializationStatus               ProjectInitializationStatus                @default(LEGACY) @map("initialization_status")
-  projectType                        ProjectType                                @default(LEGACY) @map("project_type")
-  equipmentShape                     EquipmentShape?                            @map("equipment_shape")
-  structureStatus                    ProjectStructureStatus                     @default(UNCONFIGURED) @map("structure_status")
-  capabilityConfigurationStatus      ProjectCapabilityConfigurationStatus       @default(UNCONFIGURED) @map("capability_configuration_status")
-  capabilitiesConfiguredAt           DateTime?                                  @map("capabilities_configured_at")
-  sourceTemplateVersionId            String?                                    @map("source_template_version_id")
-  sourceTemplateChecksum             String?                                    @map("source_template_checksum")
-  initializedAt                      DateTime?                                  @map("initialized_at")
-  mainControlStageId                 String?                                    @map("main_control_stage_id")
-  mainControlStageProjectId          String?                                    @map("main_control_stage_project_id")
-  mainControlStageCode               String?                                    @map("main_control_stage_code")
-  mainControlStageStatus             ProjectStageExecutionStatus?               @map("main_control_stage_status")
-  mainControlStageSequence           Int?                                       @map("main_control_stage_sequence")
-  mainControlStageUpdatedAt          DateTime?                                  @map("main_control_stage_updated_at")
-  version                            Int                                        @default(1)
-  createdById                        String                                     @map("created_by_id")
-  createdAt                          DateTime                                   @default(now()) @map("created_at")
-  updatedAt                          DateTime                                   @updatedAt @map("updated_at")
-  createdBy                          User                                       @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  sourceTemplateVersion              ProjectTemplateVersion?                    @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
+  departmentId                       String?                                @map("department_id")
+  status                             ProjectStatus                          @default(DRAFT)
+  initializationStatus               ProjectInitializationStatus            @default(LEGACY) @map("initialization_status")
+  projectType                        ProjectType                            @default(LEGACY) @map("project_type")
+  equipmentShape                     EquipmentShape?                        @map("equipment_shape")
+  structureStatus                    ProjectStructureStatus                 @default(UNCONFIGURED) @map("structure_status")
+  capabilityConfigurationStatus      ProjectCapabilityConfigurationStatus   @default(UNCONFIGURED) @map("capability_configuration_status")
+  capabilitiesConfiguredAt           DateTime?                              @map("capabilities_configured_at")
+  sourceTemplateVersionId            String?                                @map("source_template_version_id")
+  sourceTemplateChecksum             String?                                @map("source_template_checksum")
+  initializedAt                      DateTime?                              @map("initialized_at")
+  mainControlStageId                 String?                                @map("main_control_stage_id")
+  mainControlStageProjectId          String?                                @map("main_control_stage_project_id")
+  mainControlStageCode               String?                                @map("main_control_stage_code")
+  mainControlStageStatus             ProjectStageExecutionStatus?           @map("main_control_stage_status")
+  mainControlStageSequence           Int?                                   @map("main_control_stage_sequence")
+  mainControlStageUpdatedAt          DateTime?                              @map("main_control_stage_updated_at")
+  version                            Int                                    @default(1)
+  createdById                        String                                 @map("created_by_id")
+  createdAt                          DateTime                               @default(now()) @map("created_at")
+  updatedAt                          DateTime                               @updatedAt @map("updated_at")
+  createdBy                          User                                   @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  sourceTemplateVersion              ProjectTemplateVersion?                @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
   templateSnapshot                   ProjectTemplateSnapshot?
-  mainControlStage                   ProjectStage?                              @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
+  mainControlStage                   ProjectStage?                          @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
   members                            ProjectMember[]
   auditLogs                          AuditLog[]
   files                              FileObject[]
@@ -1800,7 +1800,7 @@ model Project {
   projectMilestones                  ProjectMilestone[]
   projectMilestoneTaskLinks          ProjectMilestoneTaskLink[]
   projectMilestoneEvents             ProjectMilestoneEvent[]
-  projectStages                      ProjectStage[]                             @relation("ProjectStages")
+  projectStages                      ProjectStage[]                         @relation("ProjectStages")
   deliveryUnitStages                 DeliveryUnitStage[]
   stageReleaseAuthorizations         StageReleaseAuthorization[]
   projectStageEvents                 ProjectStageEvent[]
@@ -2164,29 +2164,29 @@ model MaterialReference {
 }
 
 model SupplierReference {
-  id                        String                                     @id @default(cuid())
-  projectId                 String                                     @map("project_id")
-  source                    ProcurementSource
-  externalId                String?                                    @map("external_id")
-  code                      String
-  name                      String
-  status                    MaterialReferenceStatus                    @default(ACTIVE)
-  contactName               String?                                    @map("contact_name")
-  contactPhone              String?                                    @map("contact_phone")
-  procurementOwnerName      String?                                    @map("procurement_owner_name")
-  capabilityTagsJson        Json                                       @default("[]") @map("capability_tags_json")
-  sourceVersion             String?                                    @map("source_version")
-  sourceHash                String?                                    @map("source_hash")
-  syncedAt                  DateTime?                                  @map("synced_at")
-  version                   Int                                        @default(1)
-  createdById               String                                     @map("created_by_id")
-  updatedById               String                                     @map("updated_by_id")
-  createdAt                 DateTime                                   @default(now()) @map("created_at")
-  updatedAt                 DateTime                                   @updatedAt @map("updated_at")
-  project                   Project                                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  createdBy                 User                                       @relation("SupplierReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy                 User                                       @relation("SupplierReferenceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  procurementTrackingLines  ProcurementTrackingLine[]
+  id                       String                    @id @default(cuid())
+  projectId                String                    @map("project_id")
+  source                   ProcurementSource
+  externalId               String?                   @map("external_id")
+  code                     String
+  name                     String
+  status                   MaterialReferenceStatus   @default(ACTIVE)
+  contactName              String?                   @map("contact_name")
+  contactPhone             String?                   @map("contact_phone")
+  procurementOwnerName     String?                   @map("procurement_owner_name")
+  capabilityTagsJson       Json                      @default("[]") @map("capability_tags_json")
+  sourceVersion            String?                   @map("source_version")
+  sourceHash               String?                   @map("source_hash")
+  syncedAt                 DateTime?                 @map("synced_at")
+  version                  Int                       @default(1)
+  createdById              String                    @map("created_by_id")
+  updatedById              String                    @map("updated_by_id")
+  createdAt                DateTime                  @default(now()) @map("created_at")
+  updatedAt                DateTime                  @updatedAt @map("updated_at")
+  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                User                      @relation("SupplierReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                User                      @relation("SupplierReferenceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  procurementTrackingLines ProcurementTrackingLine[]
   manufacturingCapabilities SupplierReferenceManufacturingCapability[]
   drawingSelectionItems     DrawingSelectionItem[]
 
