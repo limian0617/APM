@@ -7,6 +7,7 @@ const migrationPath = resolve(
   process.cwd(),
   "prisma/migrations/20260810010000_apm_103_sat_offline_drafts/migration.sql"
 );
+const workflowPath = resolve(process.cwd(), ".github/workflows/ci.yml");
 
 describe("APM-103 SAT offline draft persistence contract", () => {
   it("defines append-only draft submissions and review history with project-safe keys", () => {
@@ -33,5 +34,14 @@ describe("APM-103 SAT offline draft persistence contract", () => {
     expect(migration).toContain("ACCEPTANCE_OFFLINE_DRAFT_SAT_ONLY");
     expect(migration).toContain("ACCEPTANCE_OFFLINE_DRAFT_BATCH_STATE");
     expect(migration).toContain("ACCEPTANCE_OFFLINE_DRAFT_ITEM_SCOPE");
+  });
+
+  it("keeps GitHub CI coverage for the APM-102 to APM-103 upgrade boundary", () => {
+    expect(existsSync(workflowPath)).toBe(true);
+    const workflow = readFileSync(workflowPath, "utf8");
+
+    expect(workflow).toContain("Validate APM-102 to APM-103 upgrade migration");
+    expect(workflow).toContain("apm_upgrade_apm102");
+    expect(workflow).toContain("20260810010000_apm_103_sat_offline_drafts");
   });
 });
