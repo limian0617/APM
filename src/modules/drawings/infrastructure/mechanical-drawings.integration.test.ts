@@ -282,7 +282,8 @@ describeDatabase("APM-052 PostgreSQL mechanical drawings", () => {
               action: "CONFIRM",
               drawingNumber: `DWG-RESTRICTED-IMPORT-${suffix}`,
               title: "严格受限批量图纸",
-              drawingType: "ASSEMBLY"
+              drawingType: "ASSEMBLY",
+              manufacturingCategoryCode: "MACHINING"
             }
           ],
           reason: "无敏感权限不得确认严格受限导入"

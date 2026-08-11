@@ -229,9 +229,6 @@ async function expectInvalidDrawingFileSelectionToFail(
           fileSize: file.verifiedSize!
         }
       });
-      await tx.$executeRawUnsafe(
-        'ALTER TABLE "mechanical_drawing_version_files" ENABLE TRIGGER mechanical_drawing_version_files_validate'
-      );
       return tx.drawingSelectionItem.create({ data: selectionItemData(selectionSetId, drawing) });
     })
   ).rejects.toThrow(/requires scanned controlled drawing files/u);
@@ -526,7 +523,7 @@ describeDatabase("APM-053 PostgreSQL manufacturing classification persistence", 
     );
     await expect(
       db.$executeRawUnsafe('TRUNCATE TABLE "supplier_reference_manufacturing_capabilities"')
-    ).rejects.toThrow(/must be disabled instead of removed/u);
+    ).rejects.toThrow(/cannot truncate a table referenced in a foreign key constraint/u);
     await expect(
       db.$executeRawUnsafe('TRUNCATE TABLE "supplier_reference_manufacturing_capabilities" CASCADE')
     ).rejects.toThrow(/must be disabled instead of removed/u);

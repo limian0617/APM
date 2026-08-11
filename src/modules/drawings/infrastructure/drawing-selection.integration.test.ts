@@ -65,7 +65,7 @@ describeDatabase("APM-053 drawing-selection transactional integration", () => {
         declaredSize: 1024n,
         verifiedSize: 1024n,
         sha256: "b".repeat(64),
-        objectKey: `controlled/${suffix}/DS-001.dwg`,
+        objectKey: randomUUID(),
         storageArea: "CONTROLLED",
         status: "AVAILABLE",
         sensitivity: "INTERNAL",
