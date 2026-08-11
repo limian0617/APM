@@ -38,7 +38,10 @@ export type ManufacturingClassificationErrorCode =
   | "NOT_FOUND"
   | "CODE_CONFLICT"
   | "CODE_IMMUTABLE"
-  | "PROCESS_TAG_DUPLICATE";
+  | "PROCESS_TAG_DUPLICATE"
+  | "SUPPLIER_REFERENCE_NOT_FOUND"
+  | "SUPPLIER_MANUFACTURING_CAPABILITY_NOT_FOUND"
+  | "SUPPLIER_PROCESS_CAPABILITY_NOT_FOUND";
 
 export class ManufacturingClassificationError extends Error {
   constructor(
