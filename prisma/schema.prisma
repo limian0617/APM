@@ -245,6 +245,7 @@ model PersistentJob {
   sourceOutboxEvent   OutboxEvent? @relation(fields: [sourceOutboxEventId], references: [id], onDelete: Restrict)
   attempts            JobAttempt[]
   archiveIntegrityChecks ProjectArchiveIntegrityCheck[]
+  archiveGenerationVersions ProjectArchiveVersion[] @relation("ProjectArchiveGenerationJob")
 
   @@unique([jobType, idempotencyKey])
   @@index([status, nextRunAt])
@@ -1456,6 +1457,11 @@ enum AuditAction {
   ACCEPTANCE_CONFIRMATION_READ
   ACCEPTANCE_OFFLINE_DRAFT_SUBMITTED
   ACCEPTANCE_OFFLINE_DRAFT_REVIEWED
+  PROJECT_ARCHIVE_GENERATION_REQUESTED
+  PROJECT_ARCHIVE_GENERATED
+  PROJECT_ARCHIVE_INTEGRITY_CHECK_REQUESTED
+  PROJECT_ARCHIVE_INTEGRITY_CHECKED
+  PROJECT_CLOSED
   RND_PROJECT_CREATED
   RND_PROJECT_STATUS_CHANGED
   TECHNICAL_ASSET_CREATED
@@ -1550,6 +1556,9 @@ enum AuditObjectType {
   ACCEPTANCE_CONFIRMATION_EVIDENCE
   ACCEPTANCE_OFFLINE_DRAFT_SUBMISSION
   ACCEPTANCE_OFFLINE_DRAFT_REVIEW
+  PROJECT_ARCHIVE
+  PROJECT_ARCHIVE_VERSION
+  PROJECT_ARCHIVE_INTEGRITY_CHECK
   RND_PROJECT
   RND_PROJECT_EVENT
   TECHNICAL_ASSET
@@ -1934,11 +1943,13 @@ model ProjectArchiveVersion {
   externalPublicationApplicability ArchiveExternalPublicationApplicability @map("external_publication_applicability")
   externalPublicationReason        String                                  @map("external_publication_reason")
   createdById                      String                                  @map("created_by_id")
+  generationJobId                 String?                                  @unique @map("generation_job_id")
   createdAt                        DateTime                                @default(now()) @map("created_at")
   finalizedAt                      DateTime?                               @map("finalized_at")
   archive                          ProjectArchive                          @relation(fields: [archiveId, projectId], references: [id, projectId], onDelete: Restrict)
   project                          Project                                 @relation("ProjectArchiveVersions", fields: [projectId], references: [id], onDelete: Restrict)
   createdBy                        User                                    @relation("ProjectArchiveVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  generationJob                   PersistentJob?                           @relation("ProjectArchiveGenerationJob", fields: [generationJobId], references: [id], onDelete: Restrict)
   manifestItems                    ProjectArchiveManifestItem[]
   integrityChecks                  ProjectArchiveIntegrityCheck[]
   finalizedArchive                 ProjectArchive?                         @relation("ArchiveFinalVersion")

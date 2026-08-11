@@ -24,6 +24,7 @@ import {
   validateDocumentTitle
 } from "@/modules/documents/domain/controlled-document";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+import { assertProjectWritableById } from "@/modules/projects/domain/project-write-policy";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 
 import {
@@ -510,6 +511,7 @@ export async function createMechanicalDrawing(
   const reason = commandReason(input.reason);
   try {
     return await inTransaction(transaction, async (client) => {
+      await assertProjectWritableById(client, input.projectId);
       const files = await availableFiles(client, input.projectId, [
         input.cadSourceFileId,
         ...(input.pdfPreviewFileId ? [input.pdfPreviewFileId] : []),
@@ -602,6 +604,7 @@ export async function createMechanicalDrawingDraft(
   const reason = commandReason(input.reason);
   try {
     return await inTransaction(transaction, async (client) => {
+      await assertProjectWritableById(client, input.projectId);
       const drawing = await lockDrawing(client, input.projectId, input.drawingId);
       if (!drawing) throw new DrawingError("MECHANICAL_DRAWING_NOT_FOUND", "机械图纸不存在。", 404);
       if (drawing.version !== expectedVersion) {
@@ -686,6 +689,7 @@ export async function publishMechanicalDrawingVersion(
   const reason = commandReason(input.reason);
   try {
     return await inTransaction(transaction, async (client) => {
+      await assertProjectWritableById(client, input.projectId);
       const drawing = await lockDrawing(client, input.projectId, input.drawingId);
       if (!drawing) throw new DrawingError("MECHANICAL_DRAWING_NOT_FOUND", "机械图纸不存在。", 404);
       if (drawing.version !== expectedVersion) {
@@ -769,6 +773,7 @@ export async function createMechanicalDrawingImportBatch(
   const reason = commandReason(input.reason);
   try {
     return await inTransaction(transaction, async (client) => {
+      await assertProjectWritableById(client, input.projectId);
       const fileMap = await availableFiles(client, input.projectId, input.fileIds);
       await assertSensitiveFileWriteAccess(fileMap.values(), input.sourceFileAccess);
       const pairs = pairDrawingFiles(
@@ -867,6 +872,7 @@ export async function confirmMechanicalDrawingImportBatch(
   const reason = commandReason(input.reason);
   try {
     return await inTransaction(transaction, async (client) => {
+      await assertProjectWritableById(client, input.projectId);
       const batch = await lockImportBatch(client, input.projectId, input.batchId);
       if (!batch)
         throw new DrawingError("DRAWING_IMPORT_BATCH_NOT_FOUND", "图纸导入批次不存在。", 404);

@@ -17,6 +17,14 @@ import {
 import { payloadHash, type JsonValue } from "@/modules/governance/domain/idempotency";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 import { readProcurementGateFacts } from "@/modules/procurement/application/readiness-service";
+import {
+  buildProjectArchiveManifest,
+  type ArchiveManifestSourceInput
+} from "@/modules/archives/application/archive-manifest-service";
+import {
+  readProjectArchiveSources,
+  type ArchiveSourceClient
+} from "@/modules/archives/application/archive-source-reader";
 import type { ProjectStageExecutionStatus } from "@/modules/projects/domain/project-stage";
 
 const GATE_SCOPES = ["PROJECT", "DELIVERY_UNIT", "MODULE"] as const;
@@ -312,6 +320,10 @@ function needsProcurementFacts(bindings: readonly FrozenGateCheckerBinding[]) {
   return bindings.some(
     (binding) => binding.code === "PROCUREMENT.READINESS" && binding.version === 1
   );
+}
+
+function needsProjectArchiveFacts(bindings: readonly FrozenGateCheckerBinding[]) {
+  return bindings.some((binding) => binding.code === "CLOSURE.ARCHIVE.G9" && binding.version === 1);
 }
 
 function acceptanceIssueBinding(bindings: readonly FrozenGateCheckerBinding[]) {
@@ -691,6 +703,75 @@ async function freezeProcurementCheckerFacts(input: {
   };
 }
 
+async function freezeProjectArchiveCheckerFacts(input: {
+  client: Prisma.TransactionClient;
+  projectId: string;
+  scope: GateScopeTarget;
+}): Promise<Readonly<Record<string, JsonValue>>> {
+  const unavailable = (reason: string) => ({
+    closureArchive: {
+      factsAvailable: false,
+      projectId: input.projectId,
+      archiveVersionId: null,
+      archiveStatus: null,
+      manifestChecksum: null,
+      sourceWatermark: null,
+      integrityCheckId: null,
+      integrityStatus: null,
+      sourceFactsCurrent: false,
+      openResidualItemIds: [],
+      reason
+    } as unknown as JsonValue
+  });
+  if (input.scope.scope !== "PROJECT") return unavailable("PROJECT_SCOPE_REQUIRED");
+  const archive = await input.client.projectArchive.findUnique({
+    where: { projectId: input.projectId },
+    include: {
+      versions: {
+        where: { status: "READY" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 1,
+        include: { integrityChecks: { orderBy: { sequence: "desc" }, take: 1 } }
+      }
+    }
+  });
+  const version = archive?.versions[0];
+  if (!version) return unavailable("READY_ARCHIVE_REQUIRED");
+  const residuals = await input.client.residualItem.findMany({
+    where: { projectId: input.projectId, status: { not: "CLOSED" } },
+    select: { id: true }
+  });
+  let sourceFactsCurrent = false;
+  try {
+    const current = await buildProjectArchiveManifest({
+      projectId: input.projectId,
+      readSources: (projectId) =>
+        readProjectArchiveSources({
+          projectId,
+          client: input.client as unknown as ArchiveSourceClient
+        }) as Promise<readonly ArchiveManifestSourceInput[]>
+    });
+    sourceFactsCurrent = current.sourceWatermark === version.sourceWatermark;
+  } catch {
+    return unavailable("SOURCE_FACTS_UNAVAILABLE");
+  }
+  const integrity = version.integrityChecks[0] ?? null;
+  return {
+    closureArchive: {
+      factsAvailable: true,
+      projectId: input.projectId,
+      archiveVersionId: version.id,
+      archiveStatus: version.status,
+      manifestChecksum: version.manifestChecksum,
+      sourceWatermark: version.sourceWatermark,
+      integrityCheckId: integrity?.id ?? null,
+      integrityStatus: integrity?.status ?? null,
+      sourceFactsCurrent,
+      openResidualItemIds: residuals.map((item) => item.id).sort()
+    } as unknown as JsonValue
+  };
+}
+
 function frozenGateThreshold(value: unknown): JsonValue | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -1000,6 +1081,13 @@ export async function runGateChecks(
               projectId: input.projectId,
               scope: checkerScope,
               gateThreshold: frozenGateThreshold(instance.gateDefinition.definitionJson)
+            })
+          : {}),
+        ...(needsProjectArchiveFacts(checkerBindings)
+          ? await freezeProjectArchiveCheckerFacts({
+              client,
+              projectId: input.projectId,
+              scope: checkerScope
             })
           : {}),
         ...(acceptanceIssueBinding(checkerBindings)

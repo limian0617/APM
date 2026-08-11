@@ -17,6 +17,10 @@ import {
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 import {
+  assertProjectWritable,
+  ProjectWritePolicyError
+} from "@/modules/projects/domain/project-write-policy";
+import {
   createControlledDocument,
   createControlledDocumentDraft,
   publishControlledDocumentVersion
@@ -192,6 +196,19 @@ async function loadLockedBatchFacts(
   });
   if (!batch)
     throw new AcceptanceReportServiceError("ACCEPTANCE_BATCH_NOT_FOUND", "验收批次不存在。", 404);
+  const project = await client.project.findUnique({
+    where: { id: projectId },
+    select: { status: true }
+  });
+  if (!project) throw new AcceptanceReportServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+  try {
+    assertProjectWritable(project.status);
+  } catch (error) {
+    if (error instanceof ProjectWritePolicyError) {
+      throw new AcceptanceReportServiceError(error.code, error.message, error.status);
+    }
+    throw error;
+  }
   try {
     assertReportCanGenerate(batch.status);
   } catch (error) {
@@ -794,6 +811,19 @@ export async function recordAcceptanceConfirmation(
     );
   const customerConfirmedAt = asDate(input.customerConfirmedAt, "customerConfirmedAt");
   return inTransaction(transaction, async (client) => {
+    const project = await client.project.findUnique({
+      where: { id: text(input.projectId, "projectId") },
+      select: { status: true }
+    });
+    if (!project) throw new AcceptanceReportServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+    try {
+      assertProjectWritable(project.status);
+    } catch (error) {
+      if (error instanceof ProjectWritePolicyError) {
+        throw new AcceptanceReportServiceError(error.code, error.message, error.status);
+      }
+      throw error;
+    }
     const report = await client.acceptanceReport.findFirst({
       where: { id: text(input.reportId, "reportId"), projectId: text(input.projectId, "projectId") }
     });

@@ -10,6 +10,7 @@ import {
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+import { assertProjectWritableById } from "@/modules/projects/domain/project-write-policy";
 
 import {
   assertDrawingSelectionPurpose,
@@ -358,6 +359,7 @@ export async function createDrawingSelectionSet(
   const reason = commandReason(input.reason);
   try {
     return await inTransaction(transaction, async (client) => {
+      await assertProjectWritableById(client, input.projectId);
       const selectionSet = await client.drawingSelectionSet.create({
         data: { projectId: input.projectId, code, title, createdById: input.actorId },
         include: { items: true }
@@ -445,6 +447,7 @@ export async function addDrawingSelectionItem(
   const purpose = assertDrawingSelectionPurpose(input.purpose);
   try {
     return await inTransaction(transaction, async (client) => {
+      await assertProjectWritableById(client, input.projectId);
       const selectionSet = await lockSelectionSet(client, input.projectId, input.selectionSetId);
       if (!selectionSet) selectionNotFound();
       assertDraftSet(selectionSet, expectedVersion);
@@ -553,6 +556,7 @@ export async function updateDrawingSelectionItem(
   const purpose = assertDrawingSelectionPurpose(input.purpose);
   try {
     return await inTransaction(transaction, async (client) => {
+      await assertProjectWritableById(client, input.projectId);
       const selectionSet = await lockSelectionSet(client, input.projectId, input.selectionSetId);
       if (!selectionSet) selectionNotFound();
       assertSelectionMutable(selectionSet.status);
@@ -656,6 +660,7 @@ export async function lockDrawingSelectionSet(
   const reason = commandReason(input.reason);
   try {
     return await inTransaction(transaction, async (client) => {
+      await assertProjectWritableById(client, input.projectId);
       const selectionSet = await lockSelectionSet(client, input.projectId, input.selectionSetId);
       if (!selectionSet) selectionNotFound();
       assertSelectionMutable(selectionSet.status);

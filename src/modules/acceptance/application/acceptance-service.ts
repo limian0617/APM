@@ -15,6 +15,10 @@ import {
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+import {
+  assertProjectWritable,
+  ProjectWritePolicyError
+} from "@/modules/projects/domain/project-write-policy";
 
 import {
   ACCEPTANCE_BATCH_STATUSES,
@@ -317,6 +321,19 @@ async function loadBatchForWrite(
   projectId: string,
   batchId: string
 ) {
+  const project = await client.project.findUnique({
+    where: { id: projectId },
+    select: { status: true }
+  });
+  if (!project) throw new AcceptanceServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+  try {
+    assertProjectWritable(project.status);
+  } catch (error) {
+    if (error instanceof ProjectWritePolicyError) {
+      throw new AcceptanceServiceError(error.code, error.message, error.status);
+    }
+    throw error;
+  }
   await client.$queryRaw`SELECT "id" FROM "acceptance_batches" WHERE "id" = ${batchId} AND "project_id" = ${projectId} FOR UPDATE`;
   const batch = await client.acceptanceBatch.findUnique({
     where: { id_projectId: { id: batchId, projectId } }
@@ -377,9 +394,17 @@ export async function createAcceptanceBatch(
   return inTransaction(transaction, async (client) => {
     const project = await client.project.findUnique({
       where: { id: projectId },
-      select: { id: true }
+      select: { id: true, status: true }
     });
     if (!project) throw new AcceptanceServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+    try {
+      assertProjectWritable(project.status);
+    } catch (error) {
+      if (error instanceof ProjectWritePolicyError) {
+        throw new AcceptanceServiceError(error.code, error.message, error.status);
+      }
+      throw error;
+    }
     const template = await client.acceptanceTemplateVersion.findUnique({
       where: { id: templateVersionId }
     });

@@ -9,6 +9,7 @@ import {
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+import { assertProjectWritableById } from "@/modules/projects/domain/project-write-policy";
 
 import {
   ManufacturingClassificationError,
@@ -208,6 +209,7 @@ export async function updateDrawingClassification(
   }
 
   return inTransaction(transaction, async (client) => {
+    await assertProjectWritableById(client, input.projectId);
     await client.$queryRaw`
       SELECT "id" FROM "mechanical_drawings"
       WHERE "id" = ${input.drawingId} AND "project_id" = ${input.projectId}

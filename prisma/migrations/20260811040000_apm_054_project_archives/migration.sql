@@ -71,6 +71,7 @@ CREATE TABLE "project_archive_versions" (
   "external_publication_applicability" "ArchiveExternalPublicationApplicability" NOT NULL,
   "external_publication_reason" TEXT NOT NULL,
   "created_by_id" TEXT NOT NULL,
+  "generation_job_id" TEXT,
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "finalized_at" TIMESTAMP(3),
   CONSTRAINT "project_archive_versions_pkey" PRIMARY KEY ("id"),
@@ -80,7 +81,8 @@ CREATE TABLE "project_archive_versions" (
   CONSTRAINT "project_archive_versions_version_check" CHECK ("version" > 0),
   CONSTRAINT "project_archive_versions_manifest_checksum_check" CHECK ("manifest_checksum" ~ '^[0-9a-f]{64}$'),
   CONSTRAINT "project_archive_versions_source_watermark_check" CHECK ("source_watermark" ~ '^[0-9a-f]{64}$'),
-  CONSTRAINT "project_archive_versions_reason_check" CHECK (length(trim("external_publication_reason")) > 0)
+  CONSTRAINT "project_archive_versions_reason_check" CHECK (length(trim("external_publication_reason")) > 0),
+  CONSTRAINT "project_archive_versions_generation_job_id_key" UNIQUE ("generation_job_id")
 );
 
 CREATE TABLE "project_archive_manifest_items" (
@@ -171,7 +173,9 @@ ALTER TABLE "project_archive_versions"
   ADD CONSTRAINT "project_archive_versions_project_fkey"
     FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
   ADD CONSTRAINT "project_archive_versions_created_by_fkey"
-    FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+    FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+  ADD CONSTRAINT "project_archive_versions_generation_job_fkey"
+    FOREIGN KEY ("generation_job_id") REFERENCES "persistent_jobs"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 ALTER TABLE "project_archive_manifest_items"
   ADD CONSTRAINT "project_archive_manifest_items_project_fkey"

@@ -9,6 +9,7 @@ import {
   evaluateAcceptanceConfirmationGate,
   type AcceptanceConfirmationGateInput
 } from "./acceptance-confirmation-gate";
+import { projectArchiveGateChecker } from "./project-archive-gate";
 import type {
   AcceptanceIssueCategory,
   AcceptanceIssueSeverity,
@@ -578,7 +579,8 @@ export const GATE_CHECKER_REGISTRY: ReadonlyMap<string, GateChecker> = new Map(
     fatAcceptanceIssueChecker,
     satAcceptanceIssueChecker,
     fatAcceptanceConfirmationChecker,
-    satAcceptanceConfirmationChecker
+    satAcceptanceConfirmationChecker,
+    projectArchiveGateChecker
   ].map((checker) => [registryKey(checker.code, checker.version), checker])
 );
 
