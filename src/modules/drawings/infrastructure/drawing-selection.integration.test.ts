@@ -16,6 +16,7 @@ const ids = {
   actor: `drawing-selection-actor-${suffix}`,
   project: `drawing-selection-project-${suffix}`
 };
+const drawingCode = `DS-001-${suffix}`;
 const auditContext: AuditContext = {
   actorId: null,
   requestId: `drawing-selection-request-${suffix}`,
@@ -77,7 +78,7 @@ describeDatabase("APM-053 drawing-selection transactional integration", () => {
       const document = await tx.controlledDocument.create({
         data: {
           projectId: ids.project,
-          code: `DS-001-${suffix}`,
+          code: drawingCode,
           title: "DS-001",
           createdById: ids.actor
         }
@@ -105,7 +106,7 @@ describeDatabase("APM-053 drawing-selection transactional integration", () => {
         data: {
           projectId: ids.project,
           documentId: document.id,
-          drawingNumber: "DS-001",
+          drawingNumber: drawingCode,
           drawingType: "PART",
           manufacturingCategoryId: category.id,
           createdById: ids.actor
