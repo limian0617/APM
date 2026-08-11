@@ -244,6 +244,7 @@ model PersistentJob {
   updatedAt           DateTime     @updatedAt @map("updated_at")
   sourceOutboxEvent   OutboxEvent? @relation(fields: [sourceOutboxEventId], references: [id], onDelete: Restrict)
   attempts            JobAttempt[]
+  archiveIntegrityChecks ProjectArchiveIntegrityCheck[]
 
   @@unique([jobType, idempotencyKey])
   @@index([status, nextRunAt])
@@ -311,6 +312,7 @@ model FileObject {
   acceptanceResultRevisionEvidence AcceptanceTestResultRevisionEvidence[]
   acceptanceReportPdfFiles         AcceptanceReport[]                     @relation("AcceptanceReportPdfFile")
   acceptanceConfirmationEvidence   AcceptanceConfirmationEvidence[]
+  archiveManifestItems             ProjectArchiveManifestItem[]
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -610,6 +612,39 @@ enum ProcurementChangeImpactDisposition {
 enum AcceptanceType {
   FAT
   SAT
+}
+
+enum ArchiveVersionStatus {
+  VERIFYING
+  READY
+  FAILED
+  FINALIZED
+}
+
+enum ArchiveManifestSourceType {
+  CONTROLLED_DOCUMENT_VERSION
+  MECHANICAL_DRAWING_VERSION
+  DOCUMENT_REVIEW
+  GATE_SUBMISSION
+  GATE_SUBMISSION_DOCUMENT_REFERENCE
+  ACCEPTANCE_BATCH
+  ACCEPTANCE_REPORT
+  ACCEPTANCE_CONFIRMATION
+}
+
+enum ArchiveIntegrityCheckStatus {
+  PASSED
+  FAILED
+}
+
+enum ArchiveIntegrityItemStatus {
+  PASSED
+  FAILED
+  NOT_APPLICABLE
+}
+
+enum ArchiveExternalPublicationApplicability {
+  NOT_APPLICABLE
 }
 
 enum AcceptanceScopeType {
@@ -1623,6 +1658,7 @@ model User {
   acceptanceReportsRequested              AcceptanceReport[]                     @relation("AcceptanceReportRequestedBy")
   acceptanceConfirmationsRecorded         AcceptanceConfirmation[]               @relation("AcceptanceConfirmationRecordedBy")
   acceptanceConfirmationEvidenceCreated   AcceptanceConfirmationEvidence[]
+  archiveVersionsCreated                  ProjectArchiveVersion[]                @relation("ProjectArchiveVersionCreatedBy")
   offlineAcceptanceDraftsSubmitted        OfflineAcceptanceDraftSubmission[]     @relation("OfflineAcceptanceDraftSubmittedBy")
   offlineAcceptanceDraftsReviewed         OfflineAcceptanceDraftReview[]         @relation("OfflineAcceptanceDraftReviewedBy")
   responsibilityPackagesCreated           ResponsibilityPackage[]                @relation("ResponsibilityPackageCreatedBy")
@@ -1759,6 +1795,7 @@ model Project {
   mainControlStageStatus             ProjectStageExecutionStatus?           @map("main_control_stage_status")
   mainControlStageSequence           Int?                                   @map("main_control_stage_sequence")
   mainControlStageUpdatedAt          DateTime?                              @map("main_control_stage_updated_at")
+  finalArchiveVersionId              String?                                @unique @map("final_archive_version_id")
   version                            Int                                    @default(1)
   createdById                        String                                 @map("created_by_id")
   createdAt                          DateTime                               @default(now()) @map("created_at")
@@ -1854,14 +1891,134 @@ model Project {
   issueHistories                     IssueHistory[]
   issueRelations                     IssueRelation[]
   mechanicalDrawingProcessTags       MechanicalDrawingProcessTag[]
+  archive                            ProjectArchive?                       @relation("ProjectArchiveAggregate")
+  archiveVersions                    ProjectArchiveVersion[]                @relation("ProjectArchiveVersions")
+  archiveManifestItems               ProjectArchiveManifestItem[]
+  archiveIntegrityChecks             ProjectArchiveIntegrityCheck[]
+  archiveIntegrityResults            ProjectArchiveIntegrityItemResult[]
+  finalArchiveVersion                ProjectArchiveVersion?                 @relation("ProjectFinalArchiveVersion", fields: [finalArchiveVersionId, id], references: [id, projectId], onDelete: Restrict)
 
   @@unique([mainControlStageId, mainControlStageProjectId])
+  @@unique([finalArchiveVersionId, id])
   @@index([departmentId])
   @@index([sourceTemplateVersionId])
   @@index([initializationStatus, createdAt])
   @@index([projectType, equipmentShape, structureStatus])
   @@index([capabilityConfigurationStatus, createdAt])
   @@map("projects")
+}
+
+model ProjectArchive {
+  id                    String                 @id @default(cuid())
+  projectId             String                 @unique @map("project_id")
+  finalArchiveVersionId String?                @unique @map("final_archive_version_id")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  project               Project                @relation("ProjectArchiveAggregate", fields: [projectId], references: [id], onDelete: Restrict)
+  versions              ProjectArchiveVersion[]
+  finalArchiveVersion   ProjectArchiveVersion? @relation("ArchiveFinalVersion", fields: [finalArchiveVersionId, id], references: [id, archiveId], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@unique([finalArchiveVersionId, id])
+  @@map("project_archives")
+}
+
+model ProjectArchiveVersion {
+  id                               String                                  @id @default(cuid())
+  archiveId                        String                                  @map("archive_id")
+  projectId                        String                                  @map("project_id")
+  version                          Int
+  status                           ArchiveVersionStatus                    @default(VERIFYING)
+  manifestChecksum                 String                                  @map("manifest_checksum")
+  sourceWatermark                  String                                  @map("source_watermark")
+  snapshotJson                     Json                                    @map("snapshot_json")
+  externalPublicationApplicability ArchiveExternalPublicationApplicability @map("external_publication_applicability")
+  externalPublicationReason        String                                  @map("external_publication_reason")
+  createdById                      String                                  @map("created_by_id")
+  createdAt                        DateTime                                @default(now()) @map("created_at")
+  finalizedAt                      DateTime?                               @map("finalized_at")
+  archive                          ProjectArchive                          @relation(fields: [archiveId, projectId], references: [id, projectId], onDelete: Restrict)
+  project                          Project                                 @relation("ProjectArchiveVersions", fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                        User                                    @relation("ProjectArchiveVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  manifestItems                    ProjectArchiveManifestItem[]
+  integrityChecks                  ProjectArchiveIntegrityCheck[]
+  finalizedArchive                 ProjectArchive?                         @relation("ArchiveFinalVersion")
+  finalizedProject                 Project?                                @relation("ProjectFinalArchiveVersion")
+
+  @@unique([id, projectId])
+  @@unique([id, archiveId])
+  @@unique([archiveId, version])
+  @@index([projectId, status, createdAt])
+  @@map("project_archive_versions")
+}
+
+model ProjectArchiveManifestItem {
+  id               String                    @id @default(cuid())
+  projectId        String                    @map("project_id")
+  archiveVersionId String                    @map("archive_version_id")
+  position         Int
+  sourceType       ArchiveManifestSourceType @map("source_type")
+  sourceId         String                    @map("source_id")
+  sourceVersion    String                    @map("source_version")
+  sourceChecksum   String                    @map("source_checksum")
+  fileObjectId     String?                   @map("file_object_id")
+  fileSha256       String?                   @map("file_sha256")
+  fileMimeType     String?                   @map("file_mime_type")
+  fileSize         BigInt?                   @map("file_size")
+  snapshotJson     Json                      @map("snapshot_json")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  project          Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  archiveVersion   ProjectArchiveVersion     @relation(fields: [archiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  fileObject       FileObject?               @relation(fields: [fileObjectId, projectId], references: [id, projectId], onDelete: Restrict)
+  integrityResults ProjectArchiveIntegrityItemResult[]
+
+  @@unique([archiveVersionId, position])
+  @@unique([id, projectId])
+  @@index([projectId, sourceType, sourceId])
+  @@index([projectId, fileObjectId])
+  @@map("project_archive_manifest_items")
+}
+
+model ProjectArchiveIntegrityCheck {
+  id               String                      @id @default(cuid())
+  projectId        String                      @map("project_id")
+  archiveVersionId String                      @map("archive_version_id")
+  sequence         Int
+  jobId            String                      @unique @map("job_id")
+  status           ArchiveIntegrityCheckStatus
+  inputChecksum    String                      @map("input_checksum")
+  resultChecksum   String                      @map("result_checksum")
+  checkedAt        DateTime                    @map("checked_at")
+  createdAt        DateTime                    @default(now()) @map("created_at")
+  project          Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  archiveVersion   ProjectArchiveVersion       @relation(fields: [archiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  job              PersistentJob               @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  results          ProjectArchiveIntegrityItemResult[]
+
+  @@unique([archiveVersionId, sequence])
+  @@unique([id, projectId])
+  @@index([projectId, checkedAt])
+  @@map("project_archive_integrity_checks")
+}
+
+model ProjectArchiveIntegrityItemResult {
+  id               String                       @id @default(cuid())
+  projectId        String                       @map("project_id")
+  integrityCheckId String                       @map("integrity_check_id")
+  manifestItemId   String                       @map("manifest_item_id")
+  status           ArchiveIntegrityItemStatus
+  actualSha256     String?                      @map("actual_sha256")
+  actualSize       BigInt?                      @map("actual_size")
+  failureCode      String?                      @map("failure_code")
+  failureMessage   String?                      @map("failure_message")
+  checkedAt        DateTime                     @map("checked_at")
+  createdAt        DateTime                     @default(now()) @map("created_at")
+  project          Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  integrityCheck   ProjectArchiveIntegrityCheck @relation(fields: [integrityCheckId, projectId], references: [id, projectId], onDelete: Restrict)
+  manifestItem     ProjectArchiveManifestItem   @relation(fields: [manifestItemId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([integrityCheckId, manifestItemId])
+  @@index([projectId, manifestItemId])
+  @@map("project_archive_integrity_item_results")
 }
 
 model RndProject {
