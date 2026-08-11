@@ -19,6 +19,13 @@
 - `src/app/api/configuration/...` and `src/app/api/projects/[projectId]/...`: thin authorization/parsing/use-case routes.
 - `src/app/projects/[projectId]/drawings/...`: page-state-driven internal workspace.
 
+## Local implementation handoff (2026-08-11)
+
+- [x] Tasks 1–7: stable vocabulary, persistence invariants, transactional services, strict authorized routes, and the internal drawing workspace are implemented and covered by focused tests.
+- [x] Task 8 steps 1–4: CI contains the APM-103→APM-053 PostgreSQL upgrade job; focused/full local checks and 1440×900 / 390×844 browser acceptance were recorded.
+- [x] Full local quality gate: `db:generate`, format, lint, typecheck, test, Prisma schema validation, production build, audit, and diff checks passed. The local PostgreSQL service was unavailable, so migration replay remains CI evidence.
+- [ ] Task 8 step 5: commit, push, Draft PR, GitHub CI, and then the external progress-tracker update remain pending; no PR will be merged.
+
 ### Task 1: Define pure vocabulary, matching, and selection rules
 
 **Files:**

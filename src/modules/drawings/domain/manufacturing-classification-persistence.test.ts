@@ -171,4 +171,12 @@ describe("APM-053 manufacturing classification persistence", () => {
     );
     expect(migration).toContain('BEFORE TRUNCATE ON "supplier_reference_process_capabilities"');
   });
+
+  it("requires CI to replay the APM-103 database through the APM-053 migration", async () => {
+    const ci = await readFile(".github/workflows/ci.yml", "utf8");
+
+    expect(ci).toContain("Validate APM-103 to APM-053 upgrade migration");
+    expect(ci).toContain('"20260811010000_apm_053_manufacturing_classification"');
+    expect(ci).toContain("apm_upgrade_apm103");
+  });
 });

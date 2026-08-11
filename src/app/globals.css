@@ -799,6 +799,453 @@ a {
   }
 }
 
+.drawing-workspace {
+  width: min(100%, 1240px);
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+}
+
+.drawing-workspace-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid #d9e0e8;
+  padding-bottom: 16px;
+}
+
+.drawing-eyebrow,
+.drawing-section-kicker {
+  margin: 0 0 6px;
+  color: #1d5c8d;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.drawing-workspace-header h1,
+.drawing-state-panel h1 {
+  margin: 0;
+  color: #182230;
+  font-size: 26px;
+  line-height: 1.25;
+}
+
+.drawing-workspace-header > div > p:last-child,
+.drawing-state-panel p,
+.drawing-empty-inline,
+.drawing-selection-item-form > p {
+  color: #5d6c7c;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.drawing-workspace-header > div > p:last-child {
+  margin: 6px 0 0;
+}
+
+.drawing-source-timestamps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(112px, max-content));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.drawing-source-timestamps dt {
+  color: #667788;
+  font-size: 12px;
+}
+
+.drawing-source-timestamps dd {
+  margin: 2px 0 0;
+  color: #27394a;
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.drawing-stale-banner,
+.drawing-empty-banner,
+.drawing-command-error,
+.drawing-area-notice {
+  margin: 0 0 16px;
+  border-left: 4px solid #cb7a16;
+  background: #fff8e9;
+  padding: 10px 12px;
+  color: #69440c;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.drawing-command-error {
+  border-left-color: #b44444;
+  background: #fff0f0;
+  color: #7f2525;
+}
+
+.drawing-area-notice {
+  border-left-color: #566c7d;
+  background: #f0f4f7;
+  color: #364d60;
+}
+
+.drawing-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 24px;
+}
+
+.drawing-workspace-section {
+  min-width: 0;
+  border-top: 2px solid #c8d4de;
+  padding-top: 14px;
+}
+
+.drawing-workspace-section:first-child {
+  grid-row: span 2;
+}
+
+.drawing-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.drawing-section-heading h2,
+.drawing-selection-item-form h3 {
+  margin: 0;
+  color: #1f2e3c;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.drawing-section-heading > span {
+  color: #667788;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.drawing-table-wrap {
+  overflow-x: auto;
+  border-top: 1px solid #d9e0e8;
+}
+
+.drawing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.drawing-table th,
+.drawing-table td {
+  min-width: 116px;
+  border-bottom: 1px solid #d9e0e8;
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.drawing-table thead th {
+  background: #eef3f7;
+  color: #455868;
+  font-size: 12px;
+}
+
+.drawing-table tbody th {
+  color: #1f2e3c;
+}
+
+.drawing-classification-form,
+.drawing-selection-create,
+.drawing-selection-item-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.drawing-classification-form {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.drawing-classification-form fieldset,
+.drawing-selection-item-form h3,
+.drawing-selection-item-form > p,
+.drawing-selection-item-form .drawing-command {
+  grid-column: 1 / -1;
+}
+
+.drawing-classification-form fieldset {
+  margin: 0;
+  border: 1px solid #cfd9e2;
+  padding: 8px;
+}
+
+.drawing-classification-form legend {
+  padding: 0 4px;
+  color: #455868;
+  font-size: 12px;
+}
+
+.drawing-tag-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.drawing-tag-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #364d60;
+  font-size: 13px;
+}
+
+.drawing-classification-form label,
+.drawing-selection-create label,
+.drawing-selection-item-form label {
+  display: grid;
+  gap: 5px;
+  color: #455868;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.drawing-classification-form input,
+.drawing-classification-form select,
+.drawing-selection-create input,
+.drawing-selection-create select,
+.drawing-selection-item-form input,
+.drawing-selection-item-form select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #aebdca;
+  border-radius: 2px;
+  background: #fff;
+  padding: 7px 8px;
+  color: #182230;
+  font: inherit;
+}
+
+.drawing-classification-form input:focus-visible,
+.drawing-classification-form select:focus-visible,
+.drawing-selection-create input:focus-visible,
+.drawing-selection-create select:focus-visible,
+.drawing-selection-item-form input:focus-visible,
+.drawing-selection-item-form select:focus-visible,
+.drawing-command:focus-visible {
+  outline: 2px solid #167a8b;
+  outline-offset: 2px;
+}
+
+.drawing-command {
+  min-height: 36px;
+  border: 1px solid #1b607b;
+  border-radius: 2px;
+  background: #1d5c8d;
+  padding: 7px 12px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.drawing-command:hover:not(:disabled) {
+  background: #16486e;
+}
+
+.drawing-command:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.drawing-command-secondary {
+  border-color: #6d7c88;
+  background: #fff;
+  color: #2e4f65;
+}
+
+.drawing-command-secondary:hover:not(:disabled) {
+  background: #eef3f7;
+}
+
+.drawing-selection-list,
+.drawing-supplier-list {
+  display: grid;
+  margin: 0;
+  border-top: 1px solid #d9e0e8;
+  padding: 0;
+  list-style: none;
+}
+
+.drawing-selection-list li,
+.drawing-supplier-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #d9e0e8;
+  padding: 10px 0;
+}
+
+.drawing-selection-list strong,
+.drawing-supplier-list strong,
+.drawing-selection-list span,
+.drawing-supplier-list span {
+  display: block;
+}
+
+.drawing-selection-list strong,
+.drawing-supplier-list strong {
+  color: #24394a;
+  font-size: 14px;
+}
+
+.drawing-selection-list span,
+.drawing-supplier-list span,
+.drawing-muted {
+  margin-top: 3px;
+  color: #667788;
+  font-size: 12px;
+}
+
+.drawing-selection-actions {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.drawing-selection-item-form {
+  margin-top: 16px;
+  border-top: 1px solid #d9e0e8;
+  padding-top: 14px;
+}
+
+.drawing-selection-item-form > p {
+  margin: -4px 0 2px;
+}
+
+.drawing-selection-item-form .drawing-supplier-match-list {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+  border-top: 1px solid #d9e0e8;
+  padding-top: 12px;
+}
+
+.drawing-selection-item-form .drawing-supplier-match-list h4 {
+  margin: 0;
+  color: #344e62;
+  font-size: 14px;
+}
+
+.drawing-selection-item-form .drawing-supplier-match-list label {
+  max-width: 100%;
+}
+
+.drawing-state-panel {
+  width: min(100%, 640px);
+  margin: 56px auto;
+  border-top: 3px solid #1d5c8d;
+  background: #fff;
+  padding: 28px;
+  box-shadow: 0 8px 20px rgb(17 29 42 / 8%);
+}
+
+@media (max-width: 840px) {
+  .drawing-workspace {
+    padding: 24px 20px 40px;
+  }
+
+  .drawing-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .drawing-workspace-section:first-child {
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 430px) {
+  .drawing-workspace {
+    padding: 20px 14px 32px;
+  }
+
+  .drawing-workspace-header {
+    display: grid;
+    gap: 12px;
+  }
+
+  .drawing-workspace-header h1,
+  .drawing-state-panel h1 {
+    font-size: 22px;
+  }
+
+  .drawing-source-timestamps,
+  .drawing-classification-form,
+  .drawing-selection-create,
+  .drawing-selection-item-form {
+    grid-template-columns: 1fr;
+  }
+
+  .drawing-table-wrap {
+    overflow: visible;
+  }
+
+  .drawing-table,
+  .drawing-table thead,
+  .drawing-table tbody,
+  .drawing-table tr,
+  .drawing-table th,
+  .drawing-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .drawing-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .drawing-table tr {
+    border-top: 1px solid #d9e0e8;
+    padding: 10px 0;
+  }
+
+  .drawing-table th,
+  .drawing-table td {
+    min-width: 0;
+    border: 0;
+    padding: 3px 0;
+  }
+
+  .drawing-classification-form {
+    min-width: 0;
+    margin-top: 8px;
+  }
+
+  .drawing-selection-list li,
+  .drawing-supplier-list li {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .drawing-selection-actions {
+    justify-items: start;
+  }
+
+  .drawing-state-panel {
+    margin: 24px auto;
+    padding: 20px;
+  }
+}
+
 .procurement-page {
   width: min(100%, 1240px);
   margin: 0 auto;

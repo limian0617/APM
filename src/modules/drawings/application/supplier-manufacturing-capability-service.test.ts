@@ -317,4 +317,91 @@ describe("APM-053 supplier manufacturing capability", () => {
     );
     expect(tx.supplierReferenceProcessCapability.deleteMany).toBeUndefined();
   });
+
+  it("changes a retained process-capability row only when reactivation is needed and advances its version", async () => {
+    const tx = transaction();
+
+    await updateSupplierCapability(
+      {
+        projectId: "project-a",
+        supplierReferenceId: "supplier-1",
+        categoryCode: "MACHINING",
+        processTagCodes: ["MILLING"],
+        version: 1,
+        reason: "retain current milling capability",
+        actorId: "actor-1",
+        auditContext
+      },
+      tx
+    );
+
+    expect(tx.supplierReferenceProcessCapability.updateMany).toHaveBeenCalledWith({
+      where: {
+        projectId: "project-a",
+        supplierCapabilityId: "capability-1",
+        processTagId: { in: ["tag-1"] },
+        isActive: false
+      },
+      data: { isActive: true, version: { increment: 1 } }
+    });
+  });
+
+  it("does not reactivate a retained capability after its global category is disabled", async () => {
+    const tx = transaction();
+    tx.manufacturingCategory.findUnique.mockResolvedValue(category({ isActive: false }));
+    tx.supplierReferenceManufacturingCapability.findFirst.mockResolvedValue(
+      capability({ isActive: false })
+    );
+
+    await expect(
+      updateSupplierCapability(
+        {
+          projectId: "project-a",
+          supplierReferenceId: "supplier-1",
+          categoryCode: "MACHINING",
+          processTagCodes: [],
+          isActive: true,
+          version: 1,
+          reason: "reactivate retained capability",
+          actorId: "actor-1",
+          auditContext
+        },
+        tx
+      )
+    ).rejects.toMatchObject({ code: "INACTIVE_CLASSIFICATION", status: 409 });
+    expect(tx.supplierReferenceManufacturingCapability.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not reactivate a retained process capability after its global tag is disabled", async () => {
+    const tx = transaction();
+    tx.processTag.findMany.mockResolvedValue([tag({ isActive: false })]);
+    tx.supplierReferenceManufacturingCapability.findFirst.mockResolvedValue(
+      capability({
+        processCapabilities: [
+          {
+            ...capability().processCapabilities[0],
+            isActive: false,
+            processTag: tag({ isActive: false })
+          }
+        ]
+      })
+    );
+
+    await expect(
+      updateSupplierCapability(
+        {
+          projectId: "project-a",
+          supplierReferenceId: "supplier-1",
+          categoryCode: "MACHINING",
+          processTagCodes: ["MILLING"],
+          version: 1,
+          reason: "reactivate retained process capability",
+          actorId: "actor-1",
+          auditContext
+        },
+        tx
+      )
+    ).rejects.toMatchObject({ code: "INACTIVE_CLASSIFICATION", status: 409 });
+    expect(tx.supplierReferenceProcessCapability.updateMany).not.toHaveBeenCalled();
+  });
 });

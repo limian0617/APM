@@ -275,11 +275,30 @@ export async function updateSupplierCapability(
           409
         );
       }
+      if (!category.isActive && current && !current.isActive && input.isActive === true) {
+        throw new ManufacturingClassificationError(
+          "INACTIVE_CLASSIFICATION",
+          `制造分类 ${category.code} 已停用，不能重新启用供应商能力。`,
+          409
+        );
+      }
       for (const tag of tags) {
         if (!tag.isActive && !currentTagIds.has(tag.id)) {
           throw new ManufacturingClassificationError(
             "INACTIVE_CLASSIFICATION",
             `工艺标签 ${tag.code} 已停用，不能用于新的供应商能力。`,
+            409
+          );
+        }
+        if (
+          !tag.isActive &&
+          current?.processCapabilities.some(
+            (link) => link.processTagId === tag.id && !link.isActive
+          )
+        ) {
+          throw new ManufacturingClassificationError(
+            "INACTIVE_CLASSIFICATION",
+            `工艺标签 ${tag.code} 已停用，不能重新启用供应商工艺能力。`,
             409
           );
         }
@@ -335,7 +354,8 @@ export async function updateSupplierCapability(
         where: {
           projectId: input.projectId,
           supplierCapabilityId: updated.id,
-          processTagId: { notIn: [...targetTagIds] }
+          processTagId: { notIn: [...targetTagIds] },
+          isActive: true
         },
         data: { isActive: false, version: { increment: 1 } }
       });
@@ -343,9 +363,10 @@ export async function updateSupplierCapability(
         where: {
           projectId: input.projectId,
           supplierCapabilityId: updated.id,
-          processTagId: { in: [...targetTagIds] }
+          processTagId: { in: [...targetTagIds] },
+          isActive: false
         },
-        data: { isActive: true }
+        data: { isActive: true, version: { increment: 1 } }
       });
       const additions = tags
         .filter((tag) => !currentTagIds.has(tag.id))

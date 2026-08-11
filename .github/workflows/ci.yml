@@ -258,6 +258,24 @@ jobs:
             npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
           DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm102?schema=public" \
             npm run db:migrate:deploy
+      - name: Validate APM-103 to APM-053 upgrade migration
+        shell: bash
+        run: |
+          export PGPASSWORD=apm
+          createdb -h localhost -U apm apm_upgrade_apm103
+          upgrade_root="$RUNNER_TEMP/apm-upgrade-apm103-$GITHUB_RUN_ID"
+          mkdir -p "$upgrade_root/prisma/migrations"
+          cp prisma/schema.prisma "$upgrade_root/prisma/schema.prisma"
+          for migration in prisma/migrations/*; do
+            if [[ "$(basename "$migration")" == "20260811010000_apm_053_manufacturing_classification" ]]; then
+              break
+            fi
+            cp -R "$migration" "$upgrade_root/prisma/migrations/"
+          done
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm103?schema=public" \
+            npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm103?schema=public" \
+            npm run db:migrate:deploy
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build

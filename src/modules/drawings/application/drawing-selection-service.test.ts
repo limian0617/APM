@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuditContext } from "@/modules/audit/contracts/audit";
@@ -16,6 +17,7 @@ import {
   addDrawingSelectionItem,
   createDrawingSelectionSet,
   getDrawingSelectionSet,
+  listDrawingSelectionSets,
   lockDrawingSelectionSet,
   updateDrawingSelectionItem
 } from "./drawing-selection-service";
@@ -148,6 +150,7 @@ function transaction(overrides: Record<string, unknown> = {}) {
     drawingSelectionSet: {
       findUnique: vi.fn(async () => selectionSet()),
       findUniqueOrThrow: vi.fn(async () => selectionSet({ version: 2 })),
+      findMany: vi.fn(async () => [selectionSet()]),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) =>
         selectionSet({ ...data, id: "selection-set-created" })
       ),
@@ -245,6 +248,20 @@ beforeEach(() => {
 });
 
 describe("APM-053 drawing selection commands", () => {
+  it("lists only the current project's internal selection sets", async () => {
+    const tx = transaction();
+
+    await expect(listDrawingSelectionSets({ projectId: "project-a" }, tx)).resolves.toEqual([
+      selectionSet()
+    ]);
+    expect(tx.drawingSelectionSet.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { projectId: "project-a" },
+        include: { items: true }
+      })
+    );
+  });
+
   it("creates a draft selection set through the caller transaction", async () => {
     const tx = transaction();
     const result = await createDrawingSelectionSet(
@@ -287,6 +304,19 @@ describe("APM-053 drawing selection commands", () => {
     );
     expect(auditSpy).toHaveBeenCalledWith(tx, expect.any(Object));
     expect(outboxSpy).toHaveBeenCalledWith(tx, expect.any(Object));
+  });
+
+  it("persists an unassigned NO_MATCH selection item with database NULL capability evidence", async () => {
+    const tx = transaction();
+
+    await addDrawingSelectionItem({ ...baseInput, supplierReferenceId: null }, tx);
+
+    const command = tx.drawingSelectionItem.create.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    expect(command.data.supplierReferenceId).toBeNull();
+    expect(command.data.supplierMatchState).toBe("NO_MATCH");
+    expect(command.data.supplierCapabilitySnapshotJson).toBe(Prisma.DbNull);
   });
 
   it.each([

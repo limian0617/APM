@@ -391,6 +391,18 @@ export async function createDrawingSelectionSet(
   }
 }
 
+export async function listDrawingSelectionSets(
+  input: { projectId: string },
+  transaction?: Prisma.TransactionClient
+) {
+  const delegate = (transaction ?? db).drawingSelectionSet as any;
+  return delegate.findMany({
+    where: { projectId: input.projectId },
+    include: { items: true },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }]
+  });
+}
+
 export async function getDrawingSelectionSet(
   input: { projectId: string; selectionSetId: string },
   transaction?: Prisma.TransactionClient
@@ -463,7 +475,7 @@ export async function addDrawingSelectionItem(
           supplierExceptionReason: supplierState.exceptionReason,
           supplierCapabilitySnapshotJson:
             supplierState.supplierCapabilitySnapshotJson === null
-              ? Prisma.JsonNull
+              ? Prisma.DbNull
               : (supplierState.supplierCapabilitySnapshotJson as Prisma.InputJsonValue),
           createdById: input.actorId
         }
@@ -586,7 +598,7 @@ export async function updateDrawingSelectionItem(
           supplierExceptionReason: supplierState.exceptionReason,
           supplierCapabilitySnapshotJson:
             supplierState.supplierCapabilitySnapshotJson === null
-              ? Prisma.JsonNull
+              ? Prisma.DbNull
               : (supplierState.supplierCapabilitySnapshotJson as Prisma.InputJsonValue),
           version: { increment: 1 }
         }

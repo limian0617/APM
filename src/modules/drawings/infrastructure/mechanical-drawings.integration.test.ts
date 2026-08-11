@@ -460,7 +460,16 @@ describeDatabase("APM-052 PostgreSQL mechanical drawings", () => {
     expect(first.status).toBe(201);
     expect(replay.status).toBe(201);
     expect(replay.headers.get("idempotency-replayed")).toBe("true");
-    const created = (await first.json()) as { drawing: { id: string } };
+    const created = (await first.json()) as {
+      drawing: {
+        id: string;
+        classification: { category: { code: string }; processTags: Array<{ code: string }> };
+      };
+    };
+    expect(created.drawing.classification).toEqual({
+      category: expect.objectContaining({ code: "MACHINING" }),
+      processTags: []
+    });
     const foreignRead = await getMechanicalDrawingRoute(
       new Request(`http://localhost/api/projects/${ids.projectB}/drawings/${created.drawing.id}`, {
         headers: { "x-apm-user-id": ids.admin, "x-request-id": `read-${suffix}` }

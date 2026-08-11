@@ -1453,3 +1453,144 @@ export const confirmMechanicalDrawingImportBodySchema = z.strictObject({
     ),
   reason: reasonSchema
 });
+
+const drawingSelectionCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z][A-Z0-9._-]{1,63}$/u);
+const drawingSelectionTitleSchema = z.string().trim().min(1).max(256);
+function isCalendarDate(value: string): boolean {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (!parts) return false;
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+const drawingSelectionDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/u)
+  .refine(isCalendarDate, { message: "日期必须是有效的日历日期。" });
+const drawingSelectionQuantitySchema = z.number().finite().positive().max(1_000_000_000);
+const drawingSelectionSpareQuantitySchema = z.number().finite().min(0).max(1_000_000_000);
+const manufacturingConfigurationQueryShape = z.strictObject({
+  activeOnly: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value === undefined || value === "true")
+});
+
+export const manufacturingCategoryPathSchema = z.strictObject({
+  categoryId: identifierSchema
+});
+export const processTagPathSchema = z.strictObject({ tagId: identifierSchema });
+export const manufacturingConfigurationQuerySchema = manufacturingConfigurationQueryShape;
+export const createManufacturingConfigurationBodySchema = z.strictObject({
+  code: manufacturingCategoryCodeSchema,
+  name: z.string().trim().min(1).max(191),
+  sortOrder: z.number().int().min(0).max(1_000_000).optional(),
+  reason: reasonSchema
+});
+export const updateManufacturingConfigurationBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  name: z.string().trim().min(1).max(191),
+  sortOrder: z.number().int().min(0).max(1_000_000),
+  reason: reasonSchema
+});
+export const setManufacturingConfigurationStatusBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  enabled: z.boolean(),
+  reason: reasonSchema
+});
+
+export const updateDrawingClassificationBodySchema = z.strictObject({
+  categoryId: identifierSchema,
+  processTagIds: z
+    .array(identifierSchema)
+    .max(100)
+    .refine((tagIds) => new Set(tagIds).size === tagIds.length, {
+      message: "processTagIds 不得重复。"
+    }),
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+
+export const drawingSupplierCapabilityPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  supplierReferenceId: identifierSchema
+});
+export const drawingSupplierCapabilityQuerySchema = z.strictObject({
+  categoryCode: manufacturingCategoryCodeSchema,
+  processTagCodes: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) =>
+      value
+        ? value
+            .split(",")
+            .map((code) => code.trim())
+            .map((code) => code.toUpperCase())
+            .filter(Boolean)
+        : []
+    )
+});
+export const drawingSupplierMatchQuerySchema = drawingSupplierCapabilityQuerySchema;
+export const updateSupplierManufacturingCapabilityBodySchema = z.strictObject({
+  manufacturingCategoryId: identifierSchema,
+  processTagIds: z
+    .array(identifierSchema)
+    .max(100)
+    .refine((tagIds) => new Set(tagIds).size === tagIds.length, {
+      message: "processTagIds 不得重复。"
+    }),
+  version: positiveVersionSchema,
+  isActive: z.boolean(),
+  reason: reasonSchema
+});
+
+export const drawingSelectionSetPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  selectionSetId: identifierSchema
+});
+export const drawingSelectionItemPathSchema = z.strictObject({
+  projectId: identifierSchema,
+  selectionSetId: identifierSchema,
+  selectionItemId: identifierSchema
+});
+export const createDrawingSelectionSetBodySchema = z.strictObject({
+  code: drawingSelectionCodeSchema,
+  title: drawingSelectionTitleSchema,
+  reason: reasonSchema
+});
+export const addDrawingSelectionItemBodySchema = z.strictObject({
+  drawingId: identifierSchema,
+  documentVersionId: identifierSchema,
+  quantity: drawingSelectionQuantitySchema,
+  spareQuantity: drawingSelectionSpareQuantitySchema,
+  requiredOn: drawingSelectionDateSchema,
+  supplierReferenceId: identifierSchema.nullable(),
+  purpose: z.enum(["INQUIRY", "MANUFACTURING", "CHANGE", "REFERENCE"]),
+  exceptionReason: z.string().trim().min(1).max(1024).nullable(),
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const updateDrawingSelectionItemBodySchema = z.strictObject({
+  quantity: drawingSelectionQuantitySchema,
+  spareQuantity: drawingSelectionSpareQuantitySchema,
+  requiredOn: drawingSelectionDateSchema,
+  supplierReferenceId: identifierSchema.nullable(),
+  purpose: z.enum(["INQUIRY", "MANUFACTURING", "CHANGE", "REFERENCE"]),
+  exceptionReason: z.string().trim().min(1).max(1024).nullable(),
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const lockDrawingSelectionSetBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  reason: reasonSchema
+});

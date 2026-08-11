@@ -1,3 +1,4 @@
+import { decideAuthorization } from "@/lib/auth/authorize";
 import { PERMISSIONS } from "@/lib/auth/permissions";
 import { authorizeProjectRequest } from "@/lib/auth/project-guard";
 import { auditContextFromRequest } from "@/modules/audit/application/context";
@@ -36,23 +37,34 @@ async function listDrawings(request: Request, context: RouteContext) {
   try {
     const path = parsePath(projectPathSchema, { projectId });
     const query = parseQuery(request, mechanicalDrawingQuerySchema);
-    return Response.json(
-      await listMechanicalDrawings({
-        projectId: path.projectId,
-        ...query,
-        sourceFileAccess: {
-          actor: guard.actor,
-          project: guard.project,
-          auditContext: auditContextFromRequest(request, {
-            actorId: guard.actor.id,
-            projectId: path.projectId,
-            departmentId: guard.project.departmentId
-          }),
-          method: request.method,
-          path: new URL(request.url).pathname
-        }
-      })
-    );
+    const result = await listMechanicalDrawings({
+      projectId: path.projectId,
+      ...query,
+      sourceFileAccess: {
+        actor: guard.actor,
+        project: guard.project,
+        auditContext: auditContextFromRequest(request, {
+          actorId: guard.actor.id,
+          projectId: path.projectId,
+          departmentId: guard.project.departmentId
+        }),
+        method: request.method,
+        path: new URL(request.url).pathname
+      }
+    });
+    const canManage = decideAuthorization(guard.actor, PERMISSIONS.CONTROLLED_DOCUMENT_MANAGE, {
+      projectId: guard.project.id,
+      resourceDepartmentId: guard.project.departmentId,
+      memberRoles: guard.project.memberRoles
+    }).allowed;
+    return Response.json({
+      ...result,
+      drawings: result.drawings.map((drawing) => ({
+        ...drawing,
+        allowedActions: [...drawing.allowedActions, ...(canManage ? ["UPDATE_CLASSIFICATION"] : [])]
+      })),
+      allowedActions: canManage ? ["UPDATE_CLASSIFICATION"] : []
+    });
   } catch (error) {
     const response = errorResponse(error);
     if (response) return response;

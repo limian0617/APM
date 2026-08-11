@@ -52,6 +52,11 @@ const fileSelect = {
 } satisfies Prisma.FileObjectSelect;
 
 const drawingInclude = {
+  manufacturingCategory: true,
+  processTags: {
+    include: { processTag: true },
+    orderBy: { processTag: { code: "asc" } }
+  },
   document: {
     include: {
       versions: {
@@ -277,12 +282,33 @@ function serializeDocument(document: DrawingFact["document"]) {
 }
 
 function serializeDrawing(drawing: DrawingFact) {
+  const classification = {
+    category: drawing.manufacturingCategory
+      ? {
+          id: drawing.manufacturingCategory.id,
+          code: drawing.manufacturingCategory.code,
+          name: drawing.manufacturingCategory.name,
+          sortOrder: drawing.manufacturingCategory.sortOrder,
+          isActive: drawing.manufacturingCategory.isActive,
+          version: drawing.manufacturingCategory.version
+        }
+      : null,
+    processTags: drawing.processTags.map(({ processTag }) => ({
+      id: processTag.id,
+      code: processTag.code,
+      name: processTag.name,
+      sortOrder: processTag.sortOrder,
+      isActive: processTag.isActive,
+      version: processTag.version
+    }))
+  };
   return {
     id: drawing.id,
     projectId: drawing.projectId,
     documentId: drawing.documentId,
     drawingNumber: drawing.drawingNumber,
     drawingType: drawing.drawingType,
+    classification,
     version: drawing.version,
     createdById: drawing.createdById,
     createdAt: drawing.createdAt.toISOString(),
