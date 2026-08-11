@@ -42,7 +42,6 @@ describeDatabase("APM-054 archive persistence", () => {
         versions: {
           create: {
             id: ids.version,
-            projectId: ids.project,
             version: 1,
             status: "READY",
             manifestChecksum: "a".repeat(64),
@@ -54,7 +53,6 @@ describeDatabase("APM-054 archive persistence", () => {
             manifestItems: {
               create: {
                 id: ids.item,
-                projectId: ids.project,
                 position: 0,
                 sourceType: "ACCEPTANCE_BATCH",
                 sourceId: `batch-${suffix}`,
@@ -121,7 +119,6 @@ describeDatabase("APM-054 archive persistence", () => {
         results: {
           create: {
             id: ids.result,
-            projectId: ids.project,
             manifestItemId: ids.item,
             status: "FAILED",
             failureCode: "ARCHIVE_FILE_HASH_MISMATCH",

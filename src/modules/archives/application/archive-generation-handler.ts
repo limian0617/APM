@@ -157,7 +157,6 @@ export function createPrismaArchiveGenerationHandler(input?: {
           generationJobId: job.id,
           manifestItems: {
             create: manifest.items.map((item) => ({
-              projectId: payload.projectId,
               position: item.position,
               sourceType: item.sourceType as never,
               sourceId: item.sourceId,
