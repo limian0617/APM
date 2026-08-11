@@ -36,6 +36,8 @@ import {
   validateDrawingType,
   type DrawingFileRole
 } from "../domain/mechanical-drawing";
+import { assertActiveManufacturingCategory } from "./drawing-classification-service";
+import { normalizeManufacturingCategoryCode } from "../domain/manufacturing-classification";
 
 const fileSelect = {
   id: true,
@@ -462,6 +464,7 @@ export async function createMechanicalDrawing(
     drawingNumber: unknown;
     title: unknown;
     drawingType: unknown;
+    manufacturingCategoryCode: unknown;
     cadSourceFileId: string;
     pdfPreviewFileId: string | null;
     stepExchangeFileIds: string[];
@@ -475,6 +478,9 @@ export async function createMechanicalDrawing(
   const drawingNumber = validateDrawingNumber(input.drawingNumber);
   const title = validateDocumentTitle(input.title);
   const drawingType = validateDrawingType(input.drawingType);
+  const manufacturingCategoryCode = normalizeManufacturingCategoryCode(
+    input.manufacturingCategoryCode
+  );
   const reason = commandReason(input.reason);
   try {
     return await inTransaction(transaction, async (client) => {
@@ -484,6 +490,13 @@ export async function createMechanicalDrawing(
         ...input.stepExchangeFileIds
       ]);
       await assertSensitiveFileWriteAccess(files.values(), input.sourceFileAccess);
+      const manufacturingCategory = await client.manufacturingCategory.findUnique({
+        where: { code: manufacturingCategoryCode }
+      });
+      if (!manufacturingCategory) {
+        throw new DrawingError("MANUFACTURING_CATEGORY_NOT_FOUND", "制造分类不存在。", 404);
+      }
+      assertActiveManufacturingCategory(manufacturingCategory);
       const documentResult = await createControlledDocument(
         {
           projectId: input.projectId,
@@ -505,6 +518,7 @@ export async function createMechanicalDrawing(
           documentId: documentResult.document.id,
           drawingNumber,
           drawingType,
+          manufacturingCategoryId: manufacturingCategory.id,
           createdById: input.actorId
         }
       });
@@ -806,6 +820,7 @@ type ImportDecision =
       drawingNumber: unknown;
       title: unknown;
       drawingType: unknown;
+      manufacturingCategoryCode: unknown;
     }
   | { itemId: string; action: "REJECT" };
 
@@ -880,6 +895,7 @@ export async function confirmMechanicalDrawingImportBatch(
             drawingNumber: decision.drawingNumber,
             title: decision.title,
             drawingType: decision.drawingType,
+            manufacturingCategoryCode: decision.manufacturingCategoryCode,
             cadSourceFileId: cadFiles[0]!.fileId,
             pdfPreviewFileId: pdfFiles[0]?.fileId ?? null,
             stepExchangeFileIds: stepFiles.map((file) => file.fileId),

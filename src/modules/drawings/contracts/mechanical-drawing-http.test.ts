@@ -21,6 +21,7 @@ describe("APM-052 mechanical drawing HTTP contracts", () => {
           drawingNumber: "dwg-001",
           title: "总装图",
           drawingType: "assembly",
+          manufacturingCategoryCode: "machining",
           cadSourceFileId: "cad-1",
           pdfPreviewFileId: "pdf-1",
           stepExchangeFileIds: ["step-1"],
@@ -47,7 +48,8 @@ describe("APM-052 mechanical drawing HTTP contracts", () => {
               action: "CONFIRM",
               drawingNumber: "DWG-001",
               title: "总装图",
-              drawingType: "ASSEMBLY"
+              drawingType: "ASSEMBLY",
+              manufacturingCategoryCode: "MACHINING"
             },
             { itemId: "item-2", action: "REJECT" }
           ],
@@ -94,6 +96,7 @@ describe("APM-052 mechanical drawing HTTP contracts", () => {
           drawingNumber: "DWG-001",
           title: "总装图",
           drawingType: "ASSEMBLY",
+          manufacturingCategoryCode: "MACHINING",
           cadSourceFileId: "cad-1",
           pdfPreviewFileId: null,
           stepExchangeFileIds: [],

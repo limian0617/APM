@@ -1362,6 +1362,11 @@ const drawingTypeSchema = z
   .toUpperCase()
   .regex(/^[A-Z][A-Z0-9._-]{0,63}$/u);
 const drawingTitleSchema = z.string().trim().min(1).max(256);
+const manufacturingCategoryCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z][A-Z0-9._-]{0,63}$/u);
 const drawingStepFileIdsSchema = z
   .array(identifierSchema)
   .max(1)
@@ -1382,6 +1387,7 @@ export const createMechanicalDrawingBodySchema = z.strictObject({
   drawingNumber: drawingNumberSchema,
   title: drawingTitleSchema,
   drawingType: drawingTypeSchema,
+  manufacturingCategoryCode: manufacturingCategoryCodeSchema,
   cadSourceFileId: identifierSchema,
   pdfPreviewFileId: identifierSchema.nullable(),
   stepExchangeFileIds: drawingStepFileIdsSchema,
@@ -1423,7 +1429,8 @@ const confirmMechanicalDrawingImportDecisionSchema = z.discriminatedUnion("actio
     action: z.literal("CONFIRM"),
     drawingNumber: drawingNumberSchema,
     title: drawingTitleSchema,
-    drawingType: drawingTypeSchema
+    drawingType: drawingTypeSchema,
+    manufacturingCategoryCode: manufacturingCategoryCodeSchema
   }),
   z.strictObject({ itemId: identifierSchema, action: z.literal("REJECT") })
 ]);
