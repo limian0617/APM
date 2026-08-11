@@ -306,6 +306,19 @@ describe("APM-053 drawing selection commands", () => {
     expect(outboxSpy).toHaveBeenCalledWith(tx, expect.any(Object));
   });
 
+  it("serializes the added item's required date as a JSON value in the Outbox payload", async () => {
+    const tx = transaction();
+
+    await addDrawingSelectionItem(baseInput, tx);
+
+    expect(outboxSpy).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        payload: expect.objectContaining({ requiredOn: "2026-08-30T00:00:00.000Z" })
+      })
+    );
+  });
+
   it("persists an unassigned NO_MATCH selection item with database NULL capability evidence", async () => {
     const tx = transaction();
 
@@ -447,6 +460,41 @@ describe("APM-053 drawing selection commands", () => {
     expect(result.item).toBeDefined();
     expect(tx.drawingSelectionItem.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ version: 1 }) })
+    );
+  });
+
+  it("serializes the updated item's required date as a JSON value in the Outbox payload", async () => {
+    const tx = transaction({
+      drawingSelectionItem: {
+        findUnique: vi.fn(async () => item({ requiredOn: new Date("2026-09-01") })),
+        updateMany: vi.fn(async () => ({ count: 1 }))
+      }
+    });
+
+    await updateDrawingSelectionItem(
+      {
+        projectId: "project-a",
+        selectionSetId: "selection-set-1",
+        selectionItemId: "selection-item-1",
+        quantity: 4,
+        spareQuantity: 0,
+        requiredOn: new Date("2026-09-01"),
+        supplierReferenceId: null,
+        purpose: "MANUFACTURING",
+        exceptionReason: null,
+        version: 1,
+        actorId: "actor-1",
+        reason: "adjust package quantity",
+        auditContext
+      },
+      tx
+    );
+
+    expect(outboxSpy).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        payload: expect.objectContaining({ requiredOn: "2026-09-01T00:00:00.000Z" })
+      })
     );
   });
 

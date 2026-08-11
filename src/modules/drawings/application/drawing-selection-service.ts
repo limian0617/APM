@@ -88,7 +88,7 @@ function readItemValue(item: AnyRecord) {
     processTagCodesSnapshot: item.processTagCodesSnapshotJson,
     quantity: item.quantity?.toString?.() ?? item.quantity,
     spareQuantity: item.spareQuantity?.toString?.() ?? item.spareQuantity,
-    requiredOn: item.requiredOn,
+    requiredOn: item.requiredOn?.toISOString?.() ?? item.requiredOn,
     supplierReferenceId: item.supplierReferenceId,
     supplierMatchState: item.supplierMatchState,
     supplierExceptionReason: item.supplierExceptionReason,
