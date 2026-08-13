@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { canonicalJson } from "@/modules/governance/domain/idempotency";
+
+import { APM_054_ARCHIVE_V1 } from "../fixtures/apm-054-archive-v1.fixture";
 import { ArchiveManifestError, createProjectArchiveManifest } from "./archive-manifest-service";
 
 const file = {
@@ -24,6 +27,22 @@ function expectManifestError(operation: () => unknown, code: string) {
 }
 
 describe("project archive manifest", () => {
+  it("keeps the APM-054 snapshot and hashes byte-for-byte", () => {
+    const actual = createProjectArchiveManifest({
+      projectId: APM_054_ARCHIVE_V1.projectId,
+      items: APM_054_ARCHIVE_V1.sources
+    });
+
+    expect(canonicalJson(actual.snapshotJson).serialized).toBe(
+      APM_054_ARCHIVE_V1.snapshotJsonText
+    );
+    expect(actual.manifestChecksum).toBe(APM_054_ARCHIVE_V1.manifestChecksum);
+    expect(actual.sourceWatermark).toBe(APM_054_ARCHIVE_V1.sourceWatermark);
+    expect(actual.items.map((item) => item.sourceChecksum)).toEqual(
+      APM_054_ARCHIVE_V1.itemChecksums
+    );
+  });
+
   it("freezes exact source facts in a stable sorted checksum and marks external publication not applicable", () => {
     const first = createProjectArchiveManifest({
       projectId: "project-1",
