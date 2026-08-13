@@ -49,6 +49,8 @@ describeDatabase("APM-054 archive persistence", () => {
             snapshotJson: { sourceCount: 1 },
             externalPublicationApplicability: "NOT_APPLICABLE",
             externalPublicationReason: "外部供应商包未在本工作包实现。",
+            archiveSourceFormulaVersion: "V1",
+            retrospectiveInputApplicability: "NOT_APPLICABLE",
             createdById: ids.user,
             manifestItems: {
               create: {

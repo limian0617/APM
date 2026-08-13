@@ -14,6 +14,7 @@ import {
   ProjectWritePolicyError
 } from "@/modules/projects/domain/project-write-policy";
 import { apiErrorResponse } from "@/modules/platform-api/contracts/errors";
+import { ARCHIVE_SOURCE_FORMULAS } from "../domain/archive-source-formula";
 
 export class ArchiveServiceError extends Error {
   constructor(
@@ -39,6 +40,10 @@ function archiveView(version: Record<string, any>) {
     status: version.status,
     manifestChecksum: version.manifestChecksum,
     sourceWatermark: version.sourceWatermark,
+    archiveSourceFormulaVersion: version.archiveSourceFormulaVersion,
+    retrospectiveInputApplicability: version.retrospectiveInputApplicability,
+    retrospectiveInputWatermarkVersion: version.retrospectiveInputWatermarkVersion,
+    retrospectiveInputWatermark: version.retrospectiveInputWatermark,
     createdAt: version.createdAt?.toISOString?.() ?? version.createdAt,
     finalizedAt: version.finalizedAt?.toISOString?.() ?? version.finalizedAt,
     itemCount: version.manifestItems?.length ?? 0,
@@ -115,7 +120,11 @@ export async function requestArchiveGeneration(
       aggregateType: AUDIT_OBJECT_TYPES.PROJECT_ARCHIVE,
       aggregateId: input.projectId,
       idempotencyKey: key,
-      payload: { projectId: input.projectId, requestedById: input.actorId }
+      payload: {
+        projectId: input.projectId,
+        requestedById: input.actorId,
+        archiveSourceFormulaVersion: ARCHIVE_SOURCE_FORMULAS.V2
+      }
     });
     const audit = await writeAudit(client, {
       action: AUDIT_ACTIONS.PROJECT_ARCHIVE_GENERATION_REQUESTED,
