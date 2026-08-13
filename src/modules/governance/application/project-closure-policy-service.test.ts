@@ -268,7 +268,10 @@ describe("project closure policy service", () => {
         code: "G9",
         name: "旧结项",
         scope: "PROJECT",
-        definitionJson: { approvalMode: "ALL" },
+        definitionJson: {
+          approvalMode: "ALL",
+          requiredCheckerCodes: ["CLOSURE.ARCHIVE.G9"]
+        },
         definitionChecksum: "a".repeat(64),
         checkerBindingsJson: [{ code: "CLOSURE.ARCHIVE.G9", version: 1 }],
         instances: [{ id: "legacy-g9-instance" }]

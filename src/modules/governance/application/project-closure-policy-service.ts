@@ -147,8 +147,10 @@ async function materializeV2GateRevision(
     definition.definitionJson && typeof definition.definitionJson === "object"
       ? (definition.definitionJson as Record<string, Prisma.JsonValue>)
       : {};
+  const { requiredCheckerCodes: _legacyRequiredCheckerCodes, ...definitionWithoutLegacyCheckers } =
+    sourceDefinition;
   const v2DefinitionJson = {
-    ...sourceDefinition,
+    ...definitionWithoutLegacyCheckers,
     scope: "PROJECT",
     checkers: [...CLOSURE_POLICY_BINDINGS]
   } as Prisma.InputJsonValue;
