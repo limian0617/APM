@@ -8,6 +8,11 @@ export async function POST() {
   const fixture = await provisionApm104BrowserFixture();
   return Response.json({
     ...fixture,
-    identityToken: issueApm104BrowserIdentityToken(fixture.users.authorId)
+    identityTokens: {
+      sourceManager: issueApm104BrowserIdentityToken(fixture.users.sourceManagerId),
+      retrospectiveReviewer: issueApm104BrowserIdentityToken(fixture.users.retrospectiveReviewerId),
+      knowledgeReviewer: issueApm104BrowserIdentityToken(fixture.users.knowledgeReviewerId),
+      targetManager: issueApm104BrowserIdentityToken(fixture.users.targetManagerId)
+    }
   });
 }

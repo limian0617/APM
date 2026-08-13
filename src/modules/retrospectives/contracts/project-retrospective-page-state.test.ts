@@ -19,7 +19,8 @@ describe("project retrospective page state", () => {
       canClose: false
     });
     expect(state.status).toBe("STALE");
-    expect(state.allowedActions).toEqual(expect.arrayContaining(["SUBMIT", "GENERATE_ARCHIVE_B"]));
+    expect(state.allowedActions).toContain("SUBMIT");
+    expect(state.allowedActions).not.toContain("GENERATE_ARCHIVE_B");
     expect(state.allowedActions).not.toContain("REVIEW");
     expect(state).not.toHaveProperty("contentChecksumInput");
   });
@@ -41,5 +42,26 @@ describe("project retrospective page state", () => {
     });
     expect(state.status).toBe("EMPTY");
     expect(state.allowedActions).toEqual(["CREATE"]);
+  });
+
+  it("fails closed for B/G9/close actions when any frozen source fact is unavailable", () => {
+    const state = buildProjectRetrospectivePageState({
+      projectId: "project-1",
+      archiveA: null,
+      currentVersion: { id: "version-1", status: "APPROVED" },
+      latestApprovedVersion: { id: "version-1", status: "APPROVED" },
+      archiveB: { id: "archive-b", status: "READY" },
+      closurePolicy: null,
+      canCreate: true,
+      canSubmit: true,
+      canReview: true,
+      canGenerateArchiveB: true,
+      canRunG9: true,
+      canClose: true
+    });
+
+    expect(state.allowedActions).not.toContain("GENERATE_ARCHIVE_B");
+    expect(state.allowedActions).not.toContain("RUN_G9");
+    expect(state.allowedActions).not.toContain("CLOSE_PROJECT");
   });
 });

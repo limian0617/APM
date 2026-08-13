@@ -19,18 +19,18 @@ const FIXTURE_TEMPLATE_CODE = "APM104.BROWSER.FIXTURE";
 const FIXTURE_SOURCE_CODE = "APM104-FIXTURE-SOURCE";
 const FIXTURE_TARGET_CODE = "APM104-FIXTURE-TARGET";
 const fixtureUsers = {
-  managerId: "apm104-manager",
-  reviewerId: "apm104-reviewer",
+  sourceManagerId: "apm104-source-manager",
+  retrospectiveReviewerId: "apm104-retrospective-reviewer",
   knowledgeReviewerId: "apm104-knowledge-reviewer",
   targetManagerId: "apm104-target-manager"
 } as const;
 const browserIdentityTokens = new Map<string, string>();
 
 type BrowserFixtureUsers = {
-  authorId: string;
-  reviewerId: string;
-  managerId: string;
-  readerId: string;
+  sourceManagerId: string;
+  retrospectiveReviewerId: string;
+  knowledgeReviewerId: string;
+  targetManagerId: string;
 };
 
 export type Apm104BrowserFixture = {
@@ -70,6 +70,16 @@ export async function buildApm104BrowserFixture(input: {
       "CORRECT_REUSE"
     ]
   };
+}
+
+export function validateApm104FixtureEnvironment(input: {
+  enabled: boolean;
+  databaseName: string;
+}): void {
+  if (!input.enabled) throw new Error("APM104_BROWSER_FIXTURE_DISABLED");
+  if (!/^apm104_fixture_[a-z0-9_]+$/i.test(input.databaseName)) {
+    throw new Error("APM104_BROWSER_FIXTURE_DATABASE_NOT_DISPOSABLE");
+  }
 }
 
 function context(actorId: string, operationId: string, projectId: string | null = null) {
@@ -126,14 +136,14 @@ async function ensureFixtureUsers() {
   await db.user.createMany({
     data: [
       {
-        id: fixtureUsers.managerId,
-        employeeNo: "APM104-MANAGER",
+        id: fixtureUsers.sourceManagerId,
+        employeeNo: "APM104-SOURCE-MANAGER",
         name: "APM-104 项目经理",
         departmentId: "engineering"
       },
       {
-        id: fixtureUsers.reviewerId,
-        employeeNo: "APM104-REVIEWER",
+        id: fixtureUsers.retrospectiveReviewerId,
+        employeeNo: "APM104-RETROSPECTIVE-REVIEWER",
         name: "APM-104 复盘审核人",
         departmentId: "engineering"
       },
@@ -152,14 +162,20 @@ async function ensureFixtureUsers() {
     ],
     skipDuplicates: true
   });
-  await db.userRole.createMany({
-    data: Object.values(fixtureUsers).map((userId) => ({
-      id: `apm104-browser-role-${userId}`,
-      userId,
-      roleId: "role-admin"
-    })),
-    skipDuplicates: true
-  });
+  await Promise.all(
+    [
+      { userId: fixtureUsers.sourceManagerId, roleId: "role-project-manager" },
+      { userId: fixtureUsers.retrospectiveReviewerId, roleId: "role-quality" },
+      { userId: fixtureUsers.knowledgeReviewerId, roleId: "role-department-lead" },
+      { userId: fixtureUsers.targetManagerId, roleId: "role-project-manager" }
+    ].map(({ userId, roleId }) =>
+      db.userRole.upsert({
+        where: { id: `apm104-browser-role-${userId}` },
+        create: { id: `apm104-browser-role-${userId}`, userId, roleId },
+        update: { roleId, revokedAt: null }
+      })
+    )
+  );
 }
 
 async function ensureComponent(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
@@ -178,16 +194,16 @@ async function ensureComponent(type: "STAGE" | "GATE" | "ROLE" | "WBS") {
     content: componentContent(type),
     version: existing?.version ?? 0,
     reason: "建立 APM-104 浏览器受控 fixture 组件",
-    actorId: fixtureUsers.managerId,
-    auditContext: context(fixtureUsers.managerId, `component-${type}`)
+    actorId: fixtureUsers.sourceManagerId,
+    auditContext: context(fixtureUsers.sourceManagerId, `component-${type}`)
   });
   return (
     await publishTemplateComponent({
       code,
       version: draft.component.version,
       reason: "发布 APM-104 浏览器受控 fixture 组件",
-      actorId: fixtureUsers.managerId,
-      auditContext: context(fixtureUsers.managerId, `component-publish-${type}`)
+      actorId: fixtureUsers.sourceManagerId,
+      auditContext: context(fixtureUsers.sourceManagerId, `component-publish-${type}`)
     })
   ).publishedVersion;
 }
@@ -214,16 +230,16 @@ async function ensureFixtureTemplate() {
     })),
     version: existing?.version ?? 0,
     reason: "建立 APM-104 浏览器受控 fixture 模板",
-    actorId: fixtureUsers.managerId,
-    auditContext: context(fixtureUsers.managerId, "template-draft")
+    actorId: fixtureUsers.sourceManagerId,
+    auditContext: context(fixtureUsers.sourceManagerId, "template-draft")
   });
   return (
     await publishProjectTemplate({
       code: FIXTURE_TEMPLATE_CODE,
       version: draft.template.version,
       reason: "发布 APM-104 浏览器受控 fixture 模板",
-      actorId: fixtureUsers.managerId,
-      auditContext: context(fixtureUsers.managerId, "template-publish")
+      actorId: fixtureUsers.sourceManagerId,
+      auditContext: context(fixtureUsers.sourceManagerId, "template-publish")
     })
   ).publishedVersion;
 }
@@ -264,14 +280,14 @@ async function ensureMembership(
   });
   await addProjectMember({
     projectId,
-    actorId: fixtureUsers.managerId,
+    actorId: fixtureUsers.sourceManagerId,
     member: {
       userId,
       projectRole: role,
       departmentId: "engineering",
       projectVersion: project.version
     },
-    auditContext: context(fixtureUsers.managerId, `member-${projectId}-${userId}`, projectId)
+    auditContext: context(fixtureUsers.sourceManagerId, `member-${projectId}-${userId}`, projectId)
   });
 }
 
@@ -310,14 +326,14 @@ async function ensureArchiveA(projectId: string) {
   await requestArchiveGeneration({
     projectId,
     version: project.version,
-    actorId: fixtureUsers.managerId,
-    auditContext: context(fixtureUsers.managerId, `archive-request-${projectId}`, projectId)
+    actorId: fixtureUsers.sourceManagerId,
+    auditContext: context(fixtureUsers.sourceManagerId, `archive-request-${projectId}`, projectId)
   });
   const generationId = `apm104-browser-archive-${projectId}`;
   await createPrismaArchiveGenerationHandler()(
     workerJob(generationId, projectId, {
       projectId,
-      requestedById: fixtureUsers.managerId,
+      requestedById: fixtureUsers.sourceManagerId,
       archiveSourceFormulaVersion: "ARCHIVE.SOURCE@2"
     })
   );
@@ -347,15 +363,22 @@ export function consumeApm104BrowserIdentityToken(token: string): string | null 
 
 /** Development/test-only provisioning; it only creates its deterministic APM104 fixture records. */
 export async function provisionApm104BrowserFixture(): Promise<Apm104BrowserFixture> {
+  const databaseResult = await db.$queryRaw<Array<{ current_database: string }>>`
+    SELECT current_database()
+  `;
+  validateApm104FixtureEnvironment({
+    enabled: process.env.APM104_BROWSER_FIXTURE_ENABLED === "true",
+    databaseName: databaseResult[0]?.current_database ?? ""
+  });
   await ensureFixtureUsers();
   const template = await ensureFixtureTemplate();
   const source = await ensureFixtureProject({
     code: FIXTURE_SOURCE_CODE,
     name: "APM-104 复盘源项目",
-    actorId: fixtureUsers.managerId,
+    actorId: fixtureUsers.sourceManagerId,
     template
   });
-  await ensureMembership(source.id, fixtureUsers.reviewerId, "QUALITY");
+  await ensureMembership(source.id, fixtureUsers.retrospectiveReviewerId, "QUALITY");
   await ensureMembership(source.id, fixtureUsers.knowledgeReviewerId, "DEPARTMENT_LEAD");
   const target = await ensureFixtureProject({
     code: FIXTURE_TARGET_CODE,
@@ -374,10 +397,10 @@ export async function provisionApm104BrowserFixture(): Promise<Apm104BrowserFixt
         targetProjectId: target.id,
         archiveAId: archiveA.id,
         users: {
-          authorId: fixtureUsers.managerId,
-          reviewerId: fixtureUsers.reviewerId,
-          managerId: fixtureUsers.managerId,
-          readerId: fixtureUsers.knowledgeReviewerId
+          sourceManagerId: fixtureUsers.sourceManagerId,
+          retrospectiveReviewerId: fixtureUsers.retrospectiveReviewerId,
+          knowledgeReviewerId: fixtureUsers.knowledgeReviewerId,
+          targetManagerId: fixtureUsers.targetManagerId
         }
       };
     }

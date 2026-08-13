@@ -994,3 +994,41 @@ BEGIN
   RAISE EXCEPTION 'invalid project archive version status transition' USING ERRCODE = '23514';
 END;
 $$ LANGUAGE plpgsql;
+
+-- Extend the stable authorization vocabulary for APM-104. These seeds are
+-- idempotent and are consumed by the runtime authorization repository.
+INSERT INTO "permissions" ("id", "code", "description") VALUES
+('permission-project-retrospective-read', 'PROJECT_RETROSPECTIVE_READ', '读取项目结项复盘事实'),
+('permission-project-retrospective-manage', 'PROJECT_RETROSPECTIVE_MANAGE', '创建和提交项目结项复盘'),
+('permission-project-retrospective-review', 'PROJECT_RETROSPECTIVE_REVIEW', '独立审核项目结项复盘'),
+('permission-knowledge-read', 'KNOWLEDGE_READ', '读取已发布且人工脱敏的内部知识'),
+('permission-knowledge-review', 'KNOWLEDGE_REVIEW', '审核人工脱敏内部知识'),
+('permission-knowledge-reuse-confirm', 'KNOWLEDGE_REUSE_CONFIRM', '确认内部知识在目标项目中的复用')
+ON CONFLICT ("id") DO NOTHING;
+
+INSERT INTO "role_permissions" ("role_id", "permission_id", "scope") VALUES
+('role-project-manager', 'permission-project-retrospective-read', 'PROJECT'),
+('role-department-lead', 'permission-project-retrospective-read', 'DEPARTMENT'),
+('role-quality', 'permission-project-retrospective-read', 'PROJECT'),
+('role-admin', 'permission-project-retrospective-read', 'ALL'),
+('role-project-manager', 'permission-project-retrospective-manage', 'PROJECT'),
+('role-department-lead', 'permission-project-retrospective-manage', 'DEPARTMENT'),
+('role-admin', 'permission-project-retrospective-manage', 'ALL'),
+('role-department-lead', 'permission-project-retrospective-review', 'DEPARTMENT'),
+('role-quality', 'permission-project-retrospective-review', 'PROJECT'),
+('role-admin', 'permission-project-retrospective-review', 'ALL'),
+('role-project-manager', 'permission-knowledge-read', 'ALL'),
+('role-department-lead', 'permission-knowledge-read', 'ALL'),
+('role-engineer', 'permission-knowledge-read', 'ALL'),
+('role-procurement', 'permission-knowledge-read', 'ALL'),
+('role-quality', 'permission-knowledge-read', 'ALL'),
+('role-technical-asset-maintainer', 'permission-knowledge-read', 'ALL'),
+('role-executive', 'permission-knowledge-read', 'ALL'),
+('role-admin', 'permission-knowledge-read', 'ALL'),
+('role-department-lead', 'permission-knowledge-review', 'ALL'),
+('role-quality', 'permission-knowledge-review', 'ALL'),
+('role-admin', 'permission-knowledge-review', 'ALL'),
+('role-project-manager', 'permission-knowledge-reuse-confirm', 'PROJECT'),
+('role-quality', 'permission-knowledge-reuse-confirm', 'PROJECT'),
+('role-admin', 'permission-knowledge-reuse-confirm', 'ALL')
+ON CONFLICT ("role_id", "permission_id") DO NOTHING;

@@ -32,11 +32,23 @@ export function buildProjectRetrospectivePageState(
   if (input.canSubmit && input.currentVersion?.status === "DRAFT") allowedActions.push("SUBMIT");
   if (input.canReview && input.currentVersion?.status === "IN_REVIEW")
     allowedActions.push("REVIEW");
-  if (input.canGenerateArchiveB && input.latestApprovedVersion?.status === "APPROVED") {
+  const hasFrozenArchiveA = input.archiveA?.status === "READY";
+  const hasFrozenArchiveB = input.archiveB?.status === "READY";
+  const hasExactClosurePolicy = input.closurePolicy?.status === "ACTIVE";
+  if (
+    !stale &&
+    input.canGenerateArchiveB &&
+    hasFrozenArchiveA &&
+    input.latestApprovedVersion?.status === "APPROVED"
+  ) {
     allowedActions.push("GENERATE_ARCHIVE_B");
   }
-  if (input.canRunG9 && input.archiveB?.status === "READY") allowedActions.push("RUN_G9");
-  if (input.canClose && input.archiveB?.status === "READY") allowedActions.push("CLOSE_PROJECT");
+  if (!stale && input.canRunG9 && hasFrozenArchiveB && hasExactClosurePolicy) {
+    allowedActions.push("RUN_G9");
+  }
+  if (!stale && input.canClose && hasFrozenArchiveB && hasExactClosurePolicy) {
+    allowedActions.push("CLOSE_PROJECT");
+  }
   return {
     ...input,
     status: stale ? "STALE" : input.currentVersion ? "NORMAL" : "EMPTY",

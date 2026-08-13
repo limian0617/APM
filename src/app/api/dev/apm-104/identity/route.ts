@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   const headers = new Headers({ "content-type": "application/json" });
   headers.append(
     "set-cookie",
-    `apm-dev-user-id=${encodeURIComponent(userId)}; Path=/; SameSite=Lax`
+    `apm-dev-user-id=${encodeURIComponent(userId)}; HttpOnly; Path=/; SameSite=Lax`
   );
   return new Response(JSON.stringify({ userId }), { status: 200, headers });
 }

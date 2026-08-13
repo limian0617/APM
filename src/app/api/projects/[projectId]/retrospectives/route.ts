@@ -11,7 +11,10 @@ import {
 } from "@/modules/platform-api/contracts/dto";
 import { projectPathSchema } from "@/modules/platform-api/contracts/internal-routes";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
-import { getProjectRetrospective } from "@/modules/retrospectives/application/project-retrospective-query-service";
+import {
+  getProjectRetrospective,
+  ProjectRetrospectiveQueryError
+} from "@/modules/retrospectives/application/project-retrospective-query-service";
 import {
   createRetrospectiveVersion,
   ProjectRetrospectiveServiceError
@@ -27,6 +30,9 @@ function errorResponse(error: unknown): Response | null {
       { error: { code: error.code, message: error.message } },
       { status: error.status }
     );
+  }
+  if (error instanceof ProjectRetrospectiveQueryError) {
+    return Response.json({ error: { code: error.code, message: error.message } }, { status: 409 });
   }
   return apiContractErrorResponse(error);
 }
@@ -52,15 +58,17 @@ async function read(request: Request, context: RouteContext) {
       memberRoles: guard.project.memberRoles,
       resourceDepartmentId: guard.project.departmentId
     }).allowed;
-    const versions = base.versions as Array<{ id: string; status: string }>;
-    const latestApproved = versions.find((version) => version.status === "APPROVED") ?? null;
     const state = buildProjectRetrospectivePageState({
       projectId: path.projectId,
-      archiveA: (base as any).archiveA ?? null,
-      currentVersion: versions[0] ? { id: versions[0].id, status: versions[0].status } : null,
-      latestApprovedVersion: latestApproved,
-      archiveB: (base as any).archiveB ?? null,
-      closurePolicy: (base as any).closurePolicy ?? null,
+      archiveA: base.archiveA ?? null,
+      currentVersion: base.currentVersion
+        ? { id: base.currentVersion.id, status: base.currentVersion.status }
+        : null,
+      latestApprovedVersion: base.latestApprovedVersion
+        ? { id: base.latestApprovedVersion.id, status: base.latestApprovedVersion.status }
+        : null,
+      archiveB: base.archiveB ?? null,
+      closurePolicy: base.closurePolicy ?? null,
       canCreate: canManage,
       canSubmit: canManage,
       canReview,
