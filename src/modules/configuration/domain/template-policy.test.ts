@@ -9,6 +9,7 @@ import {
   templateChecksum,
   TemplateValidationError,
   parseGateDefinitionRules,
+  validateClosureTemplateBindings,
   validateTemplateComponentContent,
   validateTemplateGateCodesUnique,
   validateTemplateMilestoneCodesUnique,
@@ -17,6 +18,31 @@ import {
 } from "./template-policy";
 
 describe("APM-010 template policy", () => {
+  it("requires the exact V2 closure bindings for a project G9", () => {
+    expect(() =>
+      validateClosureTemplateBindings({
+        scope: "PROJECT",
+        code: "G9",
+        checkerBindings: [
+          { code: "CLOSURE.ARCHIVE.G9", version: 2 },
+          { code: "CLOSURE.RETROSPECTIVE.G9", version: 1 }
+        ]
+      })
+    ).not.toThrow();
+    for (const checkerBindings of [
+      [{ code: "CLOSURE.ARCHIVE.G9", version: 1 }],
+      [{ code: "CLOSURE.RETROSPECTIVE.G9", version: 1 }],
+      [
+        { code: "CLOSURE.ARCHIVE.G9", version: 2 },
+        { code: "CLOSURE.RETROSPECTIVE.G9", version: 1 },
+        { code: "CLOSURE.RETROSPECTIVE.G9", version: 1 }
+      ]
+    ]) {
+      expect(() =>
+        validateClosureTemplateBindings({ scope: "PROJECT", code: "G9", checkerBindings })
+      ).toThrowError(expect.objectContaining({ code: "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID" }));
+    }
+  });
   it("validates stable component rules and deterministic checksums", () => {
     const content = validateTemplateComponentContent("STAGE", {
       stages: [

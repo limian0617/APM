@@ -60,6 +60,34 @@ function mapDatabaseError(error: unknown): never {
   throw error;
 }
 
+export function assertProjectClosurePolicyEligibility(input: {
+  projectType: ProjectTypeCode;
+  projectG9Count: number;
+  closurePolicyVersionId: string | null;
+}) {
+  if (input.projectType === "INTERNAL_RND") {
+    if (input.projectG9Count !== 0 || input.closurePolicyVersionId !== null) {
+      throw new ProjectStructureError(
+        "INTERNAL_RND_CLOSURE_POLICY_FORBIDDEN",
+        "内部技术研发项目不能使用客户交付结项策略。",
+        409
+      );
+    }
+    return;
+  }
+  if ((input.projectG9Count === 0) !== (input.closurePolicyVersionId === null)) {
+    throw new ProjectStructureError(
+      input.projectG9Count === 1
+        ? "CLOSURE_POLICY_VERSION_REQUIRED"
+        : "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID",
+      input.projectG9Count === 1
+        ? "客户交付项目的项目级 G9 缺少确切关项策略版本。"
+        : "项目级 G9 与关项策略配置不一致。",
+      409
+    );
+  }
+}
+
 export async function initializeProjectStructure(
   input: {
     projectId: string;
@@ -112,6 +140,20 @@ export async function initializeProjectStructure(
           409
         );
       }
+      const [projectG9Count, closurePolicy] = await Promise.all([
+        client.projectGateDefinition.count({
+          where: { projectId: input.projectId, code: "G9", scope: "PROJECT" }
+        }),
+        client.projectClosurePolicy.findUnique({
+          where: { projectId: input.projectId },
+          select: { currentVersionId: true }
+        })
+      ]);
+      assertProjectClosurePolicyEligibility({
+        projectType: plan.projectType,
+        projectG9Count,
+        closurePolicyVersionId: closurePolicy?.currentVersionId ?? null
+      });
 
       const projectUpdate = await client.project.updateMany({
         where: {

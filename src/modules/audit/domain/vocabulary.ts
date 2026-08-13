@@ -697,6 +697,25 @@ export const PROJECT_RETROSPECTIVE_AUDIT_FIELDS = [
   "version"
 ] as const;
 
+export const PROJECT_CLOSURE_POLICY_AUDIT_FIELDS = [
+  "projectId",
+  "closurePolicyId",
+  "closurePolicyVersionId",
+  "sourceTemplateSnapshotId",
+  "sourceGateDefinitionId",
+  "gateInstanceId",
+  "archiveCheckerCode",
+  "archiveCheckerVersion",
+  "retrospectiveCheckerCode",
+  "retrospectiveCheckerVersion",
+  "archiveSourceFormulaVersion",
+  "selfReferenceExclusionVersion",
+  "bindingChecksum",
+  "policyChecksum",
+  "version",
+  "reason"
+] as const;
+
 export const ISSUE_AUDIT_FIELDS = [
   "projectId",
   "issueId",
@@ -1018,7 +1037,9 @@ export const PROJECT_GATE_DEFINITION_AUDIT_FIELDS = [
   "sourceSnapshotComponentId",
   "projectStageId",
   "code",
+  "revision",
   "scope",
+  "checkerBindings",
   "definitionChecksum"
 ] as const;
 
