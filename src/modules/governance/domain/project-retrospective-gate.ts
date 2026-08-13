@@ -38,6 +38,10 @@ export type ProjectRetrospectiveGateFacts = {
     retrospectiveInputApplicability: string | null;
     retrospectiveInputWatermarkVersion: string | null;
     retrospectiveInputWatermark: string | null;
+    manifestChecksum: string | null;
+    sourceWatermark: string | null;
+    latestIntegrityCheck: { id: string | null; status: string | null } | null;
+    sourceFactsCurrent: boolean;
     includesRetrospectiveVersion: boolean;
   } | null;
 };
@@ -64,6 +68,10 @@ function evidence(facts: ProjectRetrospectiveGateFacts) {
     archiveBId: facts.archiveB?.id ?? null,
     archiveAInputWatermark: facts.archiveA?.retrospectiveInputWatermark ?? null,
     archiveBInputWatermark: facts.archiveB?.retrospectiveInputWatermark ?? null,
+    archiveBManifestChecksum: facts.archiveB?.manifestChecksum ?? null,
+    archiveBSourceWatermark: facts.archiveB?.sourceWatermark ?? null,
+    archiveBIntegrityStatus: facts.archiveB?.latestIntegrityCheck?.status ?? null,
+    archiveBSourceFactsCurrent: facts.archiveB?.sourceFactsCurrent ?? false,
     archiveBIncludesRetrospectiveVersion: facts.archiveB?.includesRetrospectiveVersion ?? false
   } as JsonValue;
 }
@@ -116,6 +124,18 @@ export function evaluateProjectRetrospectiveGate(
     return failed(
       "CLOSURE_RETROSPECTIVE_ARCHIVE_INVALID",
       "复盘归档 A/B 未使用适用 V2 公式。",
+      facts
+    );
+  }
+  if (
+    !facts.archiveB?.manifestChecksum ||
+    !facts.archiveB.sourceWatermark ||
+    facts.archiveB.latestIntegrityCheck?.status !== "PASSED" ||
+    !facts.archiveB.sourceFactsCurrent
+  ) {
+    return failed(
+      "CLOSURE_RETROSPECTIVE_ARCHIVE_FACTS_STALE",
+      "最终归档的完整性或来源当前性事实不满足结项要求。",
       facts
     );
   }

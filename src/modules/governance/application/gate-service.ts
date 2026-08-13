@@ -110,10 +110,111 @@ type ExecutableInstance = {
   closurePolicyChecksum: string | null;
 };
 type ExecutableGateClient = {
+  $queryRaw: Prisma.TransactionClient["$queryRaw"];
   projectGateDefinition: { findFirst(input: unknown): Promise<unknown> };
   projectClosurePolicy: { findUnique(input: unknown): Promise<unknown> };
   projectGateInstance?: { findFirst(input: unknown): Promise<unknown> };
 };
+
+function assertInteractiveTransactionClient(client: ExecutableGateClient) {
+  if ("$transaction" in client) {
+    throw new GateServiceError(
+      "GATE_TRANSACTION_REQUIRED",
+      "G9 关项策略校验必须在交互事务中执行。",
+      500
+    );
+  }
+}
+
+type G9AuthorityValidation =
+  | { valid: true; authority: ExecutableGateAuthority }
+  | {
+      valid: false;
+      code:
+        | "CLOSURE_POLICY_VERSION_REQUIRED"
+        | "CLOSURE_POLICY_STALE"
+        | "CLOSURE_POLICY_BINDING_MISMATCH";
+      message: string;
+    };
+
+function validateG9Authority(
+  definition: ExecutableDefinition,
+  policy: ExecutablePolicy | null
+): G9AuthorityValidation {
+  const version = policy?.currentVersion;
+  if (!policy || policy.status !== "ACTIVE" || !policy.currentVersionId || !version) {
+    return {
+      valid: false,
+      code: "CLOSURE_POLICY_VERSION_REQUIRED",
+      message: "该 G9 没有可执行的关项策略版本。"
+    };
+  }
+  if (
+    policy.projectId !== definition.projectId ||
+    policy.currentVersionId !== version.id ||
+    version.status !== "ACTIVE" ||
+    version.sourceGateDefinitionId !== definition.id ||
+    version.archiveCheckerCode !== "CLOSURE.ARCHIVE.G9" ||
+    version.archiveCheckerVersion !== 2 ||
+    version.retrospectiveCheckerCode !== "CLOSURE.RETROSPECTIVE.G9" ||
+    version.retrospectiveCheckerVersion !== 1 ||
+    version.archiveSourceFormulaVersion !== "V2"
+  ) {
+    return {
+      valid: false,
+      code: "CLOSURE_POLICY_STALE",
+      message: "该 G9 仅保留为历史记录，必须使用当前关项策略定义。"
+    };
+  }
+  try {
+    const checkerBindings = parseFrozenCheckerBindings(definition.checkerBindingsJson);
+    const expectedFacts = buildClosurePolicyVersionFacts({
+      projectId: definition.projectId,
+      sourceTemplateSnapshotId: version.sourceTemplateSnapshotId,
+      sourceGateDefinitionId: definition.id,
+      checkerBindings
+    });
+    if (
+      expectedFacts.bindingChecksum !== version.bindingChecksum ||
+      expectedFacts.policyChecksum !== version.policyChecksum ||
+      version.selfReferenceExclusionVersion !== CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION
+    ) {
+      throw new Error("policy checksum mismatch");
+    }
+  } catch {
+    return {
+      valid: false,
+      code: "CLOSURE_POLICY_BINDING_MISMATCH",
+      message: "G9 定义与冻结关项策略绑定不一致。"
+    };
+  }
+  return {
+    valid: true,
+    authority: {
+      definitionId: definition.id,
+      closurePolicyVersionId: version.id,
+      closurePolicyChecksum: version.policyChecksum,
+      archiveSourceFormulaVersion: "ARCHIVE.SOURCE@2"
+    }
+  };
+}
+
+async function lockClosurePolicyAuthority(client: ExecutableGateClient, projectId: string) {
+  const [policy] = await client.$queryRaw<Array<{ id: string; currentVersionId: string | null }>>`
+    SELECT "id", "current_version_id" AS "currentVersionId"
+    FROM "project_closure_policies"
+    WHERE "project_id" = ${projectId}
+    FOR UPDATE
+  `;
+  if (policy?.currentVersionId) {
+    await client.$queryRaw`
+      SELECT "id"
+      FROM "project_closure_policy_versions"
+      WHERE "id" = ${policy.currentVersionId} AND "project_id" = ${projectId}
+      FOR UPDATE
+    `;
+  }
+}
 
 /**
  * G9 is revisioned. Its policy's exact source definition, not its code or
@@ -138,52 +239,22 @@ export async function assertExecutableGateDefinition(
       archiveSourceFormulaVersion: null
     };
   }
+  assertInteractiveTransactionClient(client);
+  await lockClosurePolicyAuthority(client, input.projectId);
   const policy = (await client.projectClosurePolicy.findUnique({
     where: { projectId: input.projectId },
     include: { currentVersion: true }
   })) as ExecutablePolicy | null;
+  const validation = validateG9Authority(definition, policy);
+  if (!validation.valid) {
+    throw new GateServiceError(validation.code, validation.message, 409);
+  }
+  const authority = validation.authority;
   const version = policy?.currentVersion;
-  if (!policy || policy.status !== "ACTIVE" || !policy.currentVersionId || !version) {
+  if (!version) {
     throw new GateServiceError(
       "CLOSURE_POLICY_VERSION_REQUIRED",
       "该 G9 没有可执行的关项策略版本。",
-      409
-    );
-  }
-  if (
-    version.status !== "ACTIVE" ||
-    version.sourceGateDefinitionId !== definition.id ||
-    version.archiveCheckerCode !== "CLOSURE.ARCHIVE.G9" ||
-    version.archiveCheckerVersion !== 2 ||
-    version.retrospectiveCheckerCode !== "CLOSURE.RETROSPECTIVE.G9" ||
-    version.retrospectiveCheckerVersion !== 1 ||
-    version.archiveSourceFormulaVersion !== "V2"
-  ) {
-    throw new GateServiceError(
-      "CLOSURE_POLICY_STALE",
-      "该 G9 仅保留为历史记录，必须使用当前关项策略定义。",
-      409
-    );
-  }
-  const checkerBindings = parseFrozenCheckerBindings(definition.checkerBindingsJson);
-  try {
-    const expectedFacts = buildClosurePolicyVersionFacts({
-      projectId: input.projectId,
-      sourceTemplateSnapshotId: version.sourceTemplateSnapshotId,
-      sourceGateDefinitionId: definition.id,
-      checkerBindings
-    });
-    if (
-      expectedFacts.bindingChecksum !== version.bindingChecksum ||
-      expectedFacts.policyChecksum !== version.policyChecksum ||
-      version.selfReferenceExclusionVersion !== CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION
-    ) {
-      throw new Error("policy checksum mismatch");
-    }
-  } catch {
-    throw new GateServiceError(
-      "CLOSURE_POLICY_BINDING_MISMATCH",
-      "G9 定义与冻结关项策略绑定不一致。",
       409
     );
   }
@@ -211,12 +282,7 @@ export async function assertExecutableGateDefinition(
       );
     }
   }
-  return {
-    definitionId: definition.id,
-    closurePolicyVersionId: version.id,
-    closurePolicyChecksum: version.policyChecksum,
-    archiveSourceFormulaVersion: "ARCHIVE.SOURCE@2"
-  };
+  return authority;
 }
 
 function stableText(value: unknown, field: string, maximumLength = 191): string {
@@ -1160,6 +1226,48 @@ export async function createGateInstance(
   }
 }
 
+type ProjectGateListingDefinition = ExecutableDefinition & {
+  scope: string;
+  revision: number;
+};
+
+export function buildProjectGateListing(input: {
+  definitions: readonly ProjectGateListingDefinition[];
+  policy: ExecutablePolicy | null;
+}) {
+  const candidate = input.policy?.currentVersion?.sourceGateDefinitionId
+    ? (input.definitions.find(
+        (definition) => definition.id === input.policy?.currentVersion?.sourceGateDefinitionId
+      ) ?? null)
+    : null;
+  const validation = candidate ? validateG9Authority(candidate, input.policy) : null;
+  const activeG9DefinitionId = validation?.valid ? validation.authority.definitionId : null;
+  const toView = (
+    definition: ProjectGateListingDefinition,
+    executionState: "ACTIVE" | "LEGACY_HISTORY"
+  ) => ({
+    ...definition,
+    executionState,
+    allowedActions:
+      executionState === "ACTIVE"
+        ? [
+            ...(definition.scope === "PROJECT" ? [] : ["CREATE_INSTANCE"]),
+            "RUN_CHECKS",
+            "SUBMIT",
+            "RESUBMIT",
+            "APPROVE"
+          ]
+        : ([] as string[])
+  });
+  const activeDefinitions = input.definitions
+    .filter((definition) => definition.code !== "G9" || definition.id === activeG9DefinitionId)
+    .map((definition) => toView(definition, "ACTIVE"));
+  const legacyDefinitions = input.definitions
+    .filter((definition) => definition.code === "G9" && definition.id !== activeG9DefinitionId)
+    .map((definition) => toView(definition, "LEGACY_HISTORY"));
+  return { activeDefinitions, legacyDefinitions };
+}
+
 export async function listProjectGates(projectId: string) {
   const [definitions, policy] = await Promise.all([
     db.projectGateDefinition.findMany({
@@ -1182,34 +1290,7 @@ export async function listProjectGates(projectId: string) {
       include: { currentVersion: true }
     })
   ]);
-  const activeG9DefinitionId =
-    policy?.status === "ACTIVE" && policy.currentVersion?.status === "ACTIVE"
-      ? policy.currentVersion.sourceGateDefinitionId
-      : null;
-  const toView = (
-    definition: (typeof definitions)[number],
-    executionState: "ACTIVE" | "LEGACY_HISTORY"
-  ) => ({
-    ...definition,
-    executionState,
-    allowedActions:
-      executionState === "ACTIVE"
-        ? [
-            ...(definition.scope === "PROJECT" ? [] : ["CREATE_INSTANCE"]),
-            "RUN_CHECKS",
-            "SUBMIT",
-            "RESUBMIT",
-            "APPROVE"
-          ]
-        : ([] as string[])
-  });
-  const activeDefinitions = definitions
-    .filter((definition) => definition.code !== "G9" || definition.id === activeG9DefinitionId)
-    .map((definition) => toView(definition, "ACTIVE"));
-  const legacyDefinitions = definitions
-    .filter((definition) => definition.code === "G9" && definition.id !== activeG9DefinitionId)
-    .map((definition) => toView(definition, "LEGACY_HISTORY"));
-  return { activeDefinitions, legacyDefinitions };
+  return buildProjectGateListing({ definitions, policy });
 }
 
 export async function runGateChecks(

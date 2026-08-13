@@ -37,6 +37,10 @@ const base = {
     retrospectiveInputApplicability: "APPLICABLE",
     retrospectiveInputWatermarkVersion: "RETROSPECTIVE.INPUT@1",
     retrospectiveInputWatermark: "d".repeat(64),
+    manifestChecksum: "e".repeat(64),
+    sourceWatermark: "f".repeat(64),
+    latestIntegrityCheck: { id: "integrity-b", status: "PASSED" },
+    sourceFactsCurrent: true,
     includesRetrospectiveVersion: true
   }
 };
@@ -49,7 +53,11 @@ describe("CLOSURE.RETROSPECTIVE.G9@1", () => {
       evidence: {
         retrospectiveVersionId: "retrospective-v1",
         retrospectiveInputArchiveVersionId: "archive-a",
-        archiveBId: "archive-b"
+        archiveBId: "archive-b",
+        archiveBManifestChecksum: "e".repeat(64),
+        archiveBSourceWatermark: "f".repeat(64),
+        archiveBIntegrityStatus: "PASSED",
+        archiveBSourceFactsCurrent: true
       }
     });
   });
@@ -76,6 +84,19 @@ describe("CLOSURE.RETROSPECTIVE.G9@1", () => {
     ],
     ["Archive A not ready", { archiveA: { ...base.archiveA, status: "FAILED" } }],
     ["Archive B not ready", { archiveB: { ...base.archiveB, status: "FAILED" } }],
+    [
+      "Archive B integrity fails",
+      {
+        archiveB: {
+          ...base.archiveB,
+          latestIntegrityCheck: { id: "integrity-b", status: "FAILED" }
+        }
+      }
+    ],
+    [
+      "Archive B currentness is stale",
+      { archiveB: { ...base.archiveB, sourceFactsCurrent: false } }
+    ],
     [
       "B input changes",
       { archiveB: { ...base.archiveB, retrospectiveInputWatermark: "z".repeat(64) } }

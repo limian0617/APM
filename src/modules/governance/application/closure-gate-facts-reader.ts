@@ -226,7 +226,12 @@ export async function readClosureGateFacts(input: {
       retrospective: retrospectiveFacts,
       archiveA: archiveAFacts,
       archiveB: archiveBFacts
-        ? { ...archiveBFacts, includesRetrospectiveVersion: archiveBIncludesRetrospectiveVersion }
+        ? {
+            ...archiveBFacts,
+            latestIntegrityCheck: integrity ? { id: integrity.id, status: integrity.status } : null,
+            sourceFactsCurrent,
+            includesRetrospectiveVersion: archiveBIncludesRetrospectiveVersion
+          }
         : null
     } as unknown as JsonValue
   };
