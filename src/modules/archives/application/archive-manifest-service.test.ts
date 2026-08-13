@@ -33,9 +33,7 @@ describe("project archive manifest", () => {
       items: APM_054_ARCHIVE_V1.sources
     });
 
-    expect(canonicalJson(actual.snapshotJson).serialized).toBe(
-      APM_054_ARCHIVE_V1.snapshotJsonText
-    );
+    expect(canonicalJson(actual.snapshotJson).serialized).toBe(APM_054_ARCHIVE_V1.snapshotJsonText);
     expect(actual.manifestChecksum).toBe(APM_054_ARCHIVE_V1.manifestChecksum);
     expect(actual.sourceWatermark).toBe(APM_054_ARCHIVE_V1.sourceWatermark);
     expect(actual.items.map((item) => item.sourceChecksum)).toEqual(

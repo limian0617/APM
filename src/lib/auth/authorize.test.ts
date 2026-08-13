@@ -27,6 +27,14 @@ function grant(permission: PermissionCode, scope: PermissionScope, systemRole: s
 }
 
 describe("decideAuthorization", () => {
+  it("exposes dedicated retrospective and knowledge permissions", () => {
+    expect(PERMISSIONS.PROJECT_RETROSPECTIVE_MANAGE).toBe("PROJECT_RETROSPECTIVE_MANAGE");
+    expect(PERMISSIONS.PROJECT_RETROSPECTIVE_REVIEW).toBe("PROJECT_RETROSPECTIVE_REVIEW");
+    expect(PERMISSIONS.PROJECT_RETROSPECTIVE_READ).toBe("PROJECT_RETROSPECTIVE_READ");
+    expect(PERMISSIONS.KNOWLEDGE_REVIEW).toBe("KNOWLEDGE_REVIEW");
+    expect(PERMISSIONS.KNOWLEDGE_READ).toBe("KNOWLEDGE_READ");
+    expect(PERMISSIONS.KNOWLEDGE_REUSE_CONFIRM).toBe("KNOWLEDGE_REUSE_CONFIRM");
+  });
   it("allows an administrator with company-wide member management", () => {
     const decision = decideAuthorization(
       actor({

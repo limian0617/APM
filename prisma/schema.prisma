@@ -222,30 +222,30 @@ model OutboxEvent {
 }
 
 model PersistentJob {
-  id                  String       @id @default(cuid())
-  sourceOutboxEventId String?      @unique @map("source_outbox_event_id")
-  jobType             String       @map("job_type")
-  payload             Json
-  payloadHash         String       @map("payload_hash")
-  idempotencyKey      String       @map("idempotency_key")
-  traceId             String?      @map("trace_id")
-  status              JobStatus    @default(PENDING)
-  maxAttempts         Int          @map("max_attempts")
-  attemptCount        Int          @default(0) @map("attempt_count")
-  cycleAttemptCount   Int          @default(0) @map("cycle_attempt_count")
-  nextRunAt           DateTime     @default(now()) @map("next_run_at")
-  lockedAt            DateTime?    @map("locked_at")
-  lockedBy            String?      @map("locked_by")
-  leaseExpiresAt      DateTime?    @map("lease_expires_at")
-  lastErrorCode       String?      @map("last_error_code")
-  lastErrorMessage    String?      @map("last_error_message")
-  completedAt         DateTime?    @map("completed_at")
-  createdAt           DateTime     @default(now()) @map("created_at")
-  updatedAt           DateTime     @updatedAt @map("updated_at")
-  sourceOutboxEvent   OutboxEvent? @relation(fields: [sourceOutboxEventId], references: [id], onDelete: Restrict)
-  attempts            JobAttempt[]
-  archiveIntegrityChecks ProjectArchiveIntegrityCheck[]
-  archiveGenerationVersions ProjectArchiveVersion[] @relation("ProjectArchiveGenerationJob")
+  id                        String                         @id @default(cuid())
+  sourceOutboxEventId       String?                        @unique @map("source_outbox_event_id")
+  jobType                   String                         @map("job_type")
+  payload                   Json
+  payloadHash               String                         @map("payload_hash")
+  idempotencyKey            String                         @map("idempotency_key")
+  traceId                   String?                        @map("trace_id")
+  status                    JobStatus                      @default(PENDING)
+  maxAttempts               Int                            @map("max_attempts")
+  attemptCount              Int                            @default(0) @map("attempt_count")
+  cycleAttemptCount         Int                            @default(0) @map("cycle_attempt_count")
+  nextRunAt                 DateTime                       @default(now()) @map("next_run_at")
+  lockedAt                  DateTime?                      @map("locked_at")
+  lockedBy                  String?                        @map("locked_by")
+  leaseExpiresAt            DateTime?                      @map("lease_expires_at")
+  lastErrorCode             String?                        @map("last_error_code")
+  lastErrorMessage          String?                        @map("last_error_message")
+  completedAt               DateTime?                      @map("completed_at")
+  createdAt                 DateTime                       @default(now()) @map("created_at")
+  updatedAt                 DateTime                       @updatedAt @map("updated_at")
+  sourceOutboxEvent         OutboxEvent?                   @relation(fields: [sourceOutboxEventId], references: [id], onDelete: Restrict)
+  attempts                  JobAttempt[]
+  archiveIntegrityChecks    ProjectArchiveIntegrityCheck[]
+  archiveGenerationVersions ProjectArchiveVersion[]        @relation("ProjectArchiveGenerationJob")
 
   @@unique([jobType, idempotencyKey])
   @@index([status, nextRunAt])
@@ -631,6 +631,71 @@ enum ArchiveManifestSourceType {
   ACCEPTANCE_BATCH
   ACCEPTANCE_REPORT
   ACCEPTANCE_CONFIRMATION
+  PROJECT_RETROSPECTIVE_VERSION
+}
+
+enum ArchiveSourceFormulaVersion {
+  V1 @map("ARCHIVE.SOURCE@1")
+  V2 @map("ARCHIVE.SOURCE@2")
+}
+
+enum RetrospectiveInputApplicability {
+  APPLICABLE
+  NOT_APPLICABLE
+}
+
+enum RetrospectiveScopeType {
+  PROJECT
+  DELIVERY_UNIT
+}
+
+enum ProjectRetrospectiveStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum RetrospectiveReviewDecision {
+  APPROVED
+  REJECTED
+}
+
+enum ClosurePolicyStatus {
+  ACTIVE
+  SUPERSEDED
+}
+
+enum ClosurePolicyVersionStatus {
+  DRAFT
+  ACTIVE
+  SUPERSEDED
+}
+
+enum KnowledgeEntryStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum KnowledgeEntryVersionStatus {
+  DRAFT
+  IN_REVIEW
+  PUBLISHED
+  REJECTED
+  SUPERSEDED
+  REVOKED
+}
+
+enum KnowledgeReviewDecision {
+  PUBLISH
+  REJECT
+}
+
+enum KnowledgeReuseCorrectionType {
+  TEXT_CORRECTION
+  USAGE_WITHDRAWN
+  SCOPE_CORRECTION
 }
 
 enum ArchiveIntegrityCheckStatus {
@@ -1462,6 +1527,16 @@ enum AuditAction {
   PROJECT_ARCHIVE_INTEGRITY_CHECK_REQUESTED
   PROJECT_ARCHIVE_INTEGRITY_CHECKED
   PROJECT_CLOSED
+  PROJECT_RETROSPECTIVE_DRAFT_CREATED
+  PROJECT_RETROSPECTIVE_SUBMITTED
+  PROJECT_RETROSPECTIVE_REVIEWED
+  PROJECT_CLOSURE_POLICY_UPGRADED
+  PROJECT_CLOSURE_RECORD_CREATED
+  KNOWLEDGE_ENTRY_VERSION_CREATED
+  KNOWLEDGE_ENTRY_REVIEWED
+  KNOWLEDGE_ENTRY_PUBLISHED
+  KNOWLEDGE_REUSE_CONFIRMED
+  KNOWLEDGE_REUSE_CORRECTED
   RND_PROJECT_CREATED
   RND_PROJECT_STATUS_CHANGED
   TECHNICAL_ASSET_CREATED
@@ -1559,6 +1634,13 @@ enum AuditObjectType {
   PROJECT_ARCHIVE
   PROJECT_ARCHIVE_VERSION
   PROJECT_ARCHIVE_INTEGRITY_CHECK
+  PROJECT_RETROSPECTIVE
+  PROJECT_RETROSPECTIVE_VERSION
+  PROJECT_CLOSURE_POLICY_VERSION
+  PROJECT_CLOSURE_RECORD
+  KNOWLEDGE_ENTRY
+  KNOWLEDGE_ENTRY_VERSION
+  KNOWLEDGE_REUSE_RECORD
   RND_PROJECT
   RND_PROJECT_EVENT
   TECHNICAL_ASSET
@@ -1726,6 +1808,22 @@ model User {
   documentReviewCommentResolutions        DocumentReviewCommentResolution[]      @relation("DocumentReviewCommentResolvedBy")
   documentVersionRelationsCreated         DocumentVersionRelation[]              @relation("DocumentVersionRelationCreatedBy")
   documentVersionRelationsVoided          DocumentVersionRelation[]              @relation("DocumentVersionRelationVoidedBy")
+  retrospectivesCreated                   ProjectRetrospective[]                 @relation("ProjectRetrospectiveCreatedBy")
+  retrospectivesUpdated                   ProjectRetrospective[]                 @relation("ProjectRetrospectiveUpdatedBy")
+  retrospectiveVersionsCreated            ProjectRetrospectiveVersion[]          @relation("ProjectRetrospectiveVersionCreatedBy")
+  retrospectiveVersionsSubmitted          ProjectRetrospectiveVersion[]          @relation("ProjectRetrospectiveVersionSubmittedBy")
+  retrospectiveReviews                    ProjectRetrospectiveReview[]           @relation("RetrospectiveReviewer")
+  closurePoliciesCreated                  ProjectClosurePolicy[]                 @relation("ProjectClosurePolicyCreatedBy")
+  closurePoliciesUpdated                  ProjectClosurePolicy[]                 @relation("ProjectClosurePolicyUpdatedBy")
+  closurePolicyVersionsCreated            ProjectClosurePolicyVersion[]          @relation("ProjectClosurePolicyVersionCreatedBy")
+  closureRecordsClosed                    ProjectClosureRecord[]                 @relation("ProjectClosureRecordClosedBy")
+  knowledgeEntriesCreated                 KnowledgeEntry[]                       @relation("KnowledgeEntryCreatedBy")
+  knowledgeEntriesUpdated                 KnowledgeEntry[]                       @relation("KnowledgeEntryUpdatedBy")
+  knowledgeVersionsCreated                KnowledgeEntryVersion[]                @relation("KnowledgeVersionCreatedBy")
+  knowledgeVersionsSubmitted              KnowledgeEntryVersion[]                @relation("KnowledgeVersionSubmittedBy")
+  knowledgeVersionsPublished              KnowledgeEntryVersion[]                @relation("KnowledgeVersionPublishedBy")
+  knowledgeReviews                        KnowledgeEntryReview[]                 @relation("KnowledgeReviewer")
+  knowledgeCorrectionsCreated             KnowledgeReuseCorrection[]             @relation("KnowledgeCorrectionCreatedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -1784,35 +1882,35 @@ model UserRole {
 }
 
 model Project {
-  id                                 String                                 @id @default(cuid())
-  code                               String                                 @unique
+  id                                 String                                     @id @default(cuid())
+  code                               String                                     @unique
   name                               String
-  departmentId                       String?                                @map("department_id")
-  status                             ProjectStatus                          @default(DRAFT)
-  initializationStatus               ProjectInitializationStatus            @default(LEGACY) @map("initialization_status")
-  projectType                        ProjectType                            @default(LEGACY) @map("project_type")
-  equipmentShape                     EquipmentShape?                        @map("equipment_shape")
-  structureStatus                    ProjectStructureStatus                 @default(UNCONFIGURED) @map("structure_status")
-  capabilityConfigurationStatus      ProjectCapabilityConfigurationStatus   @default(UNCONFIGURED) @map("capability_configuration_status")
-  capabilitiesConfiguredAt           DateTime?                              @map("capabilities_configured_at")
-  sourceTemplateVersionId            String?                                @map("source_template_version_id")
-  sourceTemplateChecksum             String?                                @map("source_template_checksum")
-  initializedAt                      DateTime?                              @map("initialized_at")
-  mainControlStageId                 String?                                @map("main_control_stage_id")
-  mainControlStageProjectId          String?                                @map("main_control_stage_project_id")
-  mainControlStageCode               String?                                @map("main_control_stage_code")
-  mainControlStageStatus             ProjectStageExecutionStatus?           @map("main_control_stage_status")
-  mainControlStageSequence           Int?                                   @map("main_control_stage_sequence")
-  mainControlStageUpdatedAt          DateTime?                              @map("main_control_stage_updated_at")
-  finalArchiveVersionId              String?                                @unique @map("final_archive_version_id")
-  version                            Int                                    @default(1)
-  createdById                        String                                 @map("created_by_id")
-  createdAt                          DateTime                               @default(now()) @map("created_at")
-  updatedAt                          DateTime                               @updatedAt @map("updated_at")
-  createdBy                          User                                   @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  sourceTemplateVersion              ProjectTemplateVersion?                @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
+  departmentId                       String?                                    @map("department_id")
+  status                             ProjectStatus                              @default(DRAFT)
+  initializationStatus               ProjectInitializationStatus                @default(LEGACY) @map("initialization_status")
+  projectType                        ProjectType                                @default(LEGACY) @map("project_type")
+  equipmentShape                     EquipmentShape?                            @map("equipment_shape")
+  structureStatus                    ProjectStructureStatus                     @default(UNCONFIGURED) @map("structure_status")
+  capabilityConfigurationStatus      ProjectCapabilityConfigurationStatus       @default(UNCONFIGURED) @map("capability_configuration_status")
+  capabilitiesConfiguredAt           DateTime?                                  @map("capabilities_configured_at")
+  sourceTemplateVersionId            String?                                    @map("source_template_version_id")
+  sourceTemplateChecksum             String?                                    @map("source_template_checksum")
+  initializedAt                      DateTime?                                  @map("initialized_at")
+  mainControlStageId                 String?                                    @map("main_control_stage_id")
+  mainControlStageProjectId          String?                                    @map("main_control_stage_project_id")
+  mainControlStageCode               String?                                    @map("main_control_stage_code")
+  mainControlStageStatus             ProjectStageExecutionStatus?               @map("main_control_stage_status")
+  mainControlStageSequence           Int?                                       @map("main_control_stage_sequence")
+  mainControlStageUpdatedAt          DateTime?                                  @map("main_control_stage_updated_at")
+  finalArchiveVersionId              String?                                    @unique @map("final_archive_version_id")
+  version                            Int                                        @default(1)
+  createdById                        String                                     @map("created_by_id")
+  createdAt                          DateTime                                   @default(now()) @map("created_at")
+  updatedAt                          DateTime                                   @updatedAt @map("updated_at")
+  createdBy                          User                                       @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  sourceTemplateVersion              ProjectTemplateVersion?                    @relation("ProjectSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
   templateSnapshot                   ProjectTemplateSnapshot?
-  mainControlStage                   ProjectStage?                          @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
+  mainControlStage                   ProjectStage?                              @relation("ProjectMainControlStage", fields: [mainControlStageId, mainControlStageProjectId], references: [id, projectId], onDelete: Restrict)
   members                            ProjectMember[]
   auditLogs                          AuditLog[]
   files                              FileObject[]
@@ -1863,7 +1961,7 @@ model Project {
   projectMilestones                  ProjectMilestone[]
   projectMilestoneTaskLinks          ProjectMilestoneTaskLink[]
   projectMilestoneEvents             ProjectMilestoneEvent[]
-  projectStages                      ProjectStage[]                         @relation("ProjectStages")
+  projectStages                      ProjectStage[]                             @relation("ProjectStages")
   deliveryUnitStages                 DeliveryUnitStage[]
   stageReleaseAuthorizations         StageReleaseAuthorization[]
   projectStageEvents                 ProjectStageEvent[]
@@ -1900,12 +1998,23 @@ model Project {
   issueHistories                     IssueHistory[]
   issueRelations                     IssueRelation[]
   mechanicalDrawingProcessTags       MechanicalDrawingProcessTag[]
-  archive                            ProjectArchive?                       @relation("ProjectArchiveAggregate")
-  archiveVersions                    ProjectArchiveVersion[]                @relation("ProjectArchiveVersions")
+  archive                            ProjectArchive?                            @relation("ProjectArchiveAggregate")
+  archiveVersions                    ProjectArchiveVersion[]                    @relation("ProjectArchiveVersions")
   archiveManifestItems               ProjectArchiveManifestItem[]
   archiveIntegrityChecks             ProjectArchiveIntegrityCheck[]
   archiveIntegrityResults            ProjectArchiveIntegrityItemResult[]
-  finalArchiveVersion                ProjectArchiveVersion?                 @relation("ProjectFinalArchiveVersion", fields: [finalArchiveVersionId, id], references: [id, projectId], onDelete: Restrict)
+  finalArchiveVersion                ProjectArchiveVersion?                     @relation("ProjectFinalArchiveVersion", fields: [finalArchiveVersionId, id], references: [id, projectId], onDelete: Restrict)
+  retrospective                      ProjectRetrospective?                      @relation("ProjectRetrospectiveProject")
+  retrospectiveVersions              ProjectRetrospectiveVersion[]              @relation("ProjectRetrospectiveProjectVersions")
+  retrospectiveReviews               ProjectRetrospectiveReview[]               @relation("ProjectRetrospectiveProjectReviews")
+  closurePolicy                      ProjectClosurePolicy?                      @relation("ProjectClosurePolicyProject")
+  closurePolicyVersions              ProjectClosurePolicyVersion[]              @relation("ProjectClosurePolicyProjectVersions")
+  closureRecord                      ProjectClosureRecord?                      @relation("ProjectClosureRecordProject")
+  knowledgeVersions                  KnowledgeEntryVersion[]                    @relation("KnowledgeVersionSourceProject")
+  knowledgeReviews                   KnowledgeEntryReview[]                     @relation("KnowledgeReviewSourceProject")
+  knowledgeReuseRecords              KnowledgeReuseRecord[]                     @relation("KnowledgeReuseTargetProject")
+  knowledgeReuseCorrections          KnowledgeReuseCorrection[]                 @relation("KnowledgeReuseCorrectionProject")
+  knowledgeSources                   KnowledgeEntrySource[]                     @relation("KnowledgeSourceProject")
 
   @@unique([mainControlStageId, mainControlStageProjectId])
   @@unique([finalArchiveVersionId, id])
@@ -1918,13 +2027,13 @@ model Project {
 }
 
 model ProjectArchive {
-  id                    String                 @id @default(cuid())
-  projectId             String                 @unique @map("project_id")
-  finalArchiveVersionId String?                @unique @map("final_archive_version_id")
-  createdAt             DateTime               @default(now()) @map("created_at")
-  project               Project                @relation("ProjectArchiveAggregate", fields: [projectId], references: [id], onDelete: Restrict)
+  id                    String                  @id @default(cuid())
+  projectId             String                  @unique @map("project_id")
+  finalArchiveVersionId String?                 @unique @map("final_archive_version_id")
+  createdAt             DateTime                @default(now()) @map("created_at")
+  project               Project                 @relation("ProjectArchiveAggregate", fields: [projectId], references: [id], onDelete: Restrict)
   versions              ProjectArchiveVersion[]
-  finalArchiveVersion   ProjectArchiveVersion? @relation("ArchiveFinalVersion", fields: [finalArchiveVersionId, id], references: [id, archiveId], onDelete: Restrict)
+  finalArchiveVersion   ProjectArchiveVersion?  @relation("ArchiveFinalVersion", fields: [finalArchiveVersionId, id], references: [id, archiveId], onDelete: Restrict)
 
   @@unique([id, projectId])
   @@unique([finalArchiveVersionId, id])
@@ -1932,28 +2041,37 @@ model ProjectArchive {
 }
 
 model ProjectArchiveVersion {
-  id                               String                                  @id @default(cuid())
-  archiveId                        String                                  @map("archive_id")
-  projectId                        String                                  @map("project_id")
-  version                          Int
-  status                           ArchiveVersionStatus                    @default(VERIFYING)
-  manifestChecksum                 String                                  @map("manifest_checksum")
-  sourceWatermark                  String                                  @map("source_watermark")
-  snapshotJson                     Json                                    @map("snapshot_json")
-  externalPublicationApplicability ArchiveExternalPublicationApplicability @map("external_publication_applicability")
-  externalPublicationReason        String                                  @map("external_publication_reason")
-  createdById                      String                                  @map("created_by_id")
-  generationJobId                 String?                                  @unique @map("generation_job_id")
-  createdAt                        DateTime                                @default(now()) @map("created_at")
-  finalizedAt                      DateTime?                               @map("finalized_at")
-  archive                          ProjectArchive                          @relation(fields: [archiveId, projectId], references: [id, projectId], onDelete: Restrict)
-  project                          Project                                 @relation("ProjectArchiveVersions", fields: [projectId], references: [id], onDelete: Restrict)
-  createdBy                        User                                    @relation("ProjectArchiveVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  generationJob                   PersistentJob?                           @relation("ProjectArchiveGenerationJob", fields: [generationJobId], references: [id], onDelete: Restrict)
-  manifestItems                    ProjectArchiveManifestItem[]
-  integrityChecks                  ProjectArchiveIntegrityCheck[]
-  finalizedArchive                 ProjectArchive?                         @relation("ArchiveFinalVersion")
-  finalizedProject                 Project?                                @relation("ProjectFinalArchiveVersion")
+  id                                 String                                  @id @default(cuid())
+  archiveId                          String                                  @map("archive_id")
+  projectId                          String                                  @map("project_id")
+  version                            Int
+  status                             ArchiveVersionStatus                    @default(VERIFYING)
+  manifestChecksum                   String                                  @map("manifest_checksum")
+  sourceWatermark                    String                                  @map("source_watermark")
+  snapshotJson                       Json                                    @map("snapshot_json")
+  externalPublicationApplicability   ArchiveExternalPublicationApplicability @map("external_publication_applicability")
+  externalPublicationReason          String                                  @map("external_publication_reason")
+  archiveSourceFormulaVersion        ArchiveSourceFormulaVersion             @map("archive_source_formula_version")
+  retrospectiveInputApplicability    RetrospectiveInputApplicability         @map("retrospective_input_applicability")
+  retrospectiveInputWatermarkVersion String?                                 @map("retrospective_input_watermark_version")
+  retrospectiveInputSnapshotJson     Json?                                   @map("retrospective_input_snapshot_json")
+  retrospectiveInputWatermark        String?                                 @map("retrospective_input_watermark")
+  createdById                        String                                  @map("created_by_id")
+  generationJobId                    String?                                 @unique @map("generation_job_id")
+  createdAt                          DateTime                                @default(now()) @map("created_at")
+  finalizedAt                        DateTime?                               @map("finalized_at")
+  archive                            ProjectArchive                          @relation(fields: [archiveId, projectId], references: [id, projectId], onDelete: Restrict)
+  project                            Project                                 @relation("ProjectArchiveVersions", fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                          User                                    @relation("ProjectArchiveVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  generationJob                      PersistentJob?                          @relation("ProjectArchiveGenerationJob", fields: [generationJobId], references: [id], onDelete: Restrict)
+  manifestItems                      ProjectArchiveManifestItem[]
+  integrityChecks                    ProjectArchiveIntegrityCheck[]
+  finalizedArchive                   ProjectArchive?                         @relation("ArchiveFinalVersion")
+  finalizedProject                   Project?                                @relation("ProjectFinalArchiveVersion")
+  retrospectiveInputVersions         ProjectRetrospectiveVersion[]           @relation("RetrospectiveInputArchive")
+  knowledgeSourcesAsArchiveA         KnowledgeEntrySource[]                  @relation("KnowledgeSourceArchiveA")
+  knowledgeSourcesAsArchiveB         KnowledgeEntrySource[]                  @relation("KnowledgeSourceArchiveB")
+  closureRecords                     ProjectClosureRecord[]                  @relation("ProjectClosureArchiveB")
 
   @@unique([id, projectId])
   @@unique([id, archiveId])
@@ -1962,24 +2080,449 @@ model ProjectArchiveVersion {
   @@map("project_archive_versions")
 }
 
+model ProjectRetrospective {
+  id                      String                        @id @default(cuid())
+  projectId               String                        @unique @map("project_id")
+  currentVersionId        String?                       @unique @map("current_version_id")
+  latestApprovedVersionId String?                       @unique @map("latest_approved_version_id")
+  version                 Int                           @default(1)
+  createdById             String                        @map("created_by_id")
+  updatedById             String                        @map("updated_by_id")
+  createdAt               DateTime                      @default(now()) @map("created_at")
+  updatedAt               DateTime                      @updatedAt @map("updated_at")
+  project                 Project                       @relation("ProjectRetrospectiveProject", fields: [projectId], references: [id], onDelete: Restrict)
+  currentVersion          ProjectRetrospectiveVersion?  @relation("ProjectRetrospectiveCurrentVersion", fields: [currentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  latestApprovedVersion   ProjectRetrospectiveVersion?  @relation("ProjectRetrospectiveLatestApprovedVersion", fields: [latestApprovedVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  versions                ProjectRetrospectiveVersion[] @relation("ProjectRetrospectiveVersions")
+  reviews                 ProjectRetrospectiveReview[]  @relation("ProjectRetrospectiveReviews")
+  createdBy               User                          @relation("ProjectRetrospectiveCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy               User                          @relation("ProjectRetrospectiveUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@unique([currentVersionId, projectId])
+  @@unique([latestApprovedVersionId, projectId])
+  @@map("project_retrospectives")
+}
+
+model ProjectRetrospectiveVersion {
+  id                                 String                             @id @default(cuid())
+  projectId                          String                             @map("project_id")
+  retrospectiveId                    String                             @map("retrospective_id")
+  versionNo                          Int                                @map("version_no")
+  supersedesVersionId                String?                            @map("supersedes_version_id")
+  status                             ProjectRetrospectiveStatus
+  retrospectiveInputArchiveVersionId String                             @map("retrospective_input_archive_version_id")
+  retrospectiveInputManifestChecksum String                             @map("retrospective_input_manifest_checksum")
+  retrospectiveInputSourceWatermark  String                             @map("retrospective_input_source_watermark")
+  retrospectiveInputWatermarkVersion String                             @map("retrospective_input_watermark_version")
+  retrospectiveInputWatermark        String                             @map("retrospective_input_watermark")
+  projectSnapshotJson                Json                               @map("project_snapshot_json")
+  deliverySummaryJson                Json                               @map("delivery_summary_json")
+  successfulPracticesJson            Json                               @map("successful_practices_json")
+  shortcomingsJson                   Json                               @map("shortcomings_json")
+  improvementsJson                   Json                               @map("improvements_json")
+  knowledgeDispositionJson           Json                               @map("knowledge_disposition_json")
+  ipDeclarationJson                  Json                               @map("ip_declaration_json")
+  contentChecksum                    String                             @map("content_checksum")
+  submittedById                      String?                            @map("submitted_by_id")
+  submittedAt                        DateTime?                          @map("submitted_at")
+  createdById                        String                             @map("created_by_id")
+  createdAt                          DateTime                           @default(now()) @map("created_at")
+  project                            Project                            @relation("ProjectRetrospectiveProjectVersions", fields: [projectId], references: [id], onDelete: Restrict)
+  retrospective                      ProjectRetrospective               @relation("ProjectRetrospectiveVersions", fields: [retrospectiveId, projectId], references: [id, projectId], onDelete: Restrict)
+  currentFor                         ProjectRetrospective?              @relation("ProjectRetrospectiveCurrentVersion")
+  latestApprovedFor                  ProjectRetrospective?              @relation("ProjectRetrospectiveLatestApprovedVersion")
+  supersedes                         ProjectRetrospectiveVersion?       @relation("RetrospectiveVersionSupersedes", fields: [supersedesVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  supersededVersions                 ProjectRetrospectiveVersion[]      @relation("RetrospectiveVersionSupersedes")
+  retrospectiveInputArchiveVersion   ProjectArchiveVersion              @relation("RetrospectiveInputArchive", fields: [retrospectiveInputArchiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  contributions                      ProjectRetrospectiveContribution[] @relation("RetrospectiveVersionContributions")
+  participants                       ProjectRetrospectiveParticipant[]  @relation("RetrospectiveVersionParticipants")
+  issueSources                       ProjectRetrospectiveIssueSource[]  @relation("RetrospectiveVersionIssueSources")
+  reviews                            ProjectRetrospectiveReview[]       @relation("RetrospectiveVersionReviews")
+  knowledgeSources                   KnowledgeEntrySource[]             @relation("KnowledgeSourceRetrospective")
+  closureRecords                     ProjectClosureRecord[]             @relation("ClosureRecordRetrospectiveVersion")
+  createdBy                          User                               @relation("ProjectRetrospectiveVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  submittedBy                        User?                              @relation("ProjectRetrospectiveVersionSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+
+  @@unique([retrospectiveId, versionNo])
+  @@unique([id, projectId])
+  @@index([projectId, status, createdAt])
+  @@index([projectId, retrospectiveInputArchiveVersionId])
+  @@map("project_retrospective_versions")
+}
+
+model ProjectRetrospectiveContribution {
+  id                      String                      @id @default(cuid())
+  projectId               String                      @map("project_id")
+  retrospectiveVersionId  String                      @map("retrospective_version_id")
+  scopeType               RetrospectiveScopeType      @map("scope_type")
+  deliveryUnitId          String?                     @map("delivery_unit_id")
+  discipline              String
+  contributorMembershipId String                      @map("contributor_membership_id")
+  factText                String                      @map("fact_text")
+  impactText              String                      @map("impact_text")
+  reusable                Boolean
+  required                Boolean
+  createdAt               DateTime                    @default(now()) @map("created_at")
+  retrospectiveVersion    ProjectRetrospectiveVersion @relation("RetrospectiveVersionContributions", fields: [retrospectiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit            DeliveryUnit?               @relation("RetrospectiveContributionDeliveryUnit", fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  contributorMembership   ProjectMember               @relation("RetrospectiveContributionMember", fields: [contributorMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@index([projectId, retrospectiveVersionId])
+  @@index([projectId, deliveryUnitId])
+  @@index([projectId, contributorMembershipId])
+  @@map("project_retrospective_contributions")
+}
+
+model ProjectRetrospectiveParticipant {
+  id                     String                      @id @default(cuid())
+  projectId              String                      @map("project_id")
+  retrospectiveVersionId String                      @map("retrospective_version_id")
+  membershipId           String                      @map("membership_id")
+  roleCode               String                      @map("role_code")
+  responsibilityText     String                      @map("responsibility_text")
+  createdAt              DateTime                    @default(now()) @map("created_at")
+  retrospectiveVersion   ProjectRetrospectiveVersion @relation("RetrospectiveVersionParticipants", fields: [retrospectiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  membership             ProjectMember               @relation("RetrospectiveParticipantMember", fields: [membershipId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([retrospectiveVersionId, membershipId, roleCode])
+  @@unique([id, projectId])
+  @@index([projectId, membershipId])
+  @@map("project_retrospective_participants")
+}
+
+model ProjectRetrospectiveIssueSource {
+  id                     String                      @id @default(cuid())
+  projectId              String                      @map("project_id")
+  retrospectiveVersionId String                      @map("retrospective_version_id")
+  issueId                String                      @map("issue_id")
+  issueHistoryId         String                      @map("issue_history_id")
+  issueHistorySequence   Int                         @map("issue_history_sequence")
+  sourceChecksum         String                      @map("source_checksum")
+  snapshotJson           Json                        @map("snapshot_json")
+  createdAt              DateTime                    @default(now()) @map("created_at")
+  retrospectiveVersion   ProjectRetrospectiveVersion @relation("RetrospectiveVersionIssueSources", fields: [retrospectiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  issue                  Issue                       @relation("RetrospectiveIssueSource", fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+  issueHistory           IssueHistory                @relation("RetrospectiveIssueHistorySource", fields: [issueHistoryId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([retrospectiveVersionId, issueHistoryId])
+  @@unique([id, projectId])
+  @@index([projectId, issueId])
+  @@index([projectId, issueHistoryId])
+  @@map("project_retrospective_issue_sources")
+}
+
+model ProjectRetrospectiveReview {
+  id                     String                      @id @default(cuid())
+  projectId              String                      @map("project_id")
+  retrospectiveId        String                      @map("retrospective_id")
+  retrospectiveVersionId String                      @map("retrospective_version_id")
+  decision               RetrospectiveReviewDecision
+  reason                 String
+  reviewerId             String                      @map("reviewer_id")
+  reviewedAt             DateTime                    @map("reviewed_at")
+  createdAt              DateTime                    @default(now()) @map("created_at")
+  project                Project                     @relation("ProjectRetrospectiveProjectReviews", fields: [projectId], references: [id], onDelete: Restrict)
+  retrospective          ProjectRetrospective        @relation("ProjectRetrospectiveReviews", fields: [retrospectiveId, projectId], references: [id, projectId], onDelete: Restrict)
+  retrospectiveVersion   ProjectRetrospectiveVersion @relation("RetrospectiveVersionReviews", fields: [retrospectiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  reviewer               User                        @relation("RetrospectiveReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@index([projectId, retrospectiveVersionId, reviewedAt])
+  @@map("project_retrospective_reviews")
+}
+
+model ProjectClosurePolicy {
+  id               String                        @id @default(cuid())
+  projectId        String                        @unique @map("project_id")
+  status           ClosurePolicyStatus
+  currentVersionId String?                       @unique @map("current_version_id")
+  version          Int                           @default(1)
+  createdById      String                        @map("created_by_id")
+  updatedById      String                        @map("updated_by_id")
+  createdAt        DateTime                      @default(now()) @map("created_at")
+  updatedAt        DateTime                      @updatedAt @map("updated_at")
+  project          Project                       @relation("ProjectClosurePolicyProject", fields: [projectId], references: [id], onDelete: Restrict)
+  currentVersion   ProjectClosurePolicyVersion?  @relation("ProjectClosurePolicyCurrentVersion", fields: [currentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  versions         ProjectClosurePolicyVersion[] @relation("ProjectClosurePolicyVersions")
+  closureRecord    ProjectClosureRecord?         @relation("ClosurePolicyClosureRecord")
+  createdBy        User                          @relation("ProjectClosurePolicyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy        User                          @relation("ProjectClosurePolicyUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@unique([currentVersionId, projectId])
+  @@map("project_closure_policies")
+}
+
+model ProjectClosurePolicyVersion {
+  id                            String                      @id @default(cuid())
+  projectId                     String                      @map("project_id")
+  policyId                      String                      @map("policy_id")
+  versionNo                     Int                         @map("version_no")
+  status                        ClosurePolicyVersionStatus
+  sourceTemplateSnapshotId      String                      @map("source_template_snapshot_id")
+  sourceGateDefinitionId        String                      @map("source_gate_definition_id")
+  archiveCheckerCode            String                      @map("archive_checker_code")
+  archiveCheckerVersion         Int                         @map("archive_checker_version")
+  retrospectiveCheckerCode      String                      @map("retrospective_checker_code")
+  retrospectiveCheckerVersion   Int                         @map("retrospective_checker_version")
+  archiveSourceFormulaVersion   ArchiveSourceFormulaVersion @map("archive_source_formula_version")
+  selfReferenceExclusionVersion String                      @map("self_reference_exclusion_version")
+  bindingChecksum               String                      @map("binding_checksum")
+  policyChecksum                String                      @map("policy_checksum")
+  upgradeReason                 String?                     @map("upgrade_reason")
+  effectiveAt                   DateTime                    @map("effective_at")
+  createdById                   String                      @map("created_by_id")
+  createdAt                     DateTime                    @default(now()) @map("created_at")
+  project                       Project                     @relation("ProjectClosurePolicyProjectVersions", fields: [projectId], references: [id], onDelete: Restrict)
+  policy                        ProjectClosurePolicy        @relation("ProjectClosurePolicyVersions", fields: [policyId, projectId], references: [id, projectId], onDelete: Restrict)
+  currentFor                    ProjectClosurePolicy?       @relation("ProjectClosurePolicyCurrentVersion")
+  sourceTemplateSnapshot        ProjectTemplateSnapshot     @relation("ClosurePolicySourceTemplateSnapshot", fields: [sourceTemplateSnapshotId, projectId], references: [id, projectId], onDelete: Restrict)
+  sourceGateDefinition          ProjectGateDefinition       @relation("ClosurePolicySourceGateDefinition", fields: [sourceGateDefinitionId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateInstances                 ProjectGateInstance[]       @relation("ClosurePolicyGateInstances")
+  gateSnapshots                 GateCheckSnapshot[]         @relation("ClosurePolicyGateSnapshots")
+  gateSubmissions               GateSubmission[]            @relation("ClosurePolicyGateSubmissions")
+  closureRecords                ProjectClosureRecord[]      @relation("ClosureRecordPolicyVersion")
+  createdBy                     User                        @relation("ProjectClosurePolicyVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([policyId, versionNo])
+  @@unique([id, projectId])
+  @@index([projectId, status, effectiveAt])
+  @@index([projectId, sourceTemplateSnapshotId])
+  @@index([projectId, sourceGateDefinitionId])
+  @@map("project_closure_policy_versions")
+}
+
+model ProjectClosureRecord {
+  id                           String                      @id @default(cuid())
+  projectId                    String                      @unique @map("project_id")
+  archiveBId                   String                      @map("archive_b_id")
+  archiveSourceFormulaVersion  ArchiveSourceFormulaVersion @map("archive_source_formula_version")
+  archiveBManifestChecksum     String                      @map("archive_b_manifest_checksum")
+  archiveBSourceWatermark      String                      @map("archive_b_source_watermark")
+  closurePolicyVersionId       String                      @map("closure_policy_version_id")
+  closurePolicyChecksum        String                      @map("closure_policy_checksum")
+  gateInstanceId               String                      @map("gate_instance_id")
+  gateCheckSnapshotId          String                      @map("gate_check_snapshot_id")
+  gateSubmissionId             String                      @map("gate_submission_id")
+  gateApprovalSnapshotJson     Json                        @map("gate_approval_snapshot_json")
+  retrospectiveVersionId       String                      @map("retrospective_version_id")
+  retrospectiveContentChecksum String                      @map("retrospective_content_checksum")
+  closedById                   String                      @map("closed_by_id")
+  closedAt                     DateTime                    @map("closed_at")
+  createdAt                    DateTime                    @default(now()) @map("created_at")
+  project                      Project                     @relation("ProjectClosureRecordProject", fields: [projectId], references: [id], onDelete: Restrict, map: "project_closure_records_project_fkey")
+  archiveB                     ProjectArchiveVersion       @relation("ProjectClosureArchiveB", fields: [archiveBId, projectId], references: [id, projectId], onDelete: Restrict)
+  closurePolicyVersion         ProjectClosurePolicyVersion @relation("ClosureRecordPolicyVersion", fields: [closurePolicyVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  closurePolicy                ProjectClosurePolicy        @relation("ClosurePolicyClosureRecord", fields: [projectId], references: [projectId], onDelete: Restrict, map: "project_closure_records_policy_fkey")
+  gateInstance                 ProjectGateInstance         @relation("ClosureRecordGateInstance", fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateCheckSnapshot            GateCheckSnapshot           @relation("ClosureRecordGateSnapshot", fields: [gateCheckSnapshotId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateSubmission               GateSubmission              @relation("ClosureRecordGateSubmission", fields: [gateSubmissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  retrospectiveVersion         ProjectRetrospectiveVersion @relation("ClosureRecordRetrospectiveVersion", fields: [retrospectiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  closedBy                     User                        @relation("ProjectClosureRecordClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@index([projectId, archiveBId])
+  @@index([projectId, closurePolicyVersionId])
+  @@index([projectId, retrospectiveVersionId])
+  @@map("project_closure_records")
+}
+
+model KnowledgeEntry {
+  id                        String                  @id @default(cuid())
+  code                      String                  @unique
+  status                    KnowledgeEntryStatus
+  currentPublishedVersionId String?                 @unique @map("current_published_version_id")
+  version                   Int                     @default(1)
+  createdById               String                  @map("created_by_id")
+  updatedById               String                  @map("updated_by_id")
+  createdAt                 DateTime                @default(now()) @map("created_at")
+  updatedAt                 DateTime                @updatedAt @map("updated_at")
+  versions                  KnowledgeEntryVersion[] @relation("KnowledgeEntryVersions")
+  currentPublishedVersion   KnowledgeEntryVersion?  @relation("KnowledgeEntryCurrentPublishedVersion", fields: [currentPublishedVersionId], references: [id], onDelete: Restrict)
+  reviews                   KnowledgeEntryReview[]  @relation("KnowledgeEntryReviews")
+  reuseRecords              KnowledgeReuseRecord[]  @relation("KnowledgeEntryReuseRecords")
+  createdBy                 User                    @relation("KnowledgeEntryCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                 User                    @relation("KnowledgeEntryUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@map("knowledge_entries")
+}
+
+model KnowledgeEntryVersion {
+  id                         String                      @id @default(cuid())
+  entryId                    String                      @map("entry_id")
+  sourceProjectId            String                      @map("source_project_id")
+  versionNo                  Int                         @map("version_no")
+  supersedesVersionId        String?                     @map("supersedes_version_id")
+  status                     KnowledgeEntryVersionStatus
+  title                      String
+  sanitizedSummary           String                      @map("sanitized_summary")
+  experienceType             String                      @map("experience_type")
+  discipline                 String
+  normalizedKeywordsJson     Json                        @map("normalized_keywords_json")
+  normalizedKeywordsText     String                      @map("normalized_keywords_text")
+  applicableProjectTypesJson Json                        @map("applicable_project_types_json")
+  applicableStageCodesJson   Json                        @map("applicable_stage_codes_json")
+  preconditions              String
+  recommendedPractice        String                      @map("recommended_practice")
+  antiPatterns               String                      @map("anti_patterns")
+  limitations                String
+  ipSanitizationDeclaration  String                      @map("ip_sanitization_declaration")
+  internalReusable           Boolean                     @map("internal_reusable")
+  contentChecksum            String                      @map("content_checksum")
+  createdById                String                      @map("created_by_id")
+  submittedById              String?                     @map("submitted_by_id")
+  submittedAt                DateTime?                   @map("submitted_at")
+  publishedById              String?                     @map("published_by_id")
+  publishedAt                DateTime?                   @map("published_at")
+  createdAt                  DateTime                    @default(now()) @map("created_at")
+  entry                      KnowledgeEntry              @relation("KnowledgeEntryVersions", fields: [entryId], references: [id], onDelete: Restrict)
+  sourceProject              Project                     @relation("KnowledgeVersionSourceProject", fields: [sourceProjectId], references: [id], onDelete: Restrict)
+  currentFor                 KnowledgeEntry?             @relation("KnowledgeEntryCurrentPublishedVersion")
+  supersedes                 KnowledgeEntryVersion?      @relation("KnowledgeVersionSupersedes", fields: [supersedesVersionId], references: [id], onDelete: Restrict)
+  supersededVersions         KnowledgeEntryVersion[]     @relation("KnowledgeVersionSupersedes")
+  sources                    KnowledgeEntrySource[]      @relation("KnowledgeEntryVersionSources")
+  reviews                    KnowledgeEntryReview[]      @relation("KnowledgeEntryVersionReviews")
+  reuseRecords               KnowledgeReuseRecord[]      @relation("KnowledgeVersionReuseRecords")
+  createdBy                  User                        @relation("KnowledgeVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  submittedBy                User?                       @relation("KnowledgeVersionSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  publishedBy                User?                       @relation("KnowledgeVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+
+  @@unique([entryId, versionNo])
+  @@unique([id, entryId])
+  @@unique([id, sourceProjectId])
+  @@unique([id, entryId, sourceProjectId])
+  @@index([sourceProjectId, status, publishedAt])
+  @@map("knowledge_entry_versions")
+}
+
+model KnowledgeEntrySource {
+  id                                 String                      @id @default(cuid())
+  knowledgeVersionId                 String                      @map("knowledge_version_id")
+  sourceProjectId                    String                      @map("source_project_id")
+  finalArchiveVersionId              String                      @map("final_archive_version_id")
+  finalArchiveFormula                ArchiveSourceFormulaVersion @map("final_archive_formula")
+  finalArchiveManifestChecksum       String                      @map("final_archive_manifest_checksum")
+  finalArchiveSourceWatermark        String                      @map("final_archive_source_watermark")
+  retrospectiveInputArchiveVersionId String                      @map("retrospective_input_archive_version_id")
+  retrospectiveInputFormula          ArchiveSourceFormulaVersion @map("retrospective_input_formula")
+  retrospectiveInputManifestChecksum String                      @map("retrospective_input_manifest_checksum")
+  retrospectiveInputSourceWatermark  String                      @map("retrospective_input_source_watermark")
+  retrospectiveInputWatermark        String                      @map("retrospective_input_watermark")
+  retrospectiveVersionId             String                      @map("retrospective_version_id")
+  retrospectiveVersionNo             Int                         @map("retrospective_version_no")
+  retrospectiveContentChecksum       String                      @map("retrospective_content_checksum")
+  issueId                            String?                     @map("issue_id")
+  issueHistoryId                     String?                     @map("issue_history_id")
+  issueHistorySequence               Int?                        @map("issue_history_sequence")
+  sourceChecksum                     String                      @map("source_checksum")
+  sanitizedSnapshotJson              Json                        @map("sanitized_snapshot_json")
+  createdAt                          DateTime                    @default(now()) @map("created_at")
+  knowledgeVersion                   KnowledgeEntryVersion       @relation("KnowledgeEntryVersionSources", fields: [knowledgeVersionId, sourceProjectId], references: [id, sourceProjectId], onDelete: Restrict)
+  sourceProject                      Project                     @relation("KnowledgeSourceProject", fields: [sourceProjectId], references: [id], onDelete: Restrict)
+  archiveA                           ProjectArchiveVersion       @relation("KnowledgeSourceArchiveA", fields: [retrospectiveInputArchiveVersionId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
+  archiveB                           ProjectArchiveVersion       @relation("KnowledgeSourceArchiveB", fields: [finalArchiveVersionId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
+  retrospectiveVersion               ProjectRetrospectiveVersion @relation("KnowledgeSourceRetrospective", fields: [retrospectiveVersionId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
+  issue                              Issue?                      @relation("KnowledgeIssueSource", fields: [issueId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
+  issueHistory                       IssueHistory?               @relation("KnowledgeIssueHistorySource", fields: [issueHistoryId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([id, sourceProjectId])
+  @@index([sourceProjectId, knowledgeVersionId])
+  @@index([sourceProjectId, retrospectiveInputArchiveVersionId])
+  @@index([sourceProjectId, finalArchiveVersionId])
+  @@index([sourceProjectId, retrospectiveVersionId])
+  @@index([sourceProjectId, issueId])
+  @@map("knowledge_entry_sources")
+}
+
+model KnowledgeEntryReview {
+  id                    String                  @id @default(cuid())
+  projectId             String                  @map("project_id")
+  knowledgeEntryId      String                  @map("knowledge_entry_id")
+  knowledgeVersionId    String                  @map("knowledge_version_id")
+  decision              KnowledgeReviewDecision
+  reason                String
+  ipConfirmed           Boolean                 @map("ip_confirmed")
+  sanitizationConfirmed Boolean                 @map("sanitization_confirmed")
+  reviewerId            String                  @map("reviewer_id")
+  reviewedAt            DateTime                @map("reviewed_at")
+  sourceChecksum        String                  @map("source_checksum")
+  createdAt             DateTime                @default(now()) @map("created_at")
+  knowledgeEntry        KnowledgeEntry          @relation("KnowledgeEntryReviews", fields: [knowledgeEntryId], references: [id], onDelete: Restrict)
+  knowledgeVersion      KnowledgeEntryVersion   @relation("KnowledgeEntryVersionReviews", fields: [knowledgeVersionId, knowledgeEntryId, projectId], references: [id, entryId, sourceProjectId], onDelete: Restrict)
+  sourceProject         Project                 @relation("KnowledgeReviewSourceProject", fields: [projectId], references: [id], onDelete: Restrict)
+  reviewer              User                    @relation("KnowledgeReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@index([projectId, knowledgeEntryId, knowledgeVersionId])
+  @@map("knowledge_entry_reviews")
+}
+
+model KnowledgeReuseRecord {
+  id                   String                     @id @default(cuid())
+  targetProjectId      String                     @map("target_project_id")
+  targetDeliveryUnitId String?                    @map("target_delivery_unit_id")
+  knowledgeEntryId     String                     @map("knowledge_entry_id")
+  knowledgeVersionId   String                     @map("knowledge_version_id")
+  scenario             String
+  evidenceSummary      String                     @map("evidence_summary")
+  confirmedById        String                     @map("confirmed_by_id")
+  confirmedAt          DateTime                   @map("confirmed_at")
+  idempotencyKey       String                     @map("idempotency_key")
+  version              Int                        @default(1)
+  createdAt            DateTime                   @default(now()) @map("created_at")
+  targetProject        Project                    @relation("KnowledgeReuseTargetProject", fields: [targetProjectId], references: [id], onDelete: Restrict)
+  targetDeliveryUnit   DeliveryUnit?              @relation("KnowledgeReuseDeliveryUnit", fields: [targetDeliveryUnitId, targetProjectId], references: [id, projectId], onDelete: Restrict)
+  knowledgeEntry       KnowledgeEntry             @relation("KnowledgeEntryReuseRecords", fields: [knowledgeEntryId], references: [id], onDelete: Restrict)
+  knowledgeVersion     KnowledgeEntryVersion      @relation("KnowledgeVersionReuseRecords", fields: [knowledgeVersionId, knowledgeEntryId], references: [id, entryId], onDelete: Restrict)
+  confirmedBy          ProjectMember              @relation("KnowledgeReuseConfirmedBy", fields: [confirmedById, targetProjectId], references: [id, projectId], onDelete: Restrict)
+  corrections          KnowledgeReuseCorrection[]
+
+  @@unique([targetProjectId, knowledgeVersionId])
+  @@unique([id, targetProjectId])
+  @@index([targetProjectId, targetDeliveryUnitId])
+  @@index([targetProjectId, confirmedById])
+  @@index([knowledgeEntryId, knowledgeVersionId])
+  @@map("knowledge_reuse_records")
+}
+
+model KnowledgeReuseCorrection {
+  id              String                       @id @default(cuid())
+  targetProjectId String                       @map("target_project_id")
+  reuseRecordId   String                       @map("reuse_record_id")
+  correctionType  KnowledgeReuseCorrectionType @map("correction_type")
+  reason          String
+  correctionText  String                       @map("correction_text")
+  createdById     String                       @map("created_by_id")
+  createdAt       DateTime                     @default(now()) @map("created_at")
+  reuseRecord     KnowledgeReuseRecord         @relation(fields: [reuseRecordId, targetProjectId], references: [id, targetProjectId], onDelete: Restrict)
+  targetProject   Project                      @relation("KnowledgeReuseCorrectionProject", fields: [targetProjectId], references: [id], onDelete: Restrict)
+  createdBy       User                         @relation("KnowledgeCorrectionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([id, targetProjectId])
+  @@index([targetProjectId, reuseRecordId])
+  @@map("knowledge_reuse_corrections")
+}
+
 model ProjectArchiveManifestItem {
-  id               String                    @id @default(cuid())
-  projectId        String                    @map("project_id")
-  archiveVersionId String                    @map("archive_version_id")
+  id               String                              @id @default(cuid())
+  projectId        String                              @map("project_id")
+  archiveVersionId String                              @map("archive_version_id")
   position         Int
-  sourceType       ArchiveManifestSourceType @map("source_type")
-  sourceId         String                    @map("source_id")
-  sourceVersion    String                    @map("source_version")
-  sourceChecksum   String                    @map("source_checksum")
-  fileObjectId     String?                   @map("file_object_id")
-  fileSha256       String?                   @map("file_sha256")
-  fileMimeType     String?                   @map("file_mime_type")
-  fileSize         BigInt?                   @map("file_size")
-  snapshotJson     Json                      @map("snapshot_json")
-  createdAt        DateTime                  @default(now()) @map("created_at")
-  project          Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  archiveVersion   ProjectArchiveVersion     @relation(fields: [archiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
-  fileObject       FileObject?               @relation(fields: [fileObjectId, projectId], references: [id, projectId], onDelete: Restrict)
+  sourceType       ArchiveManifestSourceType           @map("source_type")
+  sourceId         String                              @map("source_id")
+  sourceVersion    String                              @map("source_version")
+  sourceChecksum   String                              @map("source_checksum")
+  fileObjectId     String?                             @map("file_object_id")
+  fileSha256       String?                             @map("file_sha256")
+  fileMimeType     String?                             @map("file_mime_type")
+  fileSize         BigInt?                             @map("file_size")
+  snapshotJson     Json                                @map("snapshot_json")
+  createdAt        DateTime                            @default(now()) @map("created_at")
+  project          Project                             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  archiveVersion   ProjectArchiveVersion               @relation(fields: [archiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  fileObject       FileObject?                         @relation(fields: [fileObjectId, projectId], references: [id, projectId], onDelete: Restrict)
   integrityResults ProjectArchiveIntegrityItemResult[]
 
   @@unique([archiveVersionId, position])
@@ -1990,19 +2533,19 @@ model ProjectArchiveManifestItem {
 }
 
 model ProjectArchiveIntegrityCheck {
-  id               String                      @id @default(cuid())
-  projectId        String                      @map("project_id")
-  archiveVersionId String                      @map("archive_version_id")
+  id               String                              @id @default(cuid())
+  projectId        String                              @map("project_id")
+  archiveVersionId String                              @map("archive_version_id")
   sequence         Int
-  jobId            String                      @unique @map("job_id")
+  jobId            String                              @unique @map("job_id")
   status           ArchiveIntegrityCheckStatus
-  inputChecksum    String                      @map("input_checksum")
-  resultChecksum   String                      @map("result_checksum")
-  checkedAt        DateTime                    @map("checked_at")
-  createdAt        DateTime                    @default(now()) @map("created_at")
-  project          Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  archiveVersion   ProjectArchiveVersion       @relation(fields: [archiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
-  job              PersistentJob               @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  inputChecksum    String                              @map("input_checksum")
+  resultChecksum   String                              @map("result_checksum")
+  checkedAt        DateTime                            @map("checked_at")
+  createdAt        DateTime                            @default(now()) @map("created_at")
+  project          Project                             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  archiveVersion   ProjectArchiveVersion               @relation(fields: [archiveVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  job              PersistentJob                       @relation(fields: [jobId], references: [id], onDelete: Restrict)
   results          ProjectArchiveIntegrityItemResult[]
 
   @@unique([archiveVersionId, sequence])
@@ -2349,29 +2892,29 @@ model MaterialReference {
 }
 
 model SupplierReference {
-  id                       String                    @id @default(cuid())
-  projectId                String                    @map("project_id")
-  source                   ProcurementSource
-  externalId               String?                   @map("external_id")
-  code                     String
-  name                     String
-  status                   MaterialReferenceStatus   @default(ACTIVE)
-  contactName              String?                   @map("contact_name")
-  contactPhone             String?                   @map("contact_phone")
-  procurementOwnerName     String?                   @map("procurement_owner_name")
-  capabilityTagsJson       Json                      @default("[]") @map("capability_tags_json")
-  sourceVersion            String?                   @map("source_version")
-  sourceHash               String?                   @map("source_hash")
-  syncedAt                 DateTime?                 @map("synced_at")
-  version                  Int                       @default(1)
-  createdById              String                    @map("created_by_id")
-  updatedById              String                    @map("updated_by_id")
-  createdAt                DateTime                  @default(now()) @map("created_at")
-  updatedAt                DateTime                  @updatedAt @map("updated_at")
-  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  createdBy                User                      @relation("SupplierReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy                User                      @relation("SupplierReferenceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  procurementTrackingLines ProcurementTrackingLine[]
+  id                        String                                     @id @default(cuid())
+  projectId                 String                                     @map("project_id")
+  source                    ProcurementSource
+  externalId                String?                                    @map("external_id")
+  code                      String
+  name                      String
+  status                    MaterialReferenceStatus                    @default(ACTIVE)
+  contactName               String?                                    @map("contact_name")
+  contactPhone              String?                                    @map("contact_phone")
+  procurementOwnerName      String?                                    @map("procurement_owner_name")
+  capabilityTagsJson        Json                                       @default("[]") @map("capability_tags_json")
+  sourceVersion             String?                                    @map("source_version")
+  sourceHash                String?                                    @map("source_hash")
+  syncedAt                  DateTime?                                  @map("synced_at")
+  version                   Int                                        @default(1)
+  createdById               String                                     @map("created_by_id")
+  updatedById               String                                     @map("updated_by_id")
+  createdAt                 DateTime                                   @default(now()) @map("created_at")
+  updatedAt                 DateTime                                   @updatedAt @map("updated_at")
+  project                   Project                                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                 User                                       @relation("SupplierReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                 User                                       @relation("SupplierReferenceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  procurementTrackingLines  ProcurementTrackingLine[]
   manufacturingCapabilities SupplierReferenceManufacturingCapability[]
   drawingSelectionItems     DrawingSelectionItem[]
 
@@ -2854,21 +3397,21 @@ model AcceptanceTemplateVersion {
 }
 
 model AcceptanceTestItemDefinition {
-  id                 String                    @id @default(cuid())
-  templateVersionId  String                    @map("template_version_id")
-  code               String
-  name               String
-  position           Int
-  method             String
-  acceptanceCriteria String                    @map("acceptance_criteria")
-  unit               String?
-  required           Boolean
-  evidenceRequired   Boolean                   @map("evidence_required")
-  applicableScope    String                    @map("applicable_scope")
-  defaultDiscipline  String                    @map("default_discipline")
-  createdAt          DateTime                  @default(now()) @map("created_at")
-  templateVersion    AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
-  results            AcceptanceTestResult[]
+  id                      String                             @id @default(cuid())
+  templateVersionId       String                             @map("template_version_id")
+  code                    String
+  name                    String
+  position                Int
+  method                  String
+  acceptanceCriteria      String                             @map("acceptance_criteria")
+  unit                    String?
+  required                Boolean
+  evidenceRequired        Boolean                            @map("evidence_required")
+  applicableScope         String                             @map("applicable_scope")
+  defaultDiscipline       String                             @map("default_discipline")
+  createdAt               DateTime                           @default(now()) @map("created_at")
+  templateVersion         AcceptanceTemplateVersion          @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  results                 AcceptanceTestResult[]
   offlineDraftSubmissions OfflineAcceptanceDraftSubmission[]
 
   @@unique([templateVersionId, code])
@@ -2878,32 +3421,32 @@ model AcceptanceTestItemDefinition {
 }
 
 model AcceptanceBatch {
-  id                String                    @id @default(cuid())
-  projectId         String                    @map("project_id")
-  acceptanceType    AcceptanceType            @map("acceptance_type")
-  scopeType         AcceptanceScopeType       @map("scope_type")
-  scopeId           String                    @map("scope_id")
-  templateVersionId String                    @map("template_version_id")
-  status            AcceptanceBatchStatus     @default(DRAFT)
-  retestOfBatchId   String?                   @map("retest_of_batch_id")
-  version           Int                       @default(1)
-  createdById       String                    @map("created_by_id")
-  startedById       String?                   @map("started_by_id")
-  lockedById        String?                   @map("locked_by_id")
-  createdAt         DateTime                  @default(now()) @map("created_at")
-  startedAt         DateTime?                 @map("started_at")
-  lockedAt          DateTime?                 @map("locked_at")
-  updatedAt         DateTime                  @updatedAt @map("updated_at")
-  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  templateVersion   AcceptanceTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
-  retestOfBatch     AcceptanceBatch?          @relation("AcceptanceBatchRetest", fields: [retestOfBatchId, projectId], references: [id, projectId], onDelete: Restrict)
-  retests           AcceptanceBatch[]         @relation("AcceptanceBatchRetest")
-  createdBy         User                      @relation("AcceptanceBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  startedBy         User?                     @relation("AcceptanceBatchStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
-  lockedBy          User?                     @relation("AcceptanceBatchLockedBy", fields: [lockedById], references: [id], onDelete: Restrict)
-  results           AcceptanceTestResult[]
-  reportsAsSource   AcceptanceReport[]        @relation("AcceptanceReportSourceBatch")
-  reportsAsFinal    AcceptanceReport[]        @relation("AcceptanceReportFinalBatch")
+  id                      String                             @id @default(cuid())
+  projectId               String                             @map("project_id")
+  acceptanceType          AcceptanceType                     @map("acceptance_type")
+  scopeType               AcceptanceScopeType                @map("scope_type")
+  scopeId                 String                             @map("scope_id")
+  templateVersionId       String                             @map("template_version_id")
+  status                  AcceptanceBatchStatus              @default(DRAFT)
+  retestOfBatchId         String?                            @map("retest_of_batch_id")
+  version                 Int                                @default(1)
+  createdById             String                             @map("created_by_id")
+  startedById             String?                            @map("started_by_id")
+  lockedById              String?                            @map("locked_by_id")
+  createdAt               DateTime                           @default(now()) @map("created_at")
+  startedAt               DateTime?                          @map("started_at")
+  lockedAt                DateTime?                          @map("locked_at")
+  updatedAt               DateTime                           @updatedAt @map("updated_at")
+  project                 Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  templateVersion         AcceptanceTemplateVersion          @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  retestOfBatch           AcceptanceBatch?                   @relation("AcceptanceBatchRetest", fields: [retestOfBatchId, projectId], references: [id, projectId], onDelete: Restrict)
+  retests                 AcceptanceBatch[]                  @relation("AcceptanceBatchRetest")
+  createdBy               User                               @relation("AcceptanceBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  startedBy               User?                              @relation("AcceptanceBatchStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  lockedBy                User?                              @relation("AcceptanceBatchLockedBy", fields: [lockedById], references: [id], onDelete: Restrict)
+  results                 AcceptanceTestResult[]
+  reportsAsSource         AcceptanceReport[]                 @relation("AcceptanceReportSourceBatch")
+  reportsAsFinal          AcceptanceReport[]                 @relation("AcceptanceReportFinalBatch")
   offlineDraftSubmissions OfflineAcceptanceDraftSubmission[]
 
   @@unique([id, projectId])
@@ -2933,27 +3476,27 @@ model AcceptanceTestResult {
 }
 
 model AcceptanceTestResultRevision {
-  id                      String                                 @id @default(cuid())
-  projectId               String                                 @map("project_id")
-  resultId                String                                 @map("result_id")
-  revisionNo              Int                                    @map("revision_no")
-  supersedesRevisionId    String?                                @map("supersedes_revision_id")
-  decision                AcceptanceDecision
-  measuredValue           String?                                @map("measured_value")
-  measuredUnit            String?                                @map("measured_unit")
-  note                    String?
-  correctionReason        String?                                @map("correction_reason")
-  createdById             String                                 @map("created_by_id")
-  createdAt               DateTime                               @default(now()) @map("created_at")
-  project                 Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  result                  AcceptanceTestResult                   @relation(fields: [resultId, projectId], references: [id, projectId], onDelete: Restrict)
-  supersedes              AcceptanceTestResultRevision?          @relation("AcceptanceResultRevisionSupersedes", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
-  corrections             AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
-  createdBy               User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  evidence                AcceptanceTestResultRevisionEvidence[]
-  acceptanceResidualItems ResidualItem[]                         @relation("AcceptanceResidualResultRevision")
-  offlineDraftBaselineSubmissions OfflineAcceptanceDraftSubmission[] @relation("OfflineAcceptanceDraftBaselineRevision")
-  offlineDraftReviews             OfflineAcceptanceDraftReview[]     @relation("OfflineAcceptanceDraftReviewedResultRevision")
+  id                              String                                 @id @default(cuid())
+  projectId                       String                                 @map("project_id")
+  resultId                        String                                 @map("result_id")
+  revisionNo                      Int                                    @map("revision_no")
+  supersedesRevisionId            String?                                @map("supersedes_revision_id")
+  decision                        AcceptanceDecision
+  measuredValue                   String?                                @map("measured_value")
+  measuredUnit                    String?                                @map("measured_unit")
+  note                            String?
+  correctionReason                String?                                @map("correction_reason")
+  createdById                     String                                 @map("created_by_id")
+  createdAt                       DateTime                               @default(now()) @map("created_at")
+  project                         Project                                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  result                          AcceptanceTestResult                   @relation(fields: [resultId, projectId], references: [id, projectId], onDelete: Restrict)
+  supersedes                      AcceptanceTestResultRevision?          @relation("AcceptanceResultRevisionSupersedes", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
+  corrections                     AcceptanceTestResultRevision[]         @relation("AcceptanceResultRevisionSupersedes")
+  createdBy                       User                                   @relation("AcceptanceResultRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  evidence                        AcceptanceTestResultRevisionEvidence[]
+  acceptanceResidualItems         ResidualItem[]                         @relation("AcceptanceResidualResultRevision")
+  offlineDraftBaselineSubmissions OfflineAcceptanceDraftSubmission[]     @relation("OfflineAcceptanceDraftBaselineRevision")
+  offlineDraftReviews             OfflineAcceptanceDraftReview[]         @relation("OfflineAcceptanceDraftReviewedResultRevision")
 
   @@unique([resultId, revisionNo])
   @@unique([id, projectId])
@@ -2980,32 +3523,32 @@ model AcceptanceTestResultRevisionEvidence {
 }
 
 model OfflineAcceptanceDraftSubmission {
-  id                     String                       @id @default(cuid())
-  projectId              String                       @map("project_id")
-  batchId                String                       @map("batch_id")
-  itemId                 String                       @map("item_id")
-  clientDraftId          String                       @map("client_draft_id")
-  baselineBatchVersion   Int                          @map("baseline_batch_version")
-  baselineResultRevisionId String?                     @map("baseline_result_revision_id")
-  decision               AcceptanceDecision
-  measuredValue          String?                      @map("measured_value")
-  measuredUnit           String?                      @map("measured_unit")
-  note                   String?
-  capturedAt             DateTime                     @map("captured_at")
-  submittedAt            DateTime                     @default(now()) @map("submitted_at")
-  submittedById          String                       @map("submitted_by_id")
-  payloadChecksum        String                       @map("payload_checksum")
-  serverResultSnapshot   Json?                        @map("server_result_snapshot")
-  status                 OfflineAcceptanceDraftStatus @default(PENDING_REVIEW)
-  version                Int                          @default(1)
-  createdAt              DateTime                     @default(now()) @map("created_at")
-  updatedAt              DateTime                     @updatedAt @map("updated_at")
-  project                Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  batch                  AcceptanceBatch              @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
-  item                   AcceptanceTestItemDefinition @relation(fields: [itemId], references: [id], onDelete: Restrict)
-  baselineResultRevision AcceptanceTestResultRevision? @relation("OfflineAcceptanceDraftBaselineRevision", fields: [baselineResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
-  submittedBy            User                         @relation("OfflineAcceptanceDraftSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
-  reviews                OfflineAcceptanceDraftReview[]
+  id                       String                         @id @default(cuid())
+  projectId                String                         @map("project_id")
+  batchId                  String                         @map("batch_id")
+  itemId                   String                         @map("item_id")
+  clientDraftId            String                         @map("client_draft_id")
+  baselineBatchVersion     Int                            @map("baseline_batch_version")
+  baselineResultRevisionId String?                        @map("baseline_result_revision_id")
+  decision                 AcceptanceDecision
+  measuredValue            String?                        @map("measured_value")
+  measuredUnit             String?                        @map("measured_unit")
+  note                     String?
+  capturedAt               DateTime                       @map("captured_at")
+  submittedAt              DateTime                       @default(now()) @map("submitted_at")
+  submittedById            String                         @map("submitted_by_id")
+  payloadChecksum          String                         @map("payload_checksum")
+  serverResultSnapshot     Json?                          @map("server_result_snapshot")
+  status                   OfflineAcceptanceDraftStatus   @default(PENDING_REVIEW)
+  version                  Int                            @default(1)
+  createdAt                DateTime                       @default(now()) @map("created_at")
+  updatedAt                DateTime                       @updatedAt @map("updated_at")
+  project                  Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  batch                    AcceptanceBatch                @relation(fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
+  item                     AcceptanceTestItemDefinition   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  baselineResultRevision   AcceptanceTestResultRevision?  @relation("OfflineAcceptanceDraftBaselineRevision", fields: [baselineResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  submittedBy              User                           @relation("OfflineAcceptanceDraftSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviews                  OfflineAcceptanceDraftReview[]
 
   @@unique([id, projectId])
   @@unique([projectId, clientDraftId])
@@ -3015,25 +3558,25 @@ model OfflineAcceptanceDraftSubmission {
 }
 
 model OfflineAcceptanceDraftReview {
-  id                       String                                @id @default(cuid())
-  projectId                String                                @map("project_id")
-  submissionId             String                                @map("submission_id")
-  reviewNo                 Int                                   @map("review_no")
+  id                       String                               @id @default(cuid())
+  projectId                String                               @map("project_id")
+  submissionId             String                               @map("submission_id")
+  reviewNo                 Int                                  @map("review_no")
   decision                 OfflineAcceptanceDraftReviewDecision
   reason                   String
-  correctedDecision        AcceptanceDecision?                   @map("corrected_decision")
-  correctedMeasuredValue   String?                               @map("corrected_measured_value")
-  correctedMeasuredUnit    String?                               @map("corrected_measured_unit")
-  correctedNote            String?                               @map("corrected_note")
-  evidenceFileIds          Json                                  @default("[]") @map("evidence_file_ids")
-  reviewedResultRevisionId String?                               @map("reviewed_result_revision_id")
-  reviewChecksum           String                                @map("review_checksum")
-  reviewedById             String                                @map("reviewed_by_id")
-  reviewedAt               DateTime                              @default(now()) @map("reviewed_at")
-  project                  Project                               @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  submission               OfflineAcceptanceDraftSubmission       @relation(fields: [submissionId, projectId], references: [id, projectId], onDelete: Restrict)
-  reviewedBy               User                                  @relation("OfflineAcceptanceDraftReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
-  reviewedResultRevision   AcceptanceTestResultRevision?          @relation("OfflineAcceptanceDraftReviewedResultRevision", fields: [reviewedResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  correctedDecision        AcceptanceDecision?                  @map("corrected_decision")
+  correctedMeasuredValue   String?                              @map("corrected_measured_value")
+  correctedMeasuredUnit    String?                              @map("corrected_measured_unit")
+  correctedNote            String?                              @map("corrected_note")
+  evidenceFileIds          Json                                 @default("[]") @map("evidence_file_ids")
+  reviewedResultRevisionId String?                              @map("reviewed_result_revision_id")
+  reviewChecksum           String                               @map("review_checksum")
+  reviewedById             String                               @map("reviewed_by_id")
+  reviewedAt               DateTime                             @default(now()) @map("reviewed_at")
+  project                  Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  submission               OfflineAcceptanceDraftSubmission     @relation(fields: [submissionId, projectId], references: [id, projectId], onDelete: Restrict)
+  reviewedBy               User                                 @relation("OfflineAcceptanceDraftReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewedResultRevision   AcceptanceTestResultRevision?        @relation("OfflineAcceptanceDraftReviewedResultRevision", fields: [reviewedResultRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
 
   @@unique([id, projectId])
   @@unique([submissionId, reviewNo])
@@ -3438,7 +3981,9 @@ model ProjectTemplateSnapshot {
   project                 Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   sourceTemplateVersion   ProjectTemplateVersion             @relation("ProjectSnapshotSourceTemplateVersion", fields: [sourceTemplateVersionId], references: [id], onDelete: Restrict)
   components              ProjectTemplateSnapshotComponent[]
+  closurePolicyVersions   ProjectClosurePolicyVersion[]      @relation("ClosurePolicySourceTemplateSnapshot")
 
+  @@unique([id, projectId])
   @@index([sourceTemplateVersionId, createdAt])
   @@map("project_template_snapshots")
 }
@@ -3495,6 +4040,8 @@ model DeliveryUnit {
   gateInstances                ProjectGateInstance[]
   createdBy                    User                                 @relation("DeliveryUnitCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy                    User                                 @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  retrospectiveContributions   ProjectRetrospectiveContribution[]   @relation("RetrospectiveContributionDeliveryUnit")
+  knowledgeReuseRecords        KnowledgeReuseRecord[]               @relation("KnowledgeReuseDeliveryUnit")
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -3847,6 +4394,7 @@ model ProjectGateDefinition {
   projectId                 String                           @map("project_id")
   sourceSnapshotComponentId String                           @map("source_snapshot_component_id")
   projectStageId            String                           @map("project_stage_id")
+  revision                  Int                              @default(1)
   code                      String
   name                      String
   scope                     GateScope
@@ -3859,8 +4407,9 @@ model ProjectGateDefinition {
   sourceSnapshotComponent   ProjectTemplateSnapshotComponent @relation(fields: [sourceSnapshotComponentId], references: [id], onDelete: Restrict)
   projectStage              ProjectStage                     @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
   instances                 ProjectGateInstance[]
+  closurePolicySources      ProjectClosurePolicyVersion[]    @relation("ClosurePolicySourceGateDefinition")
 
-  @@unique([projectId, code])
+  @@unique([projectId, code, revision])
   @@unique([id, projectId])
   @@index([projectId, projectStageId])
   @@index([sourceSnapshotComponentId])
@@ -3868,27 +4417,32 @@ model ProjectGateDefinition {
 }
 
 model ProjectGateInstance {
-  id                  String                   @id @default(cuid())
-  projectId           String                   @map("project_id")
-  gateDefinitionId    String                   @map("gate_definition_id")
-  projectStageId      String                   @map("project_stage_id")
-  scope               GateScope
-  deliveryUnitId      String?                  @map("delivery_unit_id")
-  moduleId            String?                  @map("module_id")
-  checkRunSequence    Int                      @default(0) @map("check_run_sequence")
-  version             Int                      @default(1)
-  createdById         String                   @map("created_by_id")
-  updatedById         String                   @map("updated_by_id")
-  createdAt           DateTime                 @default(now()) @map("created_at")
-  updatedAt           DateTime                 @updatedAt @map("updated_at")
-  project             Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  gateDefinition      ProjectGateDefinition    @relation(fields: [gateDefinitionId, projectId], references: [id, projectId], onDelete: Restrict)
-  projectStage        ProjectStage             @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
-  deliveryUnit        DeliveryUnit?            @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
-  module              ProjectModule?           @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
-  checkSnapshots      GateCheckSnapshot[]
-  submissions         GateSubmission[]
-  conditionalReleases GateConditionalRelease[]
+  id                          String                       @id @default(cuid())
+  projectId                   String                       @map("project_id")
+  gateDefinitionId            String                       @map("gate_definition_id")
+  projectStageId              String                       @map("project_stage_id")
+  scope                       GateScope
+  deliveryUnitId              String?                      @map("delivery_unit_id")
+  moduleId                    String?                      @map("module_id")
+  checkRunSequence            Int                          @default(0) @map("check_run_sequence")
+  version                     Int                          @default(1)
+  createdById                 String                       @map("created_by_id")
+  updatedById                 String                       @map("updated_by_id")
+  createdAt                   DateTime                     @default(now()) @map("created_at")
+  updatedAt                   DateTime                     @updatedAt @map("updated_at")
+  closurePolicyVersionId      String?                      @map("closure_policy_version_id")
+  archiveSourceFormulaVersion ArchiveSourceFormulaVersion? @map("archive_source_formula_version")
+  closurePolicyChecksum       String?                      @map("closure_policy_checksum")
+  project                     Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateDefinition              ProjectGateDefinition        @relation(fields: [gateDefinitionId, projectId], references: [id, projectId], onDelete: Restrict)
+  projectStage                ProjectStage                 @relation(fields: [projectStageId, projectId], references: [id, projectId], onDelete: Restrict)
+  deliveryUnit                DeliveryUnit?                @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  module                      ProjectModule?               @relation(fields: [moduleId, projectId], references: [id, projectId], onDelete: Restrict)
+  checkSnapshots              GateCheckSnapshot[]
+  submissions                 GateSubmission[]
+  conditionalReleases         GateConditionalRelease[]
+  closurePolicyVersion        ProjectClosurePolicyVersion? @relation("ClosurePolicyGateInstances", fields: [closurePolicyVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  closureRecords              ProjectClosureRecord[]       @relation("ClosureRecordGateInstance")
 
   @@unique([id, projectId])
   @@index([projectId, projectStageId, scope])
@@ -3899,23 +4453,28 @@ model ProjectGateInstance {
 }
 
 model GateCheckSnapshot {
-  id                  String              @id @default(cuid())
-  projectId           String              @map("project_id")
-  gateInstanceId      String              @map("gate_instance_id")
-  sequence            Int
-  status              GateCheckStatus
-  definitionSnapshot  Json                @map("definition_snapshot")
-  scopeSnapshot       Json                @map("scope_snapshot")
-  checkerBindingsJson Json                @map("checker_bindings_json")
-  reason              String
-  inputChecksum       String              @map("input_checksum")
-  resultChecksum      String              @map("result_checksum")
-  checkedById         String              @map("checked_by_id")
-  checkedAt           DateTime            @default(now()) @map("checked_at")
-  project             Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  gateInstance        ProjectGateInstance @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
-  results             GateCheckResult[]
-  submissions         GateSubmission[]
+  id                          String                       @id @default(cuid())
+  projectId                   String                       @map("project_id")
+  gateInstanceId              String                       @map("gate_instance_id")
+  sequence                    Int
+  status                      GateCheckStatus
+  definitionSnapshot          Json                         @map("definition_snapshot")
+  scopeSnapshot               Json                         @map("scope_snapshot")
+  checkerBindingsJson         Json                         @map("checker_bindings_json")
+  reason                      String
+  inputChecksum               String                       @map("input_checksum")
+  resultChecksum              String                       @map("result_checksum")
+  checkedById                 String                       @map("checked_by_id")
+  checkedAt                   DateTime                     @default(now()) @map("checked_at")
+  closurePolicyVersionId      String?                      @map("closure_policy_version_id")
+  archiveSourceFormulaVersion ArchiveSourceFormulaVersion? @map("archive_source_formula_version")
+  closurePolicyChecksum       String?                      @map("closure_policy_checksum")
+  project                     Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateInstance                ProjectGateInstance          @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
+  results                     GateCheckResult[]
+  submissions                 GateSubmission[]
+  closurePolicyVersion        ProjectClosurePolicyVersion? @relation("ClosurePolicyGateSnapshots", fields: [closurePolicyVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  closureRecords              ProjectClosureRecord[]       @relation("ClosureRecordGateSnapshot")
 
   @@unique([id, projectId])
   @@unique([gateInstanceId, sequence])
@@ -3945,38 +4504,43 @@ model GateCheckResult {
 }
 
 model GateSubmission {
-  id                   String                            @id @default(cuid())
-  projectId            String                            @map("project_id")
-  gateInstanceId       String                            @map("gate_instance_id")
-  gateCheckSnapshotId  String                            @map("gate_check_snapshot_id")
-  previousSubmissionId String?                           @map("previous_submission_id")
-  sequence             Int
-  status               GateSubmissionStatus              @default(PENDING)
-  approvalMode         GateApprovalMode                  @map("approval_mode")
-  approverRolesJson    Json                              @map("approver_roles_json")
-  submittedReason      String                            @map("submitted_reason")
-  submittedById        String                            @map("submitted_by_id")
-  submittedAt          DateTime                          @default(now()) @map("submitted_at")
-  withdrawnById        String?                           @map("withdrawn_by_id")
-  withdrawnAt          DateTime?                         @map("withdrawn_at")
-  withdrawalReason     String?                           @map("withdrawal_reason")
-  decidedAt            DateTime?                         @map("decided_at")
-  version              Int                               @default(1)
-  createdAt            DateTime                          @default(now()) @map("created_at")
-  updatedAt            DateTime                          @updatedAt @map("updated_at")
-  project              Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  gateInstance         ProjectGateInstance               @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
-  gateCheckSnapshot    GateCheckSnapshot                 @relation(fields: [gateCheckSnapshotId, projectId], references: [id, projectId], onDelete: Restrict)
-  previousSubmission   GateSubmission?                   @relation("GateSubmissionResubmission", fields: [previousSubmissionId], references: [id], onDelete: Restrict)
-  resubmissions        GateSubmission[]                  @relation("GateSubmissionResubmission")
-  submittedBy          User                              @relation("GateSubmissionSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
-  withdrawnBy          User?                             @relation("GateSubmissionWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict)
-  approvers            GateSubmissionApprover[]
-  approvals            GateApproval[]
-  events               GateSubmissionEvent[]
-  conditionalRelease   GateConditionalRelease?
-  planningBaselines    PlanningBaseline[]                @relation("PlanningBaselineSourceGateSubmission")
-  documentReferences   GateSubmissionDocumentReference[]
+  id                          String                            @id @default(cuid())
+  projectId                   String                            @map("project_id")
+  gateInstanceId              String                            @map("gate_instance_id")
+  gateCheckSnapshotId         String                            @map("gate_check_snapshot_id")
+  previousSubmissionId        String?                           @map("previous_submission_id")
+  sequence                    Int
+  status                      GateSubmissionStatus              @default(PENDING)
+  approvalMode                GateApprovalMode                  @map("approval_mode")
+  approverRolesJson           Json                              @map("approver_roles_json")
+  submittedReason             String                            @map("submitted_reason")
+  submittedById               String                            @map("submitted_by_id")
+  submittedAt                 DateTime                          @default(now()) @map("submitted_at")
+  withdrawnById               String?                           @map("withdrawn_by_id")
+  withdrawnAt                 DateTime?                         @map("withdrawn_at")
+  withdrawalReason            String?                           @map("withdrawal_reason")
+  decidedAt                   DateTime?                         @map("decided_at")
+  version                     Int                               @default(1)
+  createdAt                   DateTime                          @default(now()) @map("created_at")
+  updatedAt                   DateTime                          @updatedAt @map("updated_at")
+  closurePolicyVersionId      String?                           @map("closure_policy_version_id")
+  archiveSourceFormulaVersion ArchiveSourceFormulaVersion?      @map("archive_source_formula_version")
+  closurePolicyChecksum       String?                           @map("closure_policy_checksum")
+  project                     Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  gateInstance                ProjectGateInstance               @relation(fields: [gateInstanceId, projectId], references: [id, projectId], onDelete: Restrict)
+  gateCheckSnapshot           GateCheckSnapshot                 @relation(fields: [gateCheckSnapshotId, projectId], references: [id, projectId], onDelete: Restrict)
+  previousSubmission          GateSubmission?                   @relation("GateSubmissionResubmission", fields: [previousSubmissionId], references: [id], onDelete: Restrict)
+  resubmissions               GateSubmission[]                  @relation("GateSubmissionResubmission")
+  submittedBy                 User                              @relation("GateSubmissionSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  withdrawnBy                 User?                             @relation("GateSubmissionWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict)
+  approvers                   GateSubmissionApprover[]
+  approvals                   GateApproval[]
+  events                      GateSubmissionEvent[]
+  conditionalRelease          GateConditionalRelease?
+  planningBaselines           PlanningBaseline[]                @relation("PlanningBaselineSourceGateSubmission")
+  documentReferences          GateSubmissionDocumentReference[]
+  closurePolicyVersion        ProjectClosurePolicyVersion?      @relation("ClosurePolicyGateSubmissions", fields: [closurePolicyVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  closureRecords              ProjectClosureRecord[]            @relation("ClosureRecordGateSubmission")
 
   @@unique([id, projectId])
   @@unique([gateInstanceId, sequence])
@@ -4259,40 +4823,42 @@ model ProjectAlertScan {
 }
 
 model Issue {
-  id                      String                  @id @default(cuid())
-  projectId               String                  @map("project_id")
+  id                      String                            @id @default(cuid())
+  projectId               String                            @map("project_id")
   title                   String
-  confirmedText           String                  @map("confirmed_text")
-  sourceType              IssueSourceType         @default(PROJECT) @map("source_type")
+  confirmedText           String                            @map("confirmed_text")
+  sourceType              IssueSourceType                   @default(PROJECT) @map("source_type")
   category                IssueCategory
   severity                IssueSeverity
-  phenomenonDescription   String?                 @map("phenomenon_description")
-  rootCauseCategory       IssueRootCauseCategory? @map("root_cause_category")
-  rootCauseDescription    String?                 @map("root_cause_description")
-  status                  IssueStatus             @default(PENDING_ACCEPTANCE)
-  statusChangedAt         DateTime                @default(now()) @map("status_changed_at")
-  closedAt                DateTime?               @map("closed_at")
-  closedById              String?                 @map("closed_by_id")
-  verificationEvidence    String?                 @map("verification_evidence")
-  ownerMembershipId       String?                 @map("owner_membership_id")
-  verifierMembershipId    String?                 @map("verifier_membership_id")
-  dueDate                 DateTime?               @map("due_date") @db.Date
-  version                 Int                     @default(1)
-  createdById             String                  @map("created_by_id")
-  updatedById             String                  @map("updated_by_id")
-  createdAt               DateTime                @default(now()) @map("created_at")
-  updatedAt               DateTime                @updatedAt @map("updated_at")
-  project                 Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  createdBy               User                    @relation("IssueCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy               User                    @relation("IssueUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  closedBy                User?                   @relation("IssueClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
-  ownerMembership         ProjectMember?          @relation("IssueOwnerMembership", fields: [ownerMembershipId], references: [id], onDelete: Restrict)
-  verifierMembership      ProjectMember?          @relation("IssueVerifierMembership", fields: [verifierMembershipId], references: [id], onDelete: Restrict)
+  phenomenonDescription   String?                           @map("phenomenon_description")
+  rootCauseCategory       IssueRootCauseCategory?           @map("root_cause_category")
+  rootCauseDescription    String?                           @map("root_cause_description")
+  status                  IssueStatus                       @default(PENDING_ACCEPTANCE)
+  statusChangedAt         DateTime                          @default(now()) @map("status_changed_at")
+  closedAt                DateTime?                         @map("closed_at")
+  closedById              String?                           @map("closed_by_id")
+  verificationEvidence    String?                           @map("verification_evidence")
+  ownerMembershipId       String?                           @map("owner_membership_id")
+  verifierMembershipId    String?                           @map("verifier_membership_id")
+  dueDate                 DateTime?                         @map("due_date") @db.Date
+  version                 Int                               @default(1)
+  createdById             String                            @map("created_by_id")
+  updatedById             String                            @map("updated_by_id")
+  createdAt               DateTime                          @default(now()) @map("created_at")
+  updatedAt               DateTime                          @updatedAt @map("updated_at")
+  project                 Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy               User                              @relation("IssueCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy               User                              @relation("IssueUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  closedBy                User?                             @relation("IssueClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  ownerMembership         ProjectMember?                    @relation("IssueOwnerMembership", fields: [ownerMembershipId], references: [id], onDelete: Restrict)
+  verifierMembership      ProjectMember?                    @relation("IssueVerifierMembership", fields: [verifierMembershipId], references: [id], onDelete: Restrict)
   tags                    IssueTag[]
   history                 IssueHistory[]
-  relations               IssueRelation[]         @relation("IssueSourceRelations")
-  blockerRelations        IssueRelation[]         @relation("IssueBlockerRelations")
-  acceptanceResidualItems ResidualItem[]          @relation("AcceptanceResidualIssue")
+  relations               IssueRelation[]                   @relation("IssueSourceRelations")
+  blockerRelations        IssueRelation[]                   @relation("IssueBlockerRelations")
+  acceptanceResidualItems ResidualItem[]                    @relation("AcceptanceResidualIssue")
+  retrospectiveSources    ProjectRetrospectiveIssueSource[] @relation("RetrospectiveIssueSource")
+  knowledgeSources        KnowledgeEntrySource[]            @relation("KnowledgeIssueSource")
 
   @@unique([id, projectId])
   @@index([projectId, status, severity, updatedAt])
@@ -4343,20 +4909,23 @@ model IssueTag {
 }
 
 model IssueHistory {
-  id           String                @id @default(cuid())
-  projectId    String                @map("project_id")
-  issueId      String                @map("issue_id")
-  sequence     Int
-  eventType    IssueHistoryEventType @map("event_type")
-  reason       String
-  snapshotJson Json                  @map("snapshot_json")
-  actorId      String                @map("actor_id")
-  createdAt    DateTime              @default(now()) @map("created_at")
-  issue        Issue                 @relation(fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
-  project      Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  actor        User                  @relation("IssueHistoryActor", fields: [actorId], references: [id], onDelete: Restrict)
+  id                   String                            @id @default(cuid())
+  projectId            String                            @map("project_id")
+  issueId              String                            @map("issue_id")
+  sequence             Int
+  eventType            IssueHistoryEventType             @map("event_type")
+  reason               String
+  snapshotJson         Json                              @map("snapshot_json")
+  actorId              String                            @map("actor_id")
+  createdAt            DateTime                          @default(now()) @map("created_at")
+  issue                Issue                             @relation(fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+  project              Project                           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  actor                User                              @relation("IssueHistoryActor", fields: [actorId], references: [id], onDelete: Restrict)
+  retrospectiveSources ProjectRetrospectiveIssueSource[] @relation("RetrospectiveIssueHistorySource")
+  knowledgeSources     KnowledgeEntrySource[]            @relation("KnowledgeIssueHistorySource")
 
   @@unique([issueId, sequence])
+  @@unique([id, projectId])
   @@index([projectId, createdAt])
   @@index([actorId, createdAt])
   @@map("issue_histories")
@@ -4794,28 +5363,31 @@ model ScheduleTaskForecast {
 }
 
 model ProjectMember {
-  id                            String                         @id @default(cuid())
-  projectId                     String                         @map("project_id")
-  userId                        String                         @map("user_id")
-  projectRole                   ProjectRole                    @map("project_role")
-  departmentId                  String?                        @map("department_id")
-  assignedById                  String                         @map("assigned_by_id")
-  joinedAt                      DateTime                       @default(now()) @map("joined_at")
-  leftAt                        DateTime?                      @map("left_at")
-  leftById                      String?                        @map("left_by_id")
-  version                       Int                            @default(1)
-  project                       Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  user                          User                           @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Restrict)
-  assignedBy                    User                           @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
-  leftBy                        User?                          @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
+  id                            String                             @id @default(cuid())
+  projectId                     String                             @map("project_id")
+  userId                        String                             @map("user_id")
+  projectRole                   ProjectRole                        @map("project_role")
+  departmentId                  String?                            @map("department_id")
+  assignedById                  String                             @map("assigned_by_id")
+  joinedAt                      DateTime                           @default(now()) @map("joined_at")
+  leftAt                        DateTime?                          @map("left_at")
+  leftById                      String?                            @map("left_by_id")
+  version                       Int                                @default(1)
+  project                       Project                            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  user                          User                               @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Restrict)
+  assignedBy                    User                               @relation("ProjectMemberAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+  leftBy                        User?                              @relation("ProjectMemberLeftBy", fields: [leftById], references: [id], onDelete: Restrict)
   ownedResponsibilityPackages   ResponsibilityPackage[]
   assignedPlanningTasks         PlanningTask[]
   resourceLoadPersonProjections ResourceLoadPersonProjection[]
-  ownedIssues                   Issue[]                        @relation("IssueOwnerMembership")
-  verifiedIssues                Issue[]                        @relation("IssueVerifierMembership")
-  ownedResidualItems            ResidualItem[]                 @relation("ResidualItemOwnerMembership")
-  verifiedResidualItems         ResidualItem[]                 @relation("ResidualItemVerifierMembership")
+  ownedIssues                   Issue[]                            @relation("IssueOwnerMembership")
+  verifiedIssues                Issue[]                            @relation("IssueVerifierMembership")
+  ownedResidualItems            ResidualItem[]                     @relation("ResidualItemOwnerMembership")
+  verifiedResidualItems         ResidualItem[]                     @relation("ResidualItemVerifierMembership")
   procurementTrackingLines      ProcurementTrackingLine[]
+  retrospectiveContributions    ProjectRetrospectiveContribution[] @relation("RetrospectiveContributionMember")
+  retrospectiveParticipants     ProjectRetrospectiveParticipant[]  @relation("RetrospectiveParticipantMember")
+  knowledgeReuseConfirmations   KnowledgeReuseRecord[]             @relation("KnowledgeReuseConfirmedBy")
 
   @@unique([id, projectId])
   @@index([projectId, leftAt])
