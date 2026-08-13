@@ -25,6 +25,11 @@ import {
   readProjectArchiveSources,
   type ArchiveSourceClient
 } from "@/modules/archives/application/archive-source-reader";
+import { readClosureGateFacts } from "./closure-gate-facts-reader";
+import {
+  CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION,
+  buildClosurePolicyVersionFacts
+} from "../domain/project-closure-policy";
 import type { ProjectStageExecutionStatus } from "@/modules/projects/domain/project-stage";
 
 const GATE_SCOPES = ["PROJECT", "DELIVERY_UNIT", "MODULE"] as const;
@@ -62,6 +67,156 @@ export class GateServiceError extends Error {
     super(message);
     this.name = "GateServiceError";
   }
+}
+
+export type ExecutableGateAuthority = {
+  definitionId: string;
+  closurePolicyVersionId: string | null;
+  closurePolicyChecksum: string | null;
+  archiveSourceFormulaVersion: "ARCHIVE.SOURCE@2" | null;
+};
+
+type ExecutableDefinition = {
+  id: string;
+  projectId: string;
+  code: string;
+  checkerBindingsJson?: unknown;
+};
+type ExecutablePolicyVersion = {
+  id: string;
+  status: string;
+  sourceGateDefinitionId: string;
+  archiveCheckerCode: string;
+  archiveCheckerVersion: number;
+  retrospectiveCheckerCode: string;
+  retrospectiveCheckerVersion: number;
+  archiveSourceFormulaVersion: string;
+  bindingChecksum: string;
+  policyChecksum: string;
+  sourceTemplateSnapshotId: string;
+  selfReferenceExclusionVersion: string;
+};
+type ExecutablePolicy = {
+  id: string;
+  projectId: string;
+  status: string;
+  currentVersionId: string | null;
+  currentVersion: ExecutablePolicyVersion | null;
+};
+type ExecutableInstance = {
+  id: string;
+  closurePolicyVersionId: string | null;
+  archiveSourceFormulaVersion: string | null;
+  closurePolicyChecksum: string | null;
+};
+type ExecutableGateClient = {
+  projectGateDefinition: { findFirst(input: unknown): Promise<unknown> };
+  projectClosurePolicy: { findUnique(input: unknown): Promise<unknown> };
+  projectGateInstance?: { findFirst(input: unknown): Promise<unknown> };
+};
+
+/**
+ * G9 is revisioned. Its policy's exact source definition, not its code or
+ * maximum revision, is the only executable authority after an APM-104 upgrade.
+ */
+export async function assertExecutableGateDefinition(
+  client: ExecutableGateClient,
+  input: { projectId: string; definitionId: string; instanceId?: string }
+): Promise<ExecutableGateAuthority> {
+  const definition = (await client.projectGateDefinition.findFirst({
+    where: { id: input.definitionId, projectId: input.projectId },
+    select: { id: true, projectId: true, code: true, checkerBindingsJson: true }
+  })) as ExecutableDefinition | null;
+  if (!definition) {
+    throw new GateServiceError("GATE_DEFINITION_NOT_FOUND", "项目 Gate 定义不存在。", 404);
+  }
+  if (definition.code !== "G9") {
+    return {
+      definitionId: definition.id,
+      closurePolicyVersionId: null,
+      closurePolicyChecksum: null,
+      archiveSourceFormulaVersion: null
+    };
+  }
+  const policy = (await client.projectClosurePolicy.findUnique({
+    where: { projectId: input.projectId },
+    include: { currentVersion: true }
+  })) as ExecutablePolicy | null;
+  const version = policy?.currentVersion;
+  if (!policy || policy.status !== "ACTIVE" || !policy.currentVersionId || !version) {
+    throw new GateServiceError(
+      "CLOSURE_POLICY_VERSION_REQUIRED",
+      "该 G9 没有可执行的关项策略版本。",
+      409
+    );
+  }
+  if (
+    version.status !== "ACTIVE" ||
+    version.sourceGateDefinitionId !== definition.id ||
+    version.archiveCheckerCode !== "CLOSURE.ARCHIVE.G9" ||
+    version.archiveCheckerVersion !== 2 ||
+    version.retrospectiveCheckerCode !== "CLOSURE.RETROSPECTIVE.G9" ||
+    version.retrospectiveCheckerVersion !== 1 ||
+    version.archiveSourceFormulaVersion !== "V2"
+  ) {
+    throw new GateServiceError(
+      "CLOSURE_POLICY_STALE",
+      "该 G9 仅保留为历史记录，必须使用当前关项策略定义。",
+      409
+    );
+  }
+  const checkerBindings = parseFrozenCheckerBindings(definition.checkerBindingsJson);
+  try {
+    const expectedFacts = buildClosurePolicyVersionFacts({
+      projectId: input.projectId,
+      sourceTemplateSnapshotId: version.sourceTemplateSnapshotId,
+      sourceGateDefinitionId: definition.id,
+      checkerBindings
+    });
+    if (
+      expectedFacts.bindingChecksum !== version.bindingChecksum ||
+      expectedFacts.policyChecksum !== version.policyChecksum ||
+      version.selfReferenceExclusionVersion !== CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION
+    ) {
+      throw new Error("policy checksum mismatch");
+    }
+  } catch {
+    throw new GateServiceError(
+      "CLOSURE_POLICY_BINDING_MISMATCH",
+      "G9 定义与冻结关项策略绑定不一致。",
+      409
+    );
+  }
+  if (input.instanceId) {
+    const instance = (await client.projectGateInstance?.findFirst({
+      where: { id: input.instanceId, projectId: input.projectId, gateDefinitionId: definition.id },
+      select: {
+        id: true,
+        closurePolicyVersionId: true,
+        archiveSourceFormulaVersion: true,
+        closurePolicyChecksum: true
+      }
+    })) as ExecutableInstance | null | undefined;
+    if (!instance || instance.closurePolicyVersionId !== version.id) {
+      throw new GateServiceError("CLOSURE_POLICY_STALE", "G9 实例未绑定当前关项策略。", 409);
+    }
+    if (
+      instance.archiveSourceFormulaVersion !== "V2" ||
+      instance.closurePolicyChecksum !== version.policyChecksum
+    ) {
+      throw new GateServiceError(
+        "CLOSURE_POLICY_BINDING_MISMATCH",
+        "G9 实例的冻结关项策略绑定不一致。",
+        409
+      );
+    }
+  }
+  return {
+    definitionId: definition.id,
+    closurePolicyVersionId: version.id,
+    closurePolicyChecksum: version.policyChecksum,
+    archiveSourceFormulaVersion: "ARCHIVE.SOURCE@2"
+  };
 }
 
 function stableText(value: unknown, field: string, maximumLength = 191): string {
@@ -324,6 +479,14 @@ function needsProcurementFacts(bindings: readonly FrozenGateCheckerBinding[]) {
 
 function needsProjectArchiveFacts(bindings: readonly FrozenGateCheckerBinding[]) {
   return bindings.some((binding) => binding.code === "CLOSURE.ARCHIVE.G9" && binding.version === 1);
+}
+
+function needsClosureV2Facts(bindings: readonly FrozenGateCheckerBinding[]) {
+  return bindings.some(
+    (binding) =>
+      (binding.code === "CLOSURE.ARCHIVE.G9" && binding.version === 2) ||
+      (binding.code === "CLOSURE.RETROSPECTIVE.G9" && binding.version === 1)
+  );
 }
 
 function acceptanceIssueBinding(bindings: readonly FrozenGateCheckerBinding[]) {
@@ -952,6 +1115,10 @@ export async function createGateInstance(
           422
         );
       }
+      await assertExecutableGateDefinition(client, {
+        projectId: input.projectId,
+        definitionId: definition.id
+      });
       await assertScopeTargetRelations(client, input.projectId, target);
       const instance = await client.projectGateInstance.create({
         data: {
@@ -994,22 +1161,55 @@ export async function createGateInstance(
 }
 
 export async function listProjectGates(projectId: string) {
-  const definitions = await db.projectGateDefinition.findMany({
-    where: { projectId },
-    orderBy: { code: "asc" },
-    include: {
-      instances: {
-        orderBy: { createdAt: "asc" },
-        include: {
-          checkSnapshots: {
-            orderBy: { sequence: "desc" },
-            include: { results: { orderBy: { position: "asc" } } }
+  const [definitions, policy] = await Promise.all([
+    db.projectGateDefinition.findMany({
+      where: { projectId },
+      orderBy: [{ code: "asc" }, { revision: "asc" }],
+      include: {
+        instances: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            checkSnapshots: {
+              orderBy: { sequence: "desc" },
+              include: { results: { orderBy: { position: "asc" } } }
+            }
           }
         }
       }
-    }
+    }),
+    db.projectClosurePolicy.findUnique({
+      where: { projectId },
+      include: { currentVersion: true }
+    })
+  ]);
+  const activeG9DefinitionId =
+    policy?.status === "ACTIVE" && policy.currentVersion?.status === "ACTIVE"
+      ? policy.currentVersion.sourceGateDefinitionId
+      : null;
+  const toView = (
+    definition: (typeof definitions)[number],
+    executionState: "ACTIVE" | "LEGACY_HISTORY"
+  ) => ({
+    ...definition,
+    executionState,
+    allowedActions:
+      executionState === "ACTIVE"
+        ? [
+            ...(definition.scope === "PROJECT" ? [] : ["CREATE_INSTANCE"]),
+            "RUN_CHECKS",
+            "SUBMIT",
+            "RESUBMIT",
+            "APPROVE"
+          ]
+        : ([] as string[])
   });
-  return { definitions };
+  const activeDefinitions = definitions
+    .filter((definition) => definition.code !== "G9" || definition.id === activeG9DefinitionId)
+    .map((definition) => toView(definition, "ACTIVE"));
+  const legacyDefinitions = definitions
+    .filter((definition) => definition.code === "G9" && definition.id !== activeG9DefinitionId)
+    .map((definition) => toView(definition, "LEGACY_HISTORY"));
+  return { activeDefinitions, legacyDefinitions };
 }
 
 export async function runGateChecks(
@@ -1034,6 +1234,11 @@ export async function runGateChecks(
       if (!instance) {
         throw new GateServiceError("GATE_INSTANCE_NOT_FOUND", "项目 Gate 实例不存在。", 404);
       }
+      const authority = await assertExecutableGateDefinition(client, {
+        projectId: input.projectId,
+        definitionId: instance.gateDefinitionId,
+        instanceId: instance.id
+      });
       const project = await client.project.findUnique({ where: { id: input.projectId } });
       if (!project) throw new GateServiceError("GATE_PROJECT_NOT_FOUND", "项目不存在。", 404);
       assertProjectWritable(project);
@@ -1088,6 +1293,12 @@ export async function runGateChecks(
               client,
               projectId: input.projectId,
               scope: checkerScope
+            })
+          : {}),
+        ...(needsClosureV2Facts(checkerBindings)
+          ? await readClosureGateFacts({
+              projectId: input.projectId,
+              client: client as never
             })
           : {}),
         ...(acceptanceIssueBinding(checkerBindings)
@@ -1152,7 +1363,11 @@ export async function runGateChecks(
           inputChecksum: run.inputChecksum,
           resultChecksum: run.resultChecksum,
           checkedById: input.actorId,
-          checkedAt
+          checkedAt,
+          closurePolicyVersionId: authority.closurePolicyVersionId,
+          archiveSourceFormulaVersion:
+            authority.archiveSourceFormulaVersion === "ARCHIVE.SOURCE@2" ? "V2" : null,
+          closurePolicyChecksum: authority.closurePolicyChecksum
         }
       });
       await client.gateCheckResult.createMany({

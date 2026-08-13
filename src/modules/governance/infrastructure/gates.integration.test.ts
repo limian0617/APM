@@ -768,14 +768,19 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
     expect(forbidden.status).toBe(403);
     expect(authorized.status).toBe(200);
     await expect(authorized.json()).resolves.toMatchObject({
-      definitions: expect.arrayContaining([
+      activeDefinitions: expect.arrayContaining([
         expect.objectContaining({ projectId: local.project.id, code: "G.PROJECT" })
-      ])
+      ]),
+      legacyDefinitions: []
     });
     const listResponse = await listProjectGatesRoute(readRequest(url, ids.admin), context);
-    const body = (await listResponse.json()) as { definitions: Array<{ projectId: string }> };
-    expect(body.definitions).toHaveLength(5);
-    expect(body.definitions).toEqual(
+    const body = (await listResponse.json()) as {
+      activeDefinitions: Array<{ projectId: string; executionState: string }>;
+      legacyDefinitions: Array<{ projectId: string }>;
+    };
+    expect(body.activeDefinitions).toHaveLength(5);
+    expect(body.legacyDefinitions).toEqual([]);
+    expect(body.activeDefinitions).toEqual(
       expect.not.arrayContaining([expect.objectContaining({ projectId: foreign.project.id })])
     );
   });
