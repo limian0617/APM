@@ -103,4 +103,64 @@ describe("archive source reader V2", () => {
     expect(afterClosure.sourceWatermark).toBe(before.sourceWatermark);
     expect(afterDocumentChange.sourceWatermark).not.toBe(before.sourceWatermark);
   });
+
+  it("adds exactly the approved current retrospective version and excludes drafts", async () => {
+    const readRetrospective = vi.fn().mockResolvedValue({
+      id: "retrospective-version-2",
+      projectId: "project-1",
+      versionNo: 2,
+      status: "APPROVED",
+      retrospectiveId: "retrospective-1",
+      contentChecksum: "a".repeat(64),
+      retrospectiveInputArchiveVersionId: "archive-a",
+      retrospectiveInputWatermark: "b".repeat(64)
+    });
+    const sources = await readProjectArchiveSourcesV2({
+      projectId: "project-1",
+      client: {
+        gateSubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        projectRetrospective: {
+          findUnique: vi.fn().mockResolvedValue({
+            currentVersionId: "retrospective-version-2",
+            latestApprovedVersionId: "retrospective-version-2"
+          })
+        },
+        projectRetrospectiveVersion: { findUnique: readRetrospective }
+      },
+      readLegacySources: vi.fn().mockResolvedValue([])
+    });
+
+    expect(sources).toContainEqual(
+      expect.objectContaining({
+        sourceType: "PROJECT_RETROSPECTIVE_VERSION",
+        sourceId: "retrospective-version-2",
+        sourceVersion: "2",
+        snapshotJson: expect.objectContaining({ contentChecksum: "a".repeat(64) })
+      })
+    );
+    expect(readRetrospective).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id_projectId: { id: "retrospective-version-2", projectId: "project-1" } }
+      })
+    );
+  });
+
+  it("does not emit an unapproved or stale retrospective source", async () => {
+    const sources = await readProjectArchiveSourcesV2({
+      projectId: "project-1",
+      client: {
+        gateSubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        projectRetrospective: {
+          findUnique: vi.fn().mockResolvedValue({
+            currentVersionId: "draft-version",
+            latestApprovedVersionId: "approved-version"
+          })
+        },
+        projectRetrospectiveVersion: { findUnique: vi.fn() }
+      },
+      readLegacySources: vi.fn().mockResolvedValue([])
+    });
+
+    expect(sources).toEqual([]);
+  });
 });

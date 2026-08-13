@@ -682,6 +682,21 @@ export const ACCEPTANCE_CONFIRMATION_AUDIT_FIELDS = [
   "reason"
 ] as const;
 
+export const PROJECT_RETROSPECTIVE_AUDIT_FIELDS = [
+  "projectId",
+  "retrospectiveId",
+  "retrospectiveVersionId",
+  "archiveVersionId",
+  "versionNo",
+  "status",
+  "contentChecksum",
+  "retrospectiveInputWatermark",
+  "decision",
+  "reviewerId",
+  "reason",
+  "version"
+] as const;
+
 export const ISSUE_AUDIT_FIELDS = [
   "projectId",
   "issueId",

@@ -29,6 +29,12 @@ export async function readProjectArchiveSourcesV2(input: {
     gateSubmission: {
       findMany(input: unknown): Promise<ReadonlyArray<{ id: string }>>;
     };
+    projectRetrospective?: {
+      findUnique(input: unknown): Promise<Record<string, any> | null>;
+    };
+    projectRetrospectiveVersion?: {
+      findUnique(input: unknown): Promise<Record<string, any> | null>;
+    };
   };
   readLegacySources: (projectId: string) => Promise<readonly ArchiveManifestSourceInput[]>;
 }): Promise<ArchiveManifestSourceInput[]> {
@@ -40,5 +46,43 @@ export async function readProjectArchiveSourcesV2(input: {
     }) ?? Promise.resolve([])
   ]);
   const closureSubmissionIds = new Set(closureSubmissions.map((row) => row.id));
-  return sources.filter((source) => !isClosureSelfReference(source, closureSubmissionIds));
+  const filtered = sources.filter(
+    (source) => !isClosureSelfReference(source, closureSubmissionIds)
+  );
+  if (!input.client?.projectRetrospective || !input.client.projectRetrospectiveVersion) {
+    return filtered;
+  }
+  const retrospective = await input.client.projectRetrospective.findUnique({
+    where: { projectId: input.projectId },
+    select: { currentVersionId: true, latestApprovedVersionId: true }
+  });
+  if (
+    !retrospective ||
+    !retrospective.currentVersionId ||
+    retrospective.currentVersionId !== retrospective.latestApprovedVersionId
+  ) {
+    return filtered;
+  }
+  const version = await input.client.projectRetrospectiveVersion.findUnique({
+    where: {
+      id_projectId: { id: retrospective.currentVersionId, projectId: input.projectId }
+    }
+  });
+  if (!version || version.status !== "APPROVED") return filtered;
+  return [
+    ...filtered,
+    {
+      sourceType: "PROJECT_RETROSPECTIVE_VERSION",
+      sourceId: version.id,
+      sourceVersion: String(version.versionNo),
+      snapshotJson: {
+        retrospectiveId: version.retrospectiveId,
+        versionNo: version.versionNo,
+        status: version.status,
+        retrospectiveInputArchiveVersionId: version.retrospectiveInputArchiveVersionId,
+        retrospectiveInputWatermark: version.retrospectiveInputWatermark,
+        contentChecksum: version.contentChecksum
+      }
+    }
+  ];
 }
