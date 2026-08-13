@@ -1,9 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const database = vi.hoisted(() => ({
+  db: {
+    $transaction: vi.fn(),
+    apiIdempotencyRecord: { findUnique: vi.fn() }
+  }
+}));
+
+vi.mock("@/lib/db", () => database);
 
 import {
+  CLOSE_PROJECT_LOCK_ORDER,
+  CLOSE_PROJECT_TRANSACTION_MAX_ATTEMPTS,
+  CLOSE_PROJECT_TRANSACTION_OPTIONS,
   ProjectCloseError,
+  archiveFormulaForClose,
   assertProjectCanClose,
-  isProjectCloseReplay,
+  closeProject,
+  evaluateClosurePolicyBinding,
+  isRetryableCloseTransactionError,
   latestIntegrityStatus
 } from "./project-close-service";
 
@@ -46,6 +61,9 @@ const facts = {
   policyChecksum: "c".repeat(64),
   policyArchiveSourceFormulaVersion: "ARCHIVE.SOURCE@2",
   policyBindingsValid: true,
+  snapshotCheckerBindingsValid: true,
+  sourceGateDefinitionBindingsValid: true,
+  policyFactsValid: true,
   policySourceGateDefinitionMatches: true,
   policyIsActive: true,
   policyIsCurrent: true,
@@ -68,6 +86,57 @@ const facts = {
 };
 
 describe("project closure", () => {
+  beforeEach(() => {
+    database.db.$transaction.mockReset();
+    database.db.apiIdempotencyRecord.findUnique.mockReset();
+  });
+
+  it("does not reinterpret unknown or missing archive formula persistence values", () => {
+    expect(archiveFormulaForClose("V2")).toBe("ARCHIVE.SOURCE@2");
+    expect(archiveFormulaForClose("V1")).toBe("ARCHIVE.SOURCE@1");
+    expect(archiveFormulaForClose(null)).toBeNull();
+    expect(archiveFormulaForClose("UNKNOWN")).toBeNull();
+  });
+
+  it("owns the close command in one serializable transaction with a deterministic lock order", () => {
+    expect(CLOSE_PROJECT_TRANSACTION_OPTIONS).toMatchObject({ isolationLevel: "Serializable" });
+    expect(CLOSE_PROJECT_LOCK_ORDER).toEqual([
+      "PROJECT",
+      "ARCHIVE_B_AND_AGGREGATE",
+      "ARCHIVE_A",
+      "RETROSPECTIVE_AGGREGATE_AND_VERSION",
+      "G9_INSTANCE_SNAPSHOT_AND_SUBMISSION",
+      "CLOSURE_POLICY_AND_VERSION",
+      "RESIDUALS",
+      "CLOSURE_RECORD"
+    ]);
+  });
+
+  it("classifies only PostgreSQL serialization and deadlock failures as retryable close conflicts", () => {
+    expect(isRetryableCloseTransactionError({ code: "P2034" })).toBe(true);
+    expect(isRetryableCloseTransactionError({ meta: { code: "40001" } })).toBe(true);
+    expect(isRetryableCloseTransactionError({ cause: { code: "40P01" } })).toBe(true);
+    expect(isRetryableCloseTransactionError({ code: "P2002" })).toBe(false);
+    expect(isRetryableCloseTransactionError(new Error("connection reset"))).toBe(false);
+  });
+
+  it("retries exhausted serializable close transactions and returns a retryable conflict", async () => {
+    database.db.$transaction.mockRejectedValue({ code: "P2034" });
+
+    await expect(
+      closeProject({
+        projectId: "project-1",
+        archiveVersionId: "archive-b",
+        g9SubmissionId: "g9-submission",
+        expectedProjectVersion: 6,
+        actorId: "quality-user",
+        operationId: "close-serialization-conflict",
+        idempotencyKey: "serialization-conflict-key"
+      })
+    ).rejects.toMatchObject({ code: "CLOSURE_TRANSACTION_CONFLICT", status: 409 });
+    expect(database.db.$transaction).toHaveBeenCalledTimes(CLOSE_PROJECT_TRANSACTION_MAX_ATTEMPTS);
+  });
+
   it("uses the highest-sequence integrity check as the latest fact", () => {
     expect(
       latestIntegrityStatus([
@@ -77,23 +146,37 @@ describe("project closure", () => {
     ).toEqual({ id: "check-2", sequence: 2, status: "PASSED" });
   });
 
-  it("replays a close only for the exact finalized archive and approved G9 submission", () => {
-    expect(
-      isProjectCloseReplay({
-        requestedArchiveVersionId: "archive-b",
-        requestedSubmissionId: "g9-submission",
-        finalArchiveVersionId: "archive-b",
-        closureSubmissionId: "g9-submission"
+  it("rejects a new close key against a closed project before it can bypass optimistic locking", async () => {
+    const record = {
+      apiIdempotencyRecord: {
+        create: vi.fn().mockResolvedValue({ id: "claim-1" })
+      },
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      project: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "project-1",
+          status: "CLOSED",
+          version: 7,
+          finalArchiveVersionId: "archive-b"
+        })
+      }
+    };
+    database.db.$transaction.mockImplementation(async (operation: (client: unknown) => unknown) =>
+      operation(record)
+    );
+
+    await expect(
+      closeProject({
+        projectId: "project-1",
+        archiveVersionId: "archive-b",
+        g9SubmissionId: "g9-submission",
+        expectedProjectVersion: 6,
+        actorId: "quality-user",
+        operationId: "close-retry-with-new-key",
+        idempotencyKey: "new-close-key"
       })
-    ).toBe(true);
-    expect(
-      isProjectCloseReplay({
-        requestedArchiveVersionId: "archive-b",
-        requestedSubmissionId: "another-submission",
-        finalArchiveVersionId: "archive-b",
-        closureSubmissionId: "g9-submission"
-      })
-    ).toBe(false);
+    ).rejects.toMatchObject({ code: "PROJECT_VERSION_CONFLICT", status: 409 });
+    expect(record.apiIdempotencyRecord.create).toHaveBeenCalledOnce();
   });
   it("accepts only an approved, exact ready archive with no residuals", () => {
     expect(assertProjectCanClose(facts)).toBeUndefined();
@@ -157,6 +240,45 @@ describe("project closure", () => {
         expect.objectContaining({ status: 409 })
       );
     }
+  });
+
+  it("rejects a forged G9 snapshot checker binding even when the frozen tuple otherwise matches", () => {
+    expect(() =>
+      assertProjectCanClose({ ...facts, snapshotCheckerBindingsValid: false })
+    ).toThrowError(
+      expect.objectContaining({ code: "CLOSURE_POLICY_BINDING_MISMATCH", status: 409 })
+    );
+  });
+
+  it("rejects exact checker bindings when their persisted policy checksum was built for another template", () => {
+    const checked = evaluateClosurePolicyBinding({
+      projectId: "project-1",
+      sourceTemplateSnapshotId: "template-snapshot-1",
+      sourceGateDefinitionId: "g9-definition-1",
+      sourceGateDefinitionBindings: [
+        { code: "CLOSURE.ARCHIVE.G9", version: 2 },
+        { code: "CLOSURE.RETROSPECTIVE.G9", version: 1 }
+      ],
+      snapshotBindings: [
+        { code: "CLOSURE.ARCHIVE.G9", version: 2 },
+        { code: "CLOSURE.RETROSPECTIVE.G9", version: 1 }
+      ],
+      persisted: {
+        archiveCheckerCode: "CLOSURE.ARCHIVE.G9",
+        archiveCheckerVersion: 2,
+        retrospectiveCheckerCode: "CLOSURE.RETROSPECTIVE.G9",
+        retrospectiveCheckerVersion: 1,
+        archiveSourceFormulaVersion: "V2",
+        selfReferenceExclusionVersion: "CLOSURE.SELF_REFERENCE_EXCLUSION@1",
+        bindingChecksum: "a".repeat(64),
+        policyChecksum: "b".repeat(64)
+      }
+    });
+    expect(checked).toEqual({
+      sourceGateDefinitionBindingsValid: true,
+      snapshotCheckerBindingsValid: true,
+      policyFactsValid: false
+    });
   });
 
   it("requires the approved retrospective to keep its exact ready Archive A", () => {

@@ -6,7 +6,6 @@ import {
 } from "@/modules/projects/application/project-close-service";
 import { archiveCloseBodySchema } from "@/modules/archives/contracts/archive-http";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
-import { idempotentCommandResponse } from "@/modules/platform-api/application/idempotent-command";
 import {
   parseIdempotencyHeaders,
   parseJsonBody,
@@ -28,22 +27,18 @@ async function close(request: Request, context: RouteContext) {
     const path = parsePath(projectPathSchema, { projectId });
     const body = await parseJsonBody(request, archiveCloseBodySchema);
     const { idempotencyKey } = parseIdempotencyHeaders(request);
-    return await idempotentCommandResponse({
+    const result = await closeProject({
+      projectId: path.projectId,
+      archiveVersionId: body.archiveVersionId,
+      g9SubmissionId: body.g9SubmissionId,
+      expectedProjectVersion: body.expectedProjectVersion,
       actorId: guard.actor.id,
-      operation: "projects.close",
-      idempotencyKey,
-      request: { path, body },
-      execute: async () => ({
-        status: 200,
-        body: await closeProject({
-          projectId: path.projectId,
-          archiveVersionId: body.archiveVersionId,
-          g9SubmissionId: body.g9SubmissionId,
-          expectedProjectVersion: body.expectedProjectVersion,
-          actorId: guard.actor.id,
-          operationId: body.operationId
-        })
-      })
+      operationId: body.operationId,
+      idempotencyKey
+    });
+    return Response.json(result, {
+      status: 200,
+      headers: { "idempotency-replayed": result.idempotent ? "true" : "false" }
     });
   } catch (error) {
     if (error instanceof ProjectCloseError)

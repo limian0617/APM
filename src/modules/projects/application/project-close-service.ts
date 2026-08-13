@@ -1,8 +1,11 @@
-import { Prisma, type PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { getArchiveSourceFormulaAdapter } from "@/modules/archives/application/archive-source-formula-registry";
-import { ARCHIVE_SOURCE_FORMULAS } from "@/modules/archives/domain/archive-source-formula";
+import {
+  archiveSourceFormulaFromPersistence,
+  ARCHIVE_SOURCE_FORMULAS
+} from "@/modules/archives/domain/archive-source-formula";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   ARCHIVE_VERSION_AUDIT_FIELDS,
@@ -12,6 +15,12 @@ import {
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+import { payloadHash, type JsonValue } from "@/modules/governance/domain/idempotency";
+import {
+  CLOSURE_POLICY_BINDINGS,
+  CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION,
+  buildClosurePolicyVersionFacts
+} from "@/modules/governance/domain/project-closure-policy";
 
 export type ProjectCloseFacts = {
   projectId: string;
@@ -52,6 +61,9 @@ export type ProjectCloseFacts = {
   policyChecksum: string | null;
   policyArchiveSourceFormulaVersion: string | null;
   policyBindingsValid: boolean;
+  snapshotCheckerBindingsValid: boolean;
+  sourceGateDefinitionBindingsValid: boolean;
+  policyFactsValid: boolean;
   policySourceGateDefinitionMatches: boolean;
   policyIsActive: boolean;
   policyIsCurrent: boolean;
@@ -86,20 +98,36 @@ const PROJECT_CLOSURE_RECORD_AUDIT_FIELDS = [
   "retrospectiveVersionId"
 ] as const;
 
-export function latestIntegrityStatus(checks: readonly IntegrityFact[]): IntegrityFact | null {
-  return [...checks].sort((left, right) => right.sequence - left.sequence)[0] ?? null;
+export const CLOSE_PROJECT_LOCK_ORDER = [
+  "PROJECT",
+  "ARCHIVE_B_AND_AGGREGATE",
+  "ARCHIVE_A",
+  "RETROSPECTIVE_AGGREGATE_AND_VERSION",
+  "G9_INSTANCE_SNAPSHOT_AND_SUBMISSION",
+  "CLOSURE_POLICY_AND_VERSION",
+  "RESIDUALS",
+  "CLOSURE_RECORD"
+] as const;
+
+export const CLOSE_PROJECT_TRANSACTION_MAX_ATTEMPTS = 3;
+
+export const CLOSE_PROJECT_TRANSACTION_OPTIONS = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 5_000,
+  timeout: 30_000
+} as const;
+
+export function archiveFormulaForClose(value: string | null | undefined): string | null {
+  if (value !== "V1" && value !== "V2") return null;
+  try {
+    return archiveSourceFormulaFromPersistence(value);
+  } catch {
+    return null;
+  }
 }
 
-export function isProjectCloseReplay(input: {
-  requestedArchiveVersionId: string;
-  requestedSubmissionId: string;
-  finalArchiveVersionId: string | null;
-  closureSubmissionId: string | null;
-}): boolean {
-  return (
-    input.requestedArchiveVersionId === input.finalArchiveVersionId &&
-    input.requestedSubmissionId === input.closureSubmissionId
-  );
+export function latestIntegrityStatus(checks: readonly IntegrityFact[]): IntegrityFact | null {
+  return [...checks].sort((left, right) => right.sequence - left.sequence)[0] ?? null;
 }
 
 export class ProjectCloseError extends Error {
@@ -117,7 +145,10 @@ export class ProjectCloseError extends Error {
       | "CLOSURE_POLICY_BINDING_MISMATCH"
       | "CLOSURE_SUBMISSION_PROJECT_MISMATCH"
       | "CLOSURE_G9_CHECK_FAILED"
-      | "CLOSURE_RETROSPECTIVE_NOT_CURRENT",
+      | "CLOSURE_RETROSPECTIVE_NOT_CURRENT"
+      | "CLOSURE_TRANSACTION_CONFLICT"
+      | "IDEMPOTENCY_KEY_REUSED"
+      | "CLOSE_IDEMPOTENCY_RESULT_UNAVAILABLE",
     message: string,
     readonly status = 409
   ) {
@@ -154,6 +185,9 @@ export function assertProjectCanClose(facts: ProjectCloseFacts): void {
   }
   if (
     !facts.policyBindingsValid ||
+    !facts.snapshotCheckerBindingsValid ||
+    !facts.sourceGateDefinitionBindingsValid ||
+    !facts.policyFactsValid ||
     !facts.policySourceGateDefinitionMatches ||
     facts.g9ClosurePolicyChecksum !== facts.policyChecksum ||
     facts.g9ArchiveSourceFormulaVersion !== "ARCHIVE.SOURCE@2" ||
@@ -273,42 +307,320 @@ async function databaseNow(client: Prisma.TransactionClient): Promise<Date> {
   return clock.now;
 }
 
-export async function closeProject(input: {
+export type CloseProjectInput = {
   projectId: string;
   archiveVersionId: string;
   g9SubmissionId: string;
   expectedProjectVersion: number;
   actorId: string;
   operationId: string;
-  client?: PrismaClient | Prisma.TransactionClient;
+  idempotencyKey: string;
+};
+
+export type CloseProjectResult = {
+  projectId: string;
+  status: "CLOSED";
+  finalArchiveVersionId: string;
+  idempotent: boolean;
+};
+
+class CloseIdempotencyClaimConflict extends Error {}
+
+function requiredCommandText(value: string, field: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 191) {
+    throw new TypeError(`${field} 必须是 1 到 191 个字符。`);
+  }
+  return normalized;
+}
+
+function responseJson(value: CloseProjectResult): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue;
+}
+
+function isUniqueConflict(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
+
+function errorCode(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const code = (value as Record<string, unknown>).code;
+  return typeof code === "string" ? code : null;
+}
+
+/** PostgreSQL can surface the same transient conflict through Prisma or its cause chain. */
+export function isRetryableCloseTransactionError(error: unknown): boolean {
+  const seen = new Set<object>();
+  let candidate: unknown = error;
+  while (candidate && typeof candidate === "object" && !seen.has(candidate)) {
+    seen.add(candidate);
+    const code = errorCode(candidate);
+    if (code === "P2034" || code === "40001" || code === "40P01") return true;
+    const record = candidate as Record<string, unknown>;
+    const metaCode = errorCode(record.meta);
+    if (metaCode === "40001" || metaCode === "40P01") return true;
+    candidate = record.cause;
+  }
+  return false;
+}
+
+function parseCheckerBindings(value: unknown): Array<{ code: string; version: number }> | null {
+  if (!Array.isArray(value)) return null;
+  const bindings = value.flatMap((entry) => {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      typeof (entry as Record<string, unknown>).code !== "string" ||
+      !Number.isInteger((entry as Record<string, unknown>).version)
+    ) {
+      return [];
+    }
+    return [
+      {
+        code: (entry as Record<string, unknown>).code as string,
+        version: (entry as Record<string, unknown>).version as number
+      }
+    ];
+  });
+  return bindings.length === value.length ? bindings : null;
+}
+
+function hasExactClosureBindings(
+  bindings: Array<{ code: string; version: number }> | null
+): boolean {
+  if (!bindings) return false;
+  try {
+    const expected = buildClosurePolicyVersionFacts({
+      projectId: "binding-check-project",
+      sourceTemplateSnapshotId: "binding-check-template",
+      sourceGateDefinitionId: "binding-check-definition",
+      checkerBindings: bindings
+    });
+    return expected.archiveCheckerCode === CLOSURE_POLICY_BINDINGS[0].code;
+  } catch {
+    return false;
+  }
+}
+
+export function evaluateClosurePolicyBinding(input: {
+  projectId: string;
+  sourceTemplateSnapshotId: string;
+  sourceGateDefinitionId: string;
+  sourceGateDefinitionBindings: Array<{ code: string; version: number }> | null;
+  snapshotBindings: Array<{ code: string; version: number }> | null;
+  persisted: {
+    archiveCheckerCode: string;
+    archiveCheckerVersion: number;
+    retrospectiveCheckerCode: string;
+    retrospectiveCheckerVersion: number;
+    archiveSourceFormulaVersion: string;
+    selfReferenceExclusionVersion: string;
+    bindingChecksum: string;
+    policyChecksum: string;
+  } | null;
 }) {
-  const operation = async (transaction: Prisma.TransactionClient) => {
+  const sourceGateDefinitionBindingsValid = hasExactClosureBindings(
+    input.sourceGateDefinitionBindings
+  );
+  const snapshotCheckerBindingsValid = hasExactClosureBindings(input.snapshotBindings);
+  try {
+    const snapshotFacts =
+      input.persisted && input.snapshotBindings
+        ? buildClosurePolicyVersionFacts({
+            projectId: input.projectId,
+            sourceTemplateSnapshotId: input.sourceTemplateSnapshotId,
+            sourceGateDefinitionId: input.sourceGateDefinitionId,
+            checkerBindings: input.snapshotBindings
+          })
+        : null;
+    const sourceDefinitionFacts =
+      input.persisted && input.sourceGateDefinitionBindings
+        ? buildClosurePolicyVersionFacts({
+            projectId: input.projectId,
+            sourceTemplateSnapshotId: input.sourceTemplateSnapshotId,
+            sourceGateDefinitionId: input.sourceGateDefinitionId,
+            checkerBindings: input.sourceGateDefinitionBindings
+          })
+        : null;
+    return {
+      sourceGateDefinitionBindingsValid,
+      snapshotCheckerBindingsValid,
+      policyFactsValid: Boolean(
+        snapshotFacts &&
+        sourceDefinitionFacts &&
+        input.persisted?.bindingChecksum === snapshotFacts.bindingChecksum &&
+        input.persisted.policyChecksum === snapshotFacts.policyChecksum &&
+        sourceDefinitionFacts.bindingChecksum === snapshotFacts.bindingChecksum &&
+        sourceDefinitionFacts.policyChecksum === snapshotFacts.policyChecksum &&
+        input.persisted.archiveCheckerCode === snapshotFacts.archiveCheckerCode &&
+        input.persisted.archiveCheckerVersion === snapshotFacts.archiveCheckerVersion &&
+        input.persisted.retrospectiveCheckerCode === snapshotFacts.retrospectiveCheckerCode &&
+        input.persisted.retrospectiveCheckerVersion === snapshotFacts.retrospectiveCheckerVersion &&
+        input.persisted.archiveSourceFormulaVersion === "V2" &&
+        input.persisted.selfReferenceExclusionVersion === CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION
+      )
+    };
+  } catch {
+    return {
+      sourceGateDefinitionBindingsValid,
+      snapshotCheckerBindingsValid,
+      policyFactsValid: false
+    };
+  }
+}
+
+function parseCloseReplay(
+  value: Prisma.JsonValue | null
+): Omit<CloseProjectResult, "idempotent"> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const payload = value as Record<string, unknown>;
+  return typeof payload.projectId === "string" &&
+    payload.status === "CLOSED" &&
+    typeof payload.finalArchiveVersionId === "string"
+    ? {
+        projectId: payload.projectId,
+        status: "CLOSED",
+        finalArchiveVersionId: payload.finalArchiveVersionId
+      }
+    : null;
+}
+
+export async function closeProject(rawInput: CloseProjectInput): Promise<CloseProjectResult> {
+  const actorId = requiredCommandText(rawInput.actorId, "actorId");
+  const idempotencyKey = requiredCommandText(rawInput.idempotencyKey, "idempotencyKey");
+  const request = payloadHash({
+    projectId: rawInput.projectId,
+    archiveVersionId: rawInput.archiveVersionId,
+    g9SubmissionId: rawInput.g9SubmissionId,
+    expectedProjectVersion: rawInput.expectedProjectVersion,
+    operationId: rawInput.operationId
+  });
+  const input = { ...rawInput, actorId, idempotencyKey };
+  const operation = async (transaction: Prisma.TransactionClient): Promise<CloseProjectResult> => {
     await transaction.$queryRaw`SELECT id FROM "projects" WHERE id = ${input.projectId} FOR UPDATE`;
     const project = await transaction.project.findUnique({
       where: { id: input.projectId },
       select: { id: true, status: true, version: true, finalArchiveVersionId: true }
     });
     if (!project) throw new ProjectCloseError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+    if (input.expectedProjectVersion !== project.version) {
+      throw new ProjectCloseError("PROJECT_VERSION_CONFLICT", "项目已变化，请刷新后重试。");
+    }
     if (project.status === "CLOSED") {
-      const priorClosure = await transaction.projectClosureRecord.findUnique({
+      throw new ProjectCloseError("PROJECT_ALREADY_CLOSED", "项目已经结项。");
+    }
+
+    // Locate dependent identities without treating an unlocked read as authoritative.
+    const [submissionPreview, retrospectivePreview] = await Promise.all([
+      transaction.gateSubmission.findFirst({
+        where: { id: input.g9SubmissionId, projectId: input.projectId },
+        select: {
+          gateInstanceId: true,
+          gateCheckSnapshotId: true,
+          closurePolicyVersionId: true
+        }
+      }),
+      transaction.projectRetrospective.findUnique({
         where: { projectId: input.projectId },
-        select: { gateSubmissionId: true }
-      });
-      if (
-        isProjectCloseReplay({
-          requestedArchiveVersionId: input.archiveVersionId,
-          requestedSubmissionId: input.g9SubmissionId,
-          finalArchiveVersionId: project.finalArchiveVersionId,
-          closureSubmissionId: priorClosure?.gateSubmissionId ?? null
-        })
-      ) {
-        return {
-          projectId: project.id,
-          status: "CLOSED" as const,
-          finalArchiveVersionId: input.archiveVersionId,
-          idempotent: true
-        };
+        select: {
+          id: true,
+          currentVersionId: true,
+          currentVersion: { select: { retrospectiveInputArchiveVersionId: true } }
+        }
+      })
+    ]);
+
+    // Project -> Archive B and aggregate -> Archive A.
+    await transaction.$queryRaw`
+      SELECT id
+      FROM "project_archive_versions"
+      WHERE id = ${input.archiveVersionId} AND project_id = ${input.projectId}
+      FOR UPDATE
+    `;
+    const archive = await transaction.projectArchiveVersion.findFirst({
+      where: { id: input.archiveVersionId, projectId: input.projectId },
+      include: {
+        integrityChecks: { orderBy: { sequence: "desc" }, take: 1 },
+        manifestItems: { where: { sourceType: "PROJECT_RETROSPECTIVE_VERSION" } }
       }
+    });
+    if (archive) {
+      await transaction.$queryRaw`
+        SELECT id
+        FROM "project_archives"
+        WHERE id = ${archive.archiveId} AND project_id = ${input.projectId}
+        FOR UPDATE
+      `;
+    }
+    const previewArchiveAId =
+      retrospectivePreview?.currentVersion?.retrospectiveInputArchiveVersionId;
+    if (previewArchiveAId) {
+      await transaction.$queryRaw`
+        SELECT id
+        FROM "project_archive_versions"
+        WHERE id = ${previewArchiveAId} AND project_id = ${input.projectId}
+        FOR UPDATE
+      `;
+    }
+
+    // Retrospective aggregate and its current version are locked before their facts are re-read.
+    if (retrospectivePreview) {
+      await transaction.$queryRaw`
+        SELECT id
+        FROM "project_retrospectives"
+        WHERE id = ${retrospectivePreview.id} AND project_id = ${input.projectId}
+        FOR UPDATE
+      `;
+      if (retrospectivePreview.currentVersionId) {
+        await transaction.$queryRaw`
+          SELECT id
+          FROM "project_retrospective_versions"
+          WHERE id = ${retrospectivePreview.currentVersionId} AND project_id = ${input.projectId}
+          FOR UPDATE
+        `;
+      }
+    }
+    const retrospective = await transaction.projectRetrospective.findUnique({
+      where: { projectId: input.projectId },
+      include: {
+        currentVersion: { include: { reviews: true } },
+        latestApprovedVersion: true
+      }
+    });
+    if (retrospective?.currentVersion?.retrospectiveInputArchiveVersionId !== previewArchiveAId) {
+      throw new ProjectCloseError(
+        "CLOSURE_RETROSPECTIVE_NOT_CURRENT",
+        "复盘版本在结项锁定期间发生变化，请重新执行 G9。"
+      );
+    }
+    const archiveA = previewArchiveAId
+      ? await transaction.projectArchiveVersion.findFirst({
+          where: { id: previewArchiveAId, projectId: input.projectId }
+        })
+      : null;
+
+    // G9 instance -> snapshot -> submission precede policy. Every G9 mutation
+    // starts by locking its project, then follows this same mutable evidence order.
+    if (submissionPreview) {
+      await transaction.$queryRaw`
+        SELECT id
+        FROM "project_gate_instances"
+        WHERE id = ${submissionPreview.gateInstanceId} AND project_id = ${input.projectId}
+        FOR UPDATE
+      `;
+      await transaction.$queryRaw`
+        SELECT id
+        FROM "gate_check_snapshots"
+        WHERE id = ${submissionPreview.gateCheckSnapshotId} AND project_id = ${input.projectId}
+        FOR UPDATE
+      `;
+      await transaction.$queryRaw`
+        SELECT id
+        FROM "gate_submissions"
+        WHERE id = ${input.g9SubmissionId} AND project_id = ${input.projectId}
+        FOR UPDATE
+      `;
     }
     const submission = await transaction.gateSubmission.findFirst({
       where: {
@@ -324,45 +636,21 @@ export async function closeProject(input: {
         closurePolicyVersion: true
       }
     });
-    if (submission) {
-      await transaction.$queryRaw`SELECT id FROM "gate_submissions" WHERE id = ${submission.id} FOR UPDATE`;
-      await transaction.$queryRaw`SELECT id FROM "gate_check_snapshots" WHERE id = ${submission.gateCheckSnapshotId} FOR UPDATE`;
-      await transaction.$queryRaw`SELECT id FROM "project_gate_instances" WHERE id = ${submission.gateInstanceId} FOR UPDATE`;
-    }
-    const archive = await transaction.projectArchiveVersion.findFirst({
-      where: { id: input.archiveVersionId, projectId: input.projectId },
-      include: {
-        integrityChecks: { orderBy: { sequence: "desc" }, take: 1 },
-        manifestItems: { where: { sourceType: "PROJECT_RETROSPECTIVE_VERSION" } }
-      }
-    });
-    if (archive) {
-      await transaction.$queryRaw`SELECT id FROM "project_archive_versions" WHERE id = ${archive.id} FOR UPDATE`;
-      await transaction.$queryRaw`SELECT id FROM "project_archives" WHERE id = ${archive.archiveId} FOR UPDATE`;
-    }
-    const retrospective = await transaction.projectRetrospective.findUnique({
-      where: { projectId: input.projectId },
-      include: {
-        currentVersion: { include: { reviews: true } },
-        latestApprovedVersion: true
-      }
-    });
-    if (retrospective) {
-      await transaction.$queryRaw`SELECT id FROM "project_retrospectives" WHERE id = ${retrospective.id} FOR UPDATE`;
-      if (retrospective.currentVersionId) {
-        await transaction.$queryRaw`SELECT id FROM "project_retrospective_versions" WHERE id = ${retrospective.currentVersionId} FOR UPDATE`;
-      }
-    }
-    const archiveA = retrospective?.currentVersion
-      ? await transaction.projectArchiveVersion.findFirst({
-          where: {
-            id: retrospective.currentVersion.retrospectiveInputArchiveVersionId,
-            projectId: input.projectId
-          }
-        })
-      : null;
-    if (archiveA) {
-      await transaction.$queryRaw`SELECT id FROM "project_archive_versions" WHERE id = ${archiveA.id} FOR UPDATE`;
+
+    // The exact submitted policy is authoritative only after its G9 evidence is locked.
+    await transaction.$queryRaw`
+      SELECT id
+      FROM "project_closure_policies"
+      WHERE project_id = ${input.projectId}
+      FOR UPDATE
+    `;
+    if (submissionPreview?.closurePolicyVersionId) {
+      await transaction.$queryRaw`
+        SELECT id
+        FROM "project_closure_policy_versions"
+        WHERE id = ${submissionPreview.closurePolicyVersionId} AND project_id = ${input.projectId}
+        FOR UPDATE
+      `;
     }
     const policyVersionId =
       submission?.closurePolicyVersionId ??
@@ -374,28 +662,24 @@ export async function closeProject(input: {
           include: { policy: true }
         })
       : null;
-    if (policy) {
-      await transaction.$queryRaw`SELECT id FROM "project_closure_policy_versions" WHERE id = ${policy.id} FOR UPDATE`;
-      await transaction.$queryRaw`SELECT id FROM "project_closure_policies" WHERE id = ${policy.policyId} FOR UPDATE`;
-    }
+
+    // Residual obligations -> singleton closure record complete the deterministic lock sequence.
+    await transaction.$queryRaw`SELECT id FROM "residual_items" WHERE "project_id" = ${input.projectId} AND "status" <> 'CLOSED' FOR UPDATE`;
     const openResiduals = await transaction.residualItem.findMany({
       where: { projectId: input.projectId, status: { not: "CLOSED" } },
       select: { id: true }
     });
-    await transaction.$queryRaw`SELECT id FROM "residual_items" WHERE "project_id" = ${input.projectId} AND "status" <> 'CLOSED' FOR UPDATE`;
-    const closureRecord = await transaction.projectClosureRecord.findUnique({
-      where: { projectId: input.projectId }
-    });
-    if (closureRecord) {
-      await transaction.$queryRaw`SELECT id FROM "project_closure_records" WHERE id = ${closureRecord.id} FOR UPDATE`;
-    }
+    await transaction.$queryRaw`
+      SELECT id
+      FROM "project_closure_records"
+      WHERE project_id = ${input.projectId}
+      FOR UPDATE
+    `;
     let sourceFactsCurrent = false;
     if (archive) {
       try {
-        const formula =
-          archive.archiveSourceFormulaVersion === "V2"
-            ? ARCHIVE_SOURCE_FORMULAS.V2
-            : ARCHIVE_SOURCE_FORMULAS.V1;
+        const formula = archiveFormulaForClose(archive.archiveSourceFormulaVersion);
+        if (!formula) throw new Error("unknown archive source formula");
         const adapter = getArchiveSourceFormulaAdapter(formula);
         const currentManifest = adapter.buildManifest(
           await adapter.read({ client: transaction, projectId: input.projectId })
@@ -424,6 +708,31 @@ export async function closeProject(input: {
       archiveEvidence.retrospectiveVersionId ?? retrospectiveEvidence.retrospectiveVersionId
     );
     const policyChecksum = policy?.policyChecksum ?? null;
+    const gateInstance = submission?.gateInstance ?? null;
+    const snapshot = submission?.gateCheckSnapshot ?? null;
+    const snapshotBindings = parseCheckerBindings(snapshot?.checkerBindingsJson);
+    const sourceGateDefinitionBindings = parseCheckerBindings(
+      gateInstance?.gateDefinition.checkerBindingsJson
+    );
+    const bindingValidation = evaluateClosurePolicyBinding({
+      projectId: input.projectId,
+      sourceTemplateSnapshotId: policy?.sourceTemplateSnapshotId ?? "",
+      sourceGateDefinitionId: policy?.sourceGateDefinitionId ?? "",
+      sourceGateDefinitionBindings,
+      snapshotBindings,
+      persisted: policy
+        ? {
+            archiveCheckerCode: policy.archiveCheckerCode,
+            archiveCheckerVersion: policy.archiveCheckerVersion,
+            retrospectiveCheckerCode: policy.retrospectiveCheckerCode,
+            retrospectiveCheckerVersion: policy.retrospectiveCheckerVersion,
+            archiveSourceFormulaVersion: policy.archiveSourceFormulaVersion,
+            selfReferenceExclusionVersion: policy.selfReferenceExclusionVersion,
+            bindingChecksum: policy.bindingChecksum,
+            policyChecksum: policy.policyChecksum
+          }
+        : null
+    });
     const policyBindingsValid = Boolean(
       policy &&
       policy.archiveCheckerCode === "CLOSURE.ARCHIVE.G9" &&
@@ -433,8 +742,6 @@ export async function closeProject(input: {
       policy.archiveSourceFormulaVersion === "V2" &&
       policy.selfReferenceExclusionVersion === "CLOSURE.SELF_REFERENCE_EXCLUSION@1"
     );
-    const gateInstance = submission?.gateInstance ?? null;
-    const snapshot = submission?.gateCheckSnapshot ?? null;
     assertProjectCanClose({
       projectId: project.id,
       projectStatus: project.status,
@@ -495,6 +802,9 @@ export async function closeProject(input: {
       policyArchiveSourceFormulaVersion:
         policy?.archiveSourceFormulaVersion === "V2" ? "ARCHIVE.SOURCE@2" : null,
       policyBindingsValid,
+      snapshotCheckerBindingsValid: bindingValidation.snapshotCheckerBindingsValid,
+      sourceGateDefinitionBindingsValid: bindingValidation.sourceGateDefinitionBindingsValid,
+      policyFactsValid: bindingValidation.policyFactsValid,
       policySourceGateDefinitionMatches:
         policy?.sourceGateDefinitionId === gateInstance?.gateDefinitionId,
       policyIsActive: policy?.status === "ACTIVE" && policy?.policy.status === "ACTIVE",
@@ -643,8 +953,74 @@ export async function closeProject(input: {
       idempotent: false
     };
   };
-  if (input.client) return operation(input.client as Prisma.TransactionClient);
-  return db.$transaction(operation, {
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable
+  for (let attempt = 1; attempt <= CLOSE_PROJECT_TRANSACTION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await db.$transaction(async (transaction) => {
+        try {
+          await transaction.apiIdempotencyRecord.create({
+            data: {
+              actorId,
+              operation: "projects.close",
+              idempotencyKey,
+              requestHash: request.hash
+            }
+          });
+        } catch (error) {
+          if (isUniqueConflict(error)) throw new CloseIdempotencyClaimConflict();
+          throw error;
+        }
+        const result = await operation(transaction);
+        await transaction.apiIdempotencyRecord.update({
+          where: {
+            actorId_operation_idempotencyKey: {
+              actorId,
+              operation: "projects.close",
+              idempotencyKey
+            }
+          },
+          data: {
+            responseStatus: 200,
+            responseJson: responseJson(result) as Prisma.InputJsonValue,
+            completedAt: await databaseNow(transaction)
+          }
+        });
+        return result;
+      }, CLOSE_PROJECT_TRANSACTION_OPTIONS);
+    } catch (error) {
+      if (error instanceof CloseIdempotencyClaimConflict) break;
+      if (isRetryableCloseTransactionError(error)) {
+        if (attempt < CLOSE_PROJECT_TRANSACTION_MAX_ATTEMPTS) continue;
+        throw new ProjectCloseError(
+          "CLOSURE_TRANSACTION_CONFLICT",
+          "结项事实正在并发变化，请刷新后重试。"
+        );
+      }
+      throw error;
+    }
+  }
+  const replay = await db.apiIdempotencyRecord.findUnique({
+    where: {
+      actorId_operation_idempotencyKey: { actorId, operation: "projects.close", idempotencyKey }
+    }
   });
+  if (!replay || replay.completedAt === null || replay.responseStatus === null) {
+    throw new ProjectCloseError(
+      "CLOSE_IDEMPOTENCY_RESULT_UNAVAILABLE",
+      "结项命令正在执行，请稍后使用相同幂等键重试。"
+    );
+  }
+  if (replay.requestHash !== request.hash) {
+    throw new ProjectCloseError(
+      "IDEMPOTENCY_KEY_REUSED",
+      "Idempotency-Key 已绑定到不同的结项请求。"
+    );
+  }
+  const response = parseCloseReplay(replay.responseJson);
+  if (!response) {
+    throw new ProjectCloseError(
+      "CLOSE_IDEMPOTENCY_RESULT_UNAVAILABLE",
+      "结项幂等记录没有可用的已完成响应。"
+    );
+  }
+  return { ...response, idempotent: true };
 }
