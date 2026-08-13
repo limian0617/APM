@@ -33,16 +33,15 @@ async function close(request: Request, context: RouteContext) {
       operation: "projects.close",
       idempotencyKey,
       request: { path, body },
-      execute: async (transaction) => ({
+      execute: async () => ({
         status: 200,
         body: await closeProject({
           projectId: path.projectId,
           archiveVersionId: body.archiveVersionId,
           g9SubmissionId: body.g9SubmissionId,
-          expectedProjectVersion: body.version,
+          expectedProjectVersion: body.expectedProjectVersion,
           actorId: guard.actor.id,
-          operationId: request.headers.get("x-request-id") ?? crypto.randomUUID(),
-          client: transaction
+          operationId: body.operationId
         })
       })
     });
