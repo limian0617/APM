@@ -66,6 +66,20 @@ function auditContext(input: { actorId: string; projectId: string; auditContext?
   } as AuditContext;
 }
 
+async function databaseNow(client: Client): Promise<Date> {
+  const [clock] = await client.$queryRaw<Array<{ now: unknown }>>`
+    SELECT CURRENT_TIMESTAMP AS "now"
+  `;
+  if (!(clock?.now instanceof Date) || Number.isNaN(clock.now.getTime())) {
+    throw new KnowledgeReuseServiceError(
+      "KNOWLEDGE_DATABASE_CLOCK_UNAVAILABLE",
+      "无法读取知识复用所需的数据库时间。",
+      503
+    );
+  }
+  return clock.now;
+}
+
 export async function confirmKnowledgeReuse(
   input: ConfirmKnowledgeReuseInput,
   transaction?: Prisma.TransactionClient
@@ -110,13 +124,21 @@ export async function confirmKnowledgeReuse(
     const knowledgeVersionId = text(input.knowledgeVersionId, "knowledgeVersionId", 191);
     const version = await client.knowledgeEntryVersion.findUnique({
       where: { id_entryId: { id: knowledgeVersionId, entryId } },
-      select: { id: true, entryId: true, status: true, internalReusable: true }
+      select: {
+        id: true,
+        entryId: true,
+        status: true,
+        internalReusable: true,
+        entry: { select: { status: true, currentPublishedVersionId: true } }
+      }
     });
     if (
       !version ||
       version.status !== "PUBLISHED" ||
       !version.internalReusable ||
-      version.entryId !== entryId
+      version.entryId !== entryId ||
+      version.entry.status !== "ACTIVE" ||
+      version.entry.currentPublishedVersionId !== version.id
     ) {
       throw new KnowledgeReuseServiceError(
         "KNOWLEDGE_REUSE_VERSION_NOT_ADOPTABLE",
@@ -153,6 +175,7 @@ export async function confirmKnowledgeReuse(
         409
       );
     }
+    const now = await databaseNow(client);
     const reuse = await client.knowledgeReuseRecord.create({
       data: {
         targetProjectId: project.id,
@@ -162,7 +185,7 @@ export async function confirmKnowledgeReuse(
         scenario: text(input.scenario, "scenario", 4096),
         evidenceSummary: text(input.evidenceSummary, "evidenceSummary", 4096),
         confirmedById: membership.id,
-        confirmedAt: new Date(),
+        confirmedAt: now,
         idempotencyKey
       }
     });

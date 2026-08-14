@@ -2,19 +2,43 @@ import { describe, expect, it, vi } from "vitest";
 
 import { getKnowledgeSearchCapability } from "./knowledge-search-capability";
 
+function capability(overrides: Record<string, boolean> = {}) {
+  return {
+    extensionAvailable: true,
+    indexOnTargetTable: true,
+    indexUsesGin: true,
+    indexUsesTrigram: true,
+    indexValid: true,
+    indexReady: true,
+    indexDefinitionCorrect: true,
+    ...overrides
+  };
+}
+
 describe("knowledge search capability", () => {
-  it("reports TRIGRAM only when both the extension and the published-version GIN index exist", async () => {
+  it("reports TRIGRAM only when the extension and a usable target GIN trigram index are confirmed", async () => {
     const client = {
-      $queryRaw: vi.fn(async () => [{ extensionAvailable: true, indexAvailable: true }])
+      $queryRaw: vi.fn(async () => [capability()])
     };
 
     await expect(getKnowledgeSearchCapability(client)).resolves.toEqual("TRIGRAM");
   });
 
-  it("reports explicit DEGRADED mode when the capability query confirms the extension or index is absent", async () => {
-    const client = {
-      $queryRaw: vi.fn(async () => [{ extensionAvailable: true, indexAvailable: false }])
-    };
+  it.each([
+    ["extension is absent", { extensionAvailable: false }],
+    ["same-name index targets another table", { indexOnTargetTable: false }],
+    ["same-name target index uses a non-GIN access method", { indexUsesGin: false }],
+    ["same-name GIN index has no trigram opclass", { indexUsesTrigram: false }],
+    ["same-name GIN trigram index is invalid", { indexValid: false }],
+    ["same-name GIN trigram index is not ready", { indexReady: false }],
+    [
+      "same-name target GIN trigram index has the wrong key definition",
+      {
+        indexDefinitionCorrect: false
+      }
+    ]
+  ])("reports DEGRADED when %s", async (_label, facts) => {
+    const client = { $queryRaw: vi.fn(async () => [capability(facts)]) };
 
     await expect(getKnowledgeSearchCapability(client)).resolves.toEqual("DEGRADED");
   });

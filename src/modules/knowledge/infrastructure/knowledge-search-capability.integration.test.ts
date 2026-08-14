@@ -14,7 +14,12 @@ const ids = {
   user: `knowledge-search-user-${suffix}`,
   project: `knowledge-search-project-${suffix}`,
   entry: `knowledge-search-entry-${suffix}`,
-  version: `knowledge-search-version-${suffix}`
+  version: `knowledge-search-version-${suffix}`,
+  revokedEntry: `knowledge-search-entry-revoked-${suffix}`,
+  revokedVersion: `knowledge-search-version-revoked-${suffix}`,
+  staleEntry: `knowledge-search-entry-stale-${suffix}`,
+  staleVersion: `knowledge-search-version-stale-${suffix}`,
+  staleCurrentVersion: `knowledge-search-version-current-${suffix}`
 };
 
 describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
@@ -86,6 +91,119 @@ describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
         publishedAt: new Date()
       }
     });
+    await db.knowledgeEntry.update({
+      where: { id: ids.entry },
+      data: { currentPublishedVersionId: ids.version }
+    });
+    await db.knowledgeEntry.create({
+      data: {
+        id: ids.revokedEntry,
+        code: `KNOW.SEARCH.REVOKED.${suffix}`.toUpperCase(),
+        status: "REVOKED",
+        createdById: ids.user,
+        updatedById: ids.user
+      }
+    });
+    await db.knowledgeEntryVersion.create({
+      data: {
+        id: ids.revokedVersion,
+        entryId: ids.revokedEntry,
+        sourceProjectId: ids.project,
+        versionNo: 1,
+        status: "PUBLISHED",
+        title: "撤销知识不应公开",
+        sanitizedSummary: "即使版本已发布也不可采用。",
+        experienceType: "COMMISSIONING",
+        discipline: "ELECTRICAL",
+        normalizedKeywordsJson: ["伺服", "撤销"],
+        normalizedKeywordsText: "伺服 撤销",
+        applicableProjectTypesJson: ["CUSTOMER_DELIVERY"],
+        applicableStageCodesJson: ["S5"],
+        preconditions: "不适用。",
+        recommendedPractice: "不适用。",
+        antiPatterns: "不适用。",
+        limitations: "撤销。",
+        ipSanitizationDeclaration: "已脱敏。",
+        internalReusable: true,
+        contentChecksum: "b".repeat(64),
+        createdById: ids.user,
+        submittedById: ids.user,
+        submittedAt: new Date(),
+        publishedById: ids.user,
+        publishedAt: new Date()
+      }
+    });
+    await db.knowledgeEntry.create({
+      data: {
+        id: ids.staleEntry,
+        code: `KNOW.SEARCH.STALE.${suffix}`.toUpperCase(),
+        status: "ACTIVE",
+        createdById: ids.user,
+        updatedById: ids.user
+      }
+    });
+    await db.knowledgeEntryVersion.createMany({
+      data: [
+        {
+          id: ids.staleVersion,
+          entryId: ids.staleEntry,
+          sourceProjectId: ids.project,
+          versionNo: 1,
+          status: "PUBLISHED",
+          title: "旧发布版本不应公开",
+          sanitizedSummary: "旧指针版本。",
+          experienceType: "COMMISSIONING",
+          discipline: "ELECTRICAL",
+          normalizedKeywordsJson: ["伺服", "旧版"],
+          normalizedKeywordsText: "伺服 旧版",
+          applicableProjectTypesJson: ["CUSTOMER_DELIVERY"],
+          applicableStageCodesJson: ["S5"],
+          preconditions: "不适用。",
+          recommendedPractice: "不适用。",
+          antiPatterns: "不适用。",
+          limitations: "非当前版本。",
+          ipSanitizationDeclaration: "已脱敏。",
+          internalReusable: true,
+          contentChecksum: "c".repeat(64),
+          createdById: ids.user,
+          submittedById: ids.user,
+          submittedAt: new Date(),
+          publishedById: ids.user,
+          publishedAt: new Date()
+        },
+        {
+          id: ids.staleCurrentVersion,
+          entryId: ids.staleEntry,
+          sourceProjectId: ids.project,
+          versionNo: 2,
+          status: "PUBLISHED",
+          title: "当前发布版本",
+          sanitizedSummary: "当前指针版本。",
+          experienceType: "COMMISSIONING",
+          discipline: "ELECTRICAL",
+          normalizedKeywordsJson: ["其他"],
+          normalizedKeywordsText: "其他",
+          applicableProjectTypesJson: ["CUSTOMER_DELIVERY"],
+          applicableStageCodesJson: ["S5"],
+          preconditions: "不适用。",
+          recommendedPractice: "不适用。",
+          antiPatterns: "不适用。",
+          limitations: "当前版本。",
+          ipSanitizationDeclaration: "已脱敏。",
+          internalReusable: true,
+          contentChecksum: "d".repeat(64),
+          createdById: ids.user,
+          submittedById: ids.user,
+          submittedAt: new Date(),
+          publishedById: ids.user,
+          publishedAt: new Date()
+        }
+      ]
+    });
+    await db.knowledgeEntry.update({
+      where: { id: ids.staleEntry },
+      data: { currentPublishedVersionId: ids.staleCurrentVersion }
+    });
 
     const result = await searchPublishedKnowledge(
       { query: "伺服", page: 1, pageSize: 20 },
@@ -95,6 +213,12 @@ describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
     expect(result).toMatchObject({ capability: "DEGRADED", warningCode: "SEARCH_DEGRADED" });
     expect(result.items).toContainEqual(
       expect.objectContaining({ entryCode: `KNOW.SEARCH.${suffix}`.toUpperCase() })
+    );
+    expect(result.items).not.toContainEqual(
+      expect.objectContaining({ entryCode: `KNOW.SEARCH.REVOKED.${suffix}`.toUpperCase() })
+    );
+    expect(result.items).not.toContainEqual(
+      expect.objectContaining({ entryCode: `KNOW.SEARCH.STALE.${suffix}`.toUpperCase() })
     );
   });
 });

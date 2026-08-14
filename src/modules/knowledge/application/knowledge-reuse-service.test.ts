@@ -12,8 +12,11 @@ vi.mock("@/modules/governance/infrastructure/outbox", () => ({
 
 import { confirmKnowledgeReuse, correctKnowledgeReuse } from "./knowledge-reuse-service";
 
+const transactionNow = new Date("2026-08-14T12:34:56.000Z");
+
 function transaction(overrides: Record<string, unknown> = {}) {
   return {
+    $queryRaw: vi.fn(async () => [{ now: transactionNow }]),
     project: {
       findUnique: vi.fn(async () => ({ id: "target-project-1", status: "IN_PROGRESS" }))
     },
@@ -26,7 +29,12 @@ function transaction(overrides: Record<string, unknown> = {}) {
         id: "knowledge-version-1",
         entryId: "knowledge-entry-1",
         status: "PUBLISHED",
-        internalReusable: true
+        internalReusable: true,
+        entry: {
+          id: "knowledge-entry-1",
+          status: "ACTIVE",
+          currentPublishedVersionId: "knowledge-version-1"
+        }
       }))
     },
     knowledgeReuseRecord: {
@@ -72,12 +80,81 @@ describe("knowledge reuse service", () => {
         data: expect.objectContaining({
           targetProjectId: "target-project-1",
           knowledgeVersionId: "knowledge-version-1",
-          confirmedById: "target-membership-1"
+          confirmedById: "target-membership-1",
+          confirmedAt: transactionNow
         })
       })
     );
     expect(auditSpy).toHaveBeenCalled();
     expect(outboxSpy).toHaveBeenCalled();
+    expect(client.$queryRaw).toHaveBeenCalled();
+  });
+
+  it("rejects a published version whose knowledge entry is revoked or no longer points to it", async () => {
+    for (const entry of [
+      { id: "knowledge-entry-1", status: "REVOKED", currentPublishedVersionId: null },
+      {
+        id: "knowledge-entry-1",
+        status: "ACTIVE",
+        currentPublishedVersionId: "knowledge-version-current-2"
+      }
+    ]) {
+      const client = transaction({
+        knowledgeEntryVersion: {
+          findUnique: vi.fn(async () => ({
+            id: "knowledge-version-1",
+            entryId: "knowledge-entry-1",
+            status: "PUBLISHED",
+            internalReusable: true,
+            entry
+          }))
+        }
+      });
+
+      await expect(
+        confirmKnowledgeReuse(
+          {
+            targetProjectId: "target-project-1",
+            knowledgeEntryId: "knowledge-entry-1",
+            knowledgeVersionId: "knowledge-version-1",
+            targetDeliveryUnitId: null,
+            scenario: "Adopt the commissioning tuning checklist.",
+            evidenceSummary: "Project manager confirmed the actual use.",
+            actorId: "target-manager-1",
+            idempotencyKey: `knowledge-reuse-not-adoptable-${entry.status}`,
+            targetProjectAccess: true
+          },
+          client
+        )
+      ).rejects.toMatchObject({ code: "KNOWLEDGE_REUSE_VERSION_NOT_ADOPTABLE", status: 409 });
+      expect(client.knowledgeReuseRecord.create).not.toHaveBeenCalled();
+      expect(auditSpy).not.toHaveBeenCalled();
+      expect(outboxSpy).not.toHaveBeenCalled();
+    }
+  });
+
+  it("fails before creating a reuse fact when the transaction clock is unavailable", async () => {
+    const client = transaction({ $queryRaw: vi.fn(async () => []) });
+
+    await expect(
+      confirmKnowledgeReuse(
+        {
+          targetProjectId: "target-project-1",
+          knowledgeEntryId: "knowledge-entry-1",
+          knowledgeVersionId: "knowledge-version-1",
+          targetDeliveryUnitId: null,
+          scenario: "Adopt the commissioning tuning checklist.",
+          evidenceSummary: "Project manager confirmed the actual use.",
+          actorId: "target-manager-1",
+          idempotencyKey: "knowledge-reuse-clock-missing-1",
+          targetProjectAccess: true
+        },
+        client
+      )
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_DATABASE_CLOCK_UNAVAILABLE", status: 503 });
+    expect(client.knowledgeReuseRecord.create).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+    expect(outboxSpy).not.toHaveBeenCalled();
   });
 
   it("replays the same manual confirmation with a canonical idempotency key without a second fact", async () => {

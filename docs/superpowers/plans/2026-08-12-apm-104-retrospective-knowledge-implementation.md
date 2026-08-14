@@ -904,3 +904,16 @@ Stop after document validation and send APM-规划 a fourth-round implementation
 3. 创建真实 PostgreSQL trigger 行为测试；本机 `RUN_DATABASE_INTEGRATION`、`psql` 或 Docker 不可用时只能记录为 `SKIPPED`，不得把 skip 作为通过。Task 12 Linux CI 必须在空库、APM-054→104 升级和受限 pg_trgm 回放后实跑此测试。
 4. 运行 `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run db:generate`、`npm run db:validate` 和 `git diff --check`。本机没有可用 PostgreSQL 时，migration marker 与升级回放同样只能记录 `SKIPPED`。
 5. 仅暂存本计划、同一 migration、static persistence test 与新的 PostgreSQL integration test，提交 `fix(apm-104): align knowledge revocation migration`；绝不混入正在进行的 Task 9 business files。提交后无需复审等待，立即恢复 Task 9；Task 9 完成后才暂停复审。
+
+## Recovery R3（Task 9 知识发布、检索与来源加固）
+
+**复审结论与范围：** Task 9 的既有聚焦测试、静态门禁和 R2 生命周期迁移修补均保持有效，但尚未覆盖五项会破坏“当前可采用版本”、审计时间权威或问题来源脱敏边界的缺口。本恢复仅修订 Task 9 的知识服务、repository、capability probe、相关单元/ PostgreSQL 集成测试和本计划；不得修改 Prisma Schema、唯一 APM-104 migration、知识生命周期、权限种子、Task 10 API/contracts/page-state/UI、开发进度表，且不得 push、创建 PR 或启动 Task 10。Recovery R3 必须独立提交 `fix(apm-104): harden knowledge publication and search`，提交后停止并请求复审。
+
+**冻结的行为与 TDD 步骤：**
+
+1. 先以 RED 证明已撤销的 `KnowledgeEntry` 可借助撤销前遗留的 `IN_REVIEW` 或 `DRAFT` 版本重新发布/提交；再令 submit 与 review 在初始读取和最终 `updateMany` CAS 都要求 `entry.status = ACTIVE`。任何 revoked/并发状态漂移均返回 `KNOWLEDGE_ENTRY_REVOKED` / 409，且不写版本、聚合、审核、Audit 或 Outbox 成功事实。
+2. 以 RED 证明 repository 的公开查询和人工 adoptability 只检查版本 `PUBLISHED`；再收紧为 `KnowledgeEntry.status = ACTIVE` 且 `KnowledgeEntry.currentPublishedVersionId = KnowledgeEntryVersion.id`。repository SQL、服务回归和可选 PostgreSQL 测试分别覆盖 REVOKED 聚合、非当前 PUBLISHED 版本被排除，当前内部可复用发布版本仍可搜索/确认；公共 DTO 不得增加来源项目、客户、Issue、文件或归档标识。
+3. 以 RED 证明业务实现使用应用服务器 `new Date()`；在同一 Prisma 事务内由 `SELECT CURRENT_TIMESTAMP AS "now"` 获取一次有效 `Date`。submit 的 `submittedAt`、publish 的 `publishedAt`/`reviewedAt`、reject 的 `reviewedAt` 和 reuse 的 `confirmedAt` 复用该事务时钟；时钟缺失或格式非法默认失败且不创建业务、Audit 或 Outbox 事实。测试 fixture 中的普通 `new Date()` 不属于本要求。
+4. 以 RED 证明同名对象、错误表、非 GIN、非 `gin_trgm_ops`、`indisvalid = false` 或 `indisready = false` 也会被误报为 TRIGRAM；probe 只在 `pg_trgm` 已安装且命名索引确属 `public.knowledge_entry_versions`、访问方法为 GIN、有效且 ready、包含正确 trigram opclass 时返回 `TRIGRAM`。探测确认缺失返回 `DEGRADED`；查询异常或结构异常继续以 503 `KNOWLEDGE_SEARCH_CAPABILITY_UNAVAILABLE` default-deny。真实 PostgreSQL 覆盖在本机不可用时只能 `SKIPPED`，Task 12 Linux CI 必须实跑。
+5. 以 RED 证明 `KnowledgeEntrySource.sanitizedSnapshotJson` 仅保存原始 IssueHistory snapshot hash；从确切 `IssueHistory.snapshotJson` 严格提取并冻结 `category`、`severity`、`status`、`eventType` 和 sequence，缺失或枚举非法一律 fail closed。快照不得复制 `confirmedText`、`title`、`phenomenonDescription`、`rootCauseDescription`、`verificationEvidence`、`sourceSnapshot`、客户文本、人员/成员 ID、文件或 URL；`sourceChecksum` 必须基于补齐后的规范化脱敏快照重算，且绝不读取当前 `Issue` 替代精确 `IssueHistory`。
+6. 每个行为执行 RED → 确认预期失败 → 最小 GREEN → focused regression。完成后运行 Task 9 六文件聚焦命令、`npm run test`、`npm run format:check`、`npm run lint`、`npm run typecheck`、`npm run db:generate`、`npm run db:validate`、`npm run build` 和 `git diff --check`。本机 PostgreSQL、TRIGRAM 实例、空库/升级 replay 不可用时明确记为 `SKIPPED`，不得表述为通过；只提交 Recovery R3 文件后暂停复审。

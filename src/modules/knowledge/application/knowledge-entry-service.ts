@@ -32,6 +32,34 @@ export class KnowledgeEntryServiceError extends Error {
 
 type Client = Prisma.TransactionClient | typeof db;
 
+const ISSUE_CATEGORIES = new Set([
+  "SAFETY",
+  "FUNCTION",
+  "PERFORMANCE",
+  "APPEARANCE",
+  "DELIVERY_COMPLETENESS"
+]);
+const ISSUE_SEVERITIES = new Set(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
+const ISSUE_STATUSES = new Set([
+  "PENDING_ACCEPTANCE",
+  "ANALYZING",
+  "PROCESSING",
+  "PENDING_VERIFICATION",
+  "CLOSED"
+]);
+const ISSUE_HISTORY_EVENT_TYPES = new Set([
+  "CREATED",
+  "DETAILS_UPDATED",
+  "STARTED_ANALYSIS",
+  "STARTED_PROCESSING",
+  "VERIFICATION_SUBMITTED",
+  "CLOSED",
+  "REOPENED",
+  "RESPONSIBILITY_ASSIGNED",
+  "RELATION_ADDED",
+  "RELATION_CLOSED"
+]);
+
 function auditContext(input: { actorId: string; projectId: string; auditContext?: AuditContext }) {
   return {
     ...(input.auditContext ?? {}),
@@ -186,6 +214,77 @@ function canonicalText(value: string, field: string): string {
   return normalized;
 }
 
+async function databaseNow(client: Client): Promise<Date> {
+  const [clock] = await client.$queryRaw<Array<{ now: unknown }>>`
+    SELECT CURRENT_TIMESTAMP AS "now"
+  `;
+  if (!(clock?.now instanceof Date) || Number.isNaN(clock.now.getTime())) {
+    throw new KnowledgeEntryServiceError(
+      "KNOWLEDGE_DATABASE_CLOCK_UNAVAILABLE",
+      "无法读取知识业务所需的数据库时间。",
+      503
+    );
+  }
+  return clock.now;
+}
+
+function sanitizedIssueHistoryFacts(input: {
+  id: string;
+  issueId: string;
+  sequence: number;
+  eventType: string;
+  snapshotJson: unknown;
+}) {
+  const snapshot = input.snapshotJson;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new KnowledgeEntryServiceError(
+      "KNOWLEDGE_ISSUE_HISTORY_SNAPSHOT_INVALID",
+      "知识来源问题历史缺少可脱敏的冻结快照。",
+      409
+    );
+  }
+  const record = snapshot as Record<string, unknown>;
+  const category = record.category;
+  const severity = record.severity;
+  const status = record.status;
+  if (
+    typeof category !== "string" ||
+    !ISSUE_CATEGORIES.has(category) ||
+    typeof severity !== "string" ||
+    !ISSUE_SEVERITIES.has(severity) ||
+    typeof status !== "string" ||
+    !ISSUE_STATUSES.has(status) ||
+    !ISSUE_HISTORY_EVENT_TYPES.has(input.eventType) ||
+    !Number.isSafeInteger(input.sequence) ||
+    input.sequence < 1
+  ) {
+    throw new KnowledgeEntryServiceError(
+      "KNOWLEDGE_ISSUE_HISTORY_SNAPSHOT_INVALID",
+      "知识来源问题历史的受控字段无效。",
+      409
+    );
+  }
+  return {
+    issueId: input.issueId,
+    issueHistoryId: input.id,
+    sequence: input.sequence,
+    eventType: input.eventType,
+    category,
+    severity,
+    status
+  };
+}
+
+function assertActiveKnowledgeEntry(entry: { status: string }) {
+  if (entry.status !== "ACTIVE") {
+    throw new KnowledgeEntryServiceError(
+      "KNOWLEDGE_ENTRY_REVOKED",
+      "已撤销的知识条目不得提交或审核版本。",
+      409
+    );
+  }
+}
+
 async function readIssueHistories(
   client: Client,
   projectId: string,
@@ -195,7 +294,14 @@ async function readIssueHistories(
   if (!ids.length) return [];
   const histories = await client.issueHistory.findMany({
     where: { projectId, id: { in: ids } },
-    select: { id: true, projectId: true, issueId: true, sequence: true, snapshotJson: true }
+    select: {
+      id: true,
+      projectId: true,
+      issueId: true,
+      sequence: true,
+      eventType: true,
+      snapshotJson: true
+    }
   });
   if (histories.length !== ids.length) {
     throw new KnowledgeEntryServiceError(
@@ -204,7 +310,7 @@ async function readIssueHistories(
       409
     );
   }
-  return histories;
+  return histories.map(sanitizedIssueHistoryFacts);
 }
 
 async function assertArchiveBContainsRetrospective(
@@ -275,7 +381,15 @@ function entrySourceData(input: {
     contentChecksum: string;
   };
   archiveManifestSourceChecksum: string;
-  issue?: { id: string; issueId: string; sequence: number; snapshotJson: unknown };
+  issue?: {
+    issueId: string;
+    issueHistoryId: string;
+    sequence: number;
+    eventType: string;
+    category: string;
+    severity: string;
+    status: string;
+  };
 }) {
   const snapshot = {
     finalArchive: {
@@ -300,9 +414,12 @@ function entrySourceData(input: {
     issueHistory: input.issue
       ? {
           issueId: input.issue.issueId,
-          issueHistoryId: input.issue.id,
+          issueHistoryId: input.issue.issueHistoryId,
           sequence: input.issue.sequence,
-          sanitizedSnapshotChecksum: payloadHash(input.issue.snapshotJson).hash
+          eventType: input.issue.eventType,
+          category: input.issue.category,
+          severity: input.issue.severity,
+          status: input.issue.status
         }
       : null
   };
@@ -322,7 +439,7 @@ function entrySourceData(input: {
     retrospectiveVersionNo: input.retrospective.versionNo,
     retrospectiveContentChecksum: input.retrospective.contentChecksum,
     issueId: input.issue?.issueId ?? null,
-    issueHistoryId: input.issue?.id ?? null,
+    issueHistoryId: input.issue?.issueHistoryId ?? null,
     issueHistorySequence: input.issue?.sequence ?? null,
     sourceChecksum: payloadHash(snapshot).hash,
     sanitizedSnapshotJson: inputJson(snapshot)
@@ -530,6 +647,7 @@ export async function submitKnowledgeEntryVersion(
     if (!version || !version.entry) {
       throw new KnowledgeEntryServiceError("KNOWLEDGE_VERSION_NOT_FOUND", "知识版本不存在。", 404);
     }
+    assertActiveKnowledgeEntry(version.entry);
     if (version.sourceProjectId === "") {
       throw new KnowledgeEntryServiceError(
         "KNOWLEDGE_SOURCE_PROJECT_REQUIRED",
@@ -552,9 +670,15 @@ export async function submitKnowledgeEntryVersion(
       );
     }
     const status = assertKnowledgeVersionTransition(version.status, "SUBMIT");
+    const now = await databaseNow(client);
     const updatedVersion = await client.knowledgeEntryVersion.updateMany({
-      where: { id: version.id, entryId, status: version.status },
-      data: { status, submittedById: input.actorId, submittedAt: new Date() }
+      where: {
+        id: version.id,
+        entryId,
+        status: version.status,
+        entry: { is: { status: "ACTIVE" } }
+      },
+      data: { status, submittedById: input.actorId, submittedAt: now }
     });
     if (updatedVersion.count !== 1) {
       throw new KnowledgeEntryServiceError(
@@ -564,7 +688,7 @@ export async function submitKnowledgeEntryVersion(
       );
     }
     const updatedEntry = await client.knowledgeEntry.updateMany({
-      where: { id: entryId, version: input.expectedEntryVersion },
+      where: { id: entryId, version: input.expectedEntryVersion, status: "ACTIVE" },
       data: { version: { increment: 1 }, updatedById: input.actorId }
     });
     if (updatedEntry.count !== 1) {
@@ -623,6 +747,7 @@ export async function reviewKnowledgeEntryVersion(
     if (!version || !version.entry) {
       throw new KnowledgeEntryServiceError("KNOWLEDGE_VERSION_NOT_FOUND", "知识版本不存在。", 404);
     }
+    assertActiveKnowledgeEntry(version.entry);
     if (version.entry.version !== input.expectedEntryVersion) {
       throw new KnowledgeEntryServiceError(
         "KNOWLEDGE_ENTRY_VERSION_CONFLICT",
@@ -663,13 +788,17 @@ export async function reviewKnowledgeEntryVersion(
       knowledgeVersionId: version.id,
       sourceChecksums: sources.map((source) => source.sourceChecksum).sort()
     }).hash;
+    const now = await databaseNow(client);
     const updatedVersion = await client.knowledgeEntryVersion.updateMany({
-      where: { id: version.id, entryId, status: version.status },
+      where: {
+        id: version.id,
+        entryId,
+        status: version.status,
+        entry: { is: { status: "ACTIVE" } }
+      },
       data: {
         status,
-        ...(input.decision === "PUBLISH"
-          ? { publishedById: input.actorId, publishedAt: new Date() }
-          : {})
+        ...(input.decision === "PUBLISH" ? { publishedById: input.actorId, publishedAt: now } : {})
       }
     });
     if (updatedVersion.count !== 1) {
@@ -697,7 +826,7 @@ export async function reviewKnowledgeEntryVersion(
       }
     }
     const updatedEntry = await client.knowledgeEntry.updateMany({
-      where: { id: entryId, version: input.expectedEntryVersion },
+      where: { id: entryId, version: input.expectedEntryVersion, status: "ACTIVE" },
       data: {
         ...(input.decision === "PUBLISH" ? { currentPublishedVersionId: version.id } : {}),
         version: { increment: 1 },
@@ -711,7 +840,6 @@ export async function reviewKnowledgeEntryVersion(
         409
       );
     }
-    const reviewedAt = new Date();
     const review = await client.knowledgeEntryReview.create({
       data: {
         projectId: version.sourceProjectId,
@@ -722,7 +850,7 @@ export async function reviewKnowledgeEntryVersion(
         ipConfirmed: input.ipConfirmed,
         sanitizationConfirmed: input.sanitizationConfirmed,
         reviewerId: input.actorId,
-        reviewedAt,
+        reviewedAt: now,
         sourceChecksum
       }
     });

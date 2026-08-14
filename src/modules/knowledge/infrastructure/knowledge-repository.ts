@@ -15,6 +15,8 @@ function filters(input: KnowledgeRepositorySearchInput, keywordPredicate: Prisma
   const values: Prisma.Sql[] = [
     Prisma.sql`v.status = 'PUBLISHED'::"KnowledgeEntryVersionStatus"`,
     Prisma.sql`v.internal_reusable = TRUE`,
+    Prisma.sql`e.status = 'ACTIVE'::"KnowledgeEntryStatus"`,
+    Prisma.sql`e.current_published_version_id = v.id`,
     keywordPredicate
   ];
   if (input.experienceType) values.push(Prisma.sql`v.experience_type = ${input.experienceType}`);

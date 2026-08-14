@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { payloadHash } from "@/modules/governance/domain/idempotency";
+
 const { auditSpy, outboxSpy } = vi.hoisted(() => ({
   auditSpy: vi.fn(async () => ({ id: "audit-knowledge-1" })),
   outboxSpy: vi.fn(async () => ({ id: "outbox-knowledge-1" }))
@@ -85,6 +87,7 @@ function retrospectiveVersion(overrides: Record<string, unknown> = {}) {
 
 function transaction(overrides: Record<string, unknown> = {}) {
   return {
+    $queryRaw: vi.fn(async () => [{ now: transactionNow }]),
     project: { findUnique: vi.fn(async () => sourceProject()) },
     projectArchiveVersion: { findUnique: vi.fn() },
     projectRetrospectiveVersion: { findUnique: vi.fn() },
@@ -116,6 +119,8 @@ const command = {
   expectedEntryVersion: null,
   sourceRead: { knowledgePermissionAllowed: true, sourceProjectReadAllowed: true }
 };
+
+const transactionNow = new Date("2026-08-14T12:34:56.000Z");
 
 beforeEach(() => {
   auditSpy.mockClear();
@@ -351,6 +356,160 @@ describe("knowledge entry service", () => {
     expect(outboxSpy).toHaveBeenCalled();
   });
 
+  it("freezes only controlled IssueHistory facts in a source snapshot and excludes sensitive evidence", async () => {
+    const sensitiveSnapshot = {
+      category: "PERFORMANCE",
+      severity: "HIGH",
+      status: "CLOSED",
+      eventType: "CLOSED",
+      confirmedText: "Customer Alpha's servo jittered at serial 001.",
+      title: "Customer Alpha servo issue",
+      phenomenonDescription: "Customer-only observation.",
+      rootCauseDescription: "Confidential root cause.",
+      verificationEvidence: "https://customer.example/evidence",
+      sourceSnapshot: { customer: "Alpha" },
+      ownerMembershipId: "member-secret",
+      fileObjectId: "file-secret"
+    };
+    const client = transaction({
+      projectArchiveVersion: {
+        findUnique: vi.fn(async ({ where }: { where: { id_projectId: { id: string } } }) =>
+          where.id_projectId.id === "archive-a-1"
+            ? archive()
+            : archive({ id: "archive-b-1", status: "FINALIZED" })
+        )
+      },
+      projectRetrospectiveVersion: { findUnique: vi.fn(async () => retrospectiveVersion()) },
+      projectArchiveManifestItem: {
+        findFirst: vi.fn(async () => ({
+          sourceChecksum: "d".repeat(64),
+          snapshotJson: {
+            retrospectiveInputArchiveVersionId: "archive-a-1",
+            retrospectiveInputWatermark: "c".repeat(64),
+            contentChecksum: "d".repeat(64)
+          }
+        }))
+      },
+      issueHistory: {
+        findMany: vi.fn(async () => [
+          {
+            id: "issue-history-1",
+            projectId: "source-project-1",
+            issueId: "issue-1",
+            sequence: 7,
+            eventType: "CLOSED",
+            snapshotJson: sensitiveSnapshot
+          }
+        ])
+      },
+      knowledgeEntry: {
+        findUnique: vi.fn(async () => null),
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+          id: "knowledge-entry-1",
+          version: 1,
+          ...data
+        }))
+      },
+      knowledgeEntryVersion: {
+        findFirst: vi.fn(async () => null),
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+          id: "knowledge-version-1",
+          ...data
+        }))
+      },
+      knowledgeEntrySource: { createMany: vi.fn(async () => ({ count: 1 })) }
+    });
+
+    await createKnowledgeEntryVersion({ ...command, issueHistoryIds: ["issue-history-1"] }, client);
+
+    const sourceCall = client.knowledgeEntrySource.createMany.mock.calls[0]?.[0] as {
+      data: Array<Record<string, unknown>>;
+    };
+    const snapshot = sourceCall.data[0]?.sanitizedSnapshotJson as Record<string, unknown>;
+    expect(snapshot).toMatchObject({
+      issueHistory: {
+        issueId: "issue-1",
+        issueHistoryId: "issue-history-1",
+        sequence: 7,
+        eventType: "CLOSED",
+        category: "PERFORMANCE",
+        severity: "HIGH",
+        status: "CLOSED"
+      }
+    });
+    const serialized = JSON.stringify(snapshot);
+    for (const secret of [
+      "Customer Alpha",
+      "Customer Alpha servo issue",
+      "Customer-only observation.",
+      "Confidential root cause.",
+      "customer.example",
+      "member-secret",
+      "file-secret"
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
+    expect(sourceCall.data[0]?.sourceChecksum).toBe(payloadHash(snapshot).hash);
+  });
+
+  it("fails closed instead of hashing an IssueHistory snapshot without controlled classification facts", async () => {
+    const client = transaction({
+      projectArchiveVersion: {
+        findUnique: vi.fn(async ({ where }: { where: { id_projectId: { id: string } } }) =>
+          where.id_projectId.id === "archive-a-1"
+            ? archive()
+            : archive({ id: "archive-b-1", status: "FINALIZED" })
+        )
+      },
+      projectRetrospectiveVersion: { findUnique: vi.fn(async () => retrospectiveVersion()) },
+      projectArchiveManifestItem: {
+        findFirst: vi.fn(async () => ({
+          sourceChecksum: "d".repeat(64),
+          snapshotJson: {
+            retrospectiveInputArchiveVersionId: "archive-a-1",
+            retrospectiveInputWatermark: "c".repeat(64),
+            contentChecksum: "d".repeat(64)
+          }
+        }))
+      },
+      issueHistory: {
+        findMany: vi.fn(async () => [
+          {
+            id: "issue-history-1",
+            projectId: "source-project-1",
+            issueId: "issue-1",
+            sequence: 7,
+            eventType: "CLOSED",
+            snapshotJson: { category: "PERFORMANCE", severity: "NOT_A_SEVERITY" }
+          }
+        ])
+      },
+      knowledgeEntry: {
+        findUnique: vi.fn(async () => null),
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+          id: "knowledge-entry-1",
+          version: 1,
+          ...data
+        }))
+      },
+      knowledgeEntryVersion: {
+        findFirst: vi.fn(async () => null),
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+          id: "knowledge-version-1",
+          ...data
+        }))
+      },
+      knowledgeEntrySource: { createMany: vi.fn(async () => ({ count: 1 })) }
+    });
+
+    await expect(
+      createKnowledgeEntryVersion({ ...command, issueHistoryIds: ["issue-history-1"] }, client)
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_ISSUE_HISTORY_SNAPSHOT_INVALID", status: 409 });
+    expect(client.knowledgeEntry.create).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+    expect(outboxSpy).not.toHaveBeenCalled();
+  });
+
   it("links a new draft to the exact previously published version instead of the newest mutable version", async () => {
     const client = transaction({
       projectArchiveVersion: {
@@ -513,6 +672,41 @@ describe("knowledge entry service", () => {
     expect(client.knowledgeEntrySource.createMany).not.toHaveBeenCalled();
   });
 
+  it("rejects a revoked entry's legacy draft before it can be submitted", async () => {
+    const client = transaction({
+      knowledgeEntryVersion: {
+        findUnique: vi.fn(async () => ({
+          id: "knowledge-version-draft-1",
+          entryId: "knowledge-entry-1",
+          sourceProjectId: "source-project-1",
+          status: "DRAFT",
+          createdById: "author-1",
+          entry: { id: "knowledge-entry-1", status: "REVOKED", version: 4 }
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 }))
+      },
+      knowledgeEntry: { updateMany: vi.fn(async () => ({ count: 1 })) }
+    });
+
+    await expect(
+      submitKnowledgeEntryVersion(
+        {
+          entryId: "knowledge-entry-1",
+          versionId: "knowledge-version-draft-1",
+          expectedEntryVersion: 4,
+          actorId: "author-1",
+          idempotencyKey: "knowledge-submit-revoked-1",
+          sourceRead: { knowledgePermissionAllowed: true, sourceProjectReadAllowed: true }
+        },
+        client
+      )
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_ENTRY_REVOKED", status: 409 });
+    expect(client.knowledgeEntryVersion.updateMany).not.toHaveBeenCalled();
+    expect(client.knowledgeEntry.updateMany).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+    expect(outboxSpy).not.toHaveBeenCalled();
+  });
+
   it("submits only the current immutable draft version and writes audit/outbox facts", async () => {
     const client = transaction({
       knowledgeEntryVersion: {
@@ -522,7 +716,7 @@ describe("knowledge entry service", () => {
           sourceProjectId: "source-project-1",
           status: "DRAFT",
           createdById: "author-1",
-          entry: { id: "knowledge-entry-1", version: 4 }
+          entry: { id: "knowledge-entry-1", status: "ACTIVE", version: 4 }
         })),
         updateMany: vi.fn(async () => ({ count: 1 }))
       },
@@ -543,8 +737,12 @@ describe("knowledge entry service", () => {
 
     expect(result).toMatchObject({ status: "IN_REVIEW" });
     expect(client.knowledgeEntryVersion.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: "IN_REVIEW" }) })
+      expect.objectContaining({
+        where: expect.objectContaining({ entry: { is: { status: "ACTIVE" } } }),
+        data: expect.objectContaining({ status: "IN_REVIEW", submittedAt: transactionNow })
+      })
     );
+    expect(client.$queryRaw).toHaveBeenCalled();
     expect(auditSpy).toHaveBeenCalled();
     expect(outboxSpy).toHaveBeenCalled();
   });
@@ -558,7 +756,12 @@ describe("knowledge entry service", () => {
           sourceProjectId: "source-project-1",
           status: "IN_REVIEW",
           submittedById: "author-1",
-          entry: { id: "knowledge-entry-1", version: 5, currentPublishedVersionId: null }
+          entry: {
+            id: "knowledge-entry-1",
+            status: "ACTIVE",
+            version: 5,
+            currentPublishedVersionId: null
+          }
         })),
         updateMany: vi.fn(async () => ({ count: 1 }))
       },
@@ -599,6 +802,17 @@ describe("knowledge entry service", () => {
         data: expect.objectContaining({ currentPublishedVersionId: "knowledge-version-1" })
       })
     );
+    const versionUpdate = client.knowledgeEntryVersion.updateMany.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    const reviewCreate = client.knowledgeEntryReview.create.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    expect(versionUpdate.data.publishedAt).toBe(transactionNow);
+    expect(reviewCreate.data.reviewedAt).toBe(transactionNow);
+    expect(versionUpdate).toMatchObject({
+      where: expect.objectContaining({ entry: { is: { status: "ACTIVE" } } })
+    });
     expect(auditSpy).toHaveBeenCalled();
     expect(outboxSpy).toHaveBeenCalled();
   });
@@ -612,7 +826,12 @@ describe("knowledge entry service", () => {
           sourceProjectId: "source-project-1",
           status: "IN_REVIEW",
           submittedById: "author-1",
-          entry: { id: "knowledge-entry-1", version: 5, currentPublishedVersionId: null }
+          entry: {
+            id: "knowledge-entry-1",
+            status: "ACTIVE",
+            version: 5,
+            currentPublishedVersionId: null
+          }
         }))
       }
     });
@@ -639,6 +858,89 @@ describe("knowledge entry service", () => {
     expect(outboxSpy).not.toHaveBeenCalled();
   });
 
+  it("rejects publishing a legacy in-review version after its entry is revoked without writing success facts", async () => {
+    const client = transaction({
+      knowledgeEntryVersion: {
+        findUnique: vi.fn(async () => ({
+          id: "knowledge-version-review-1",
+          entryId: "knowledge-entry-1",
+          sourceProjectId: "source-project-1",
+          status: "IN_REVIEW",
+          submittedById: "author-1",
+          entry: {
+            id: "knowledge-entry-1",
+            status: "REVOKED",
+            version: 5,
+            currentPublishedVersionId: null
+          }
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 }))
+      },
+      knowledgeEntry: { updateMany: vi.fn(async () => ({ count: 1 })) },
+      knowledgeEntrySource: { findMany: vi.fn(async () => [{ sourceChecksum: "e".repeat(64) }]) },
+      knowledgeEntryReview: { create: vi.fn(async () => ({ id: "review-1" })) }
+    });
+
+    await expect(
+      reviewKnowledgeEntryVersion(
+        {
+          entryId: "knowledge-entry-1",
+          versionId: "knowledge-version-review-1",
+          expectedEntryVersion: 5,
+          decision: "PUBLISH",
+          reason: "The aggregate was revoked before the legacy review completed.",
+          ipConfirmed: true,
+          sanitizationConfirmed: true,
+          actorId: "reviewer-1",
+          idempotencyKey: "knowledge-review-revoked-1",
+          sourceRead: { knowledgePermissionAllowed: true, sourceProjectReadAllowed: true }
+        },
+        client
+      )
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_ENTRY_REVOKED", status: 409 });
+    expect(client.knowledgeEntryVersion.updateMany).not.toHaveBeenCalled();
+    expect(client.knowledgeEntry.updateMany).not.toHaveBeenCalled();
+    expect(client.knowledgeEntryReview.create).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+    expect(outboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails before knowledge writes when the transaction cannot read the database clock", async () => {
+    const client = transaction({
+      $queryRaw: vi.fn(async () => []),
+      knowledgeEntryVersion: {
+        findUnique: vi.fn(async () => ({
+          id: "knowledge-version-1",
+          entryId: "knowledge-entry-1",
+          sourceProjectId: "source-project-1",
+          status: "DRAFT",
+          createdById: "author-1",
+          entry: { id: "knowledge-entry-1", status: "ACTIVE", version: 4 }
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 }))
+      },
+      knowledgeEntry: { updateMany: vi.fn(async () => ({ count: 1 })) }
+    });
+
+    await expect(
+      submitKnowledgeEntryVersion(
+        {
+          entryId: "knowledge-entry-1",
+          versionId: "knowledge-version-1",
+          expectedEntryVersion: 4,
+          actorId: "author-1",
+          idempotencyKey: "knowledge-submit-clock-missing-1",
+          sourceRead: { knowledgePermissionAllowed: true, sourceProjectReadAllowed: true }
+        },
+        client
+      )
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_DATABASE_CLOCK_UNAVAILABLE", status: 503 });
+    expect(client.knowledgeEntryVersion.updateMany).not.toHaveBeenCalled();
+    expect(client.knowledgeEntry.updateMany).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+    expect(outboxSpy).not.toHaveBeenCalled();
+  });
+
   it("requires explicit IP and sanitization confirmation before publishing", async () => {
     const client = transaction({
       knowledgeEntryVersion: {
@@ -648,7 +950,12 @@ describe("knowledge entry service", () => {
           sourceProjectId: "source-project-1",
           status: "IN_REVIEW",
           submittedById: "author-1",
-          entry: { id: "knowledge-entry-1", version: 5, currentPublishedVersionId: null }
+          entry: {
+            id: "knowledge-entry-1",
+            status: "ACTIVE",
+            version: 5,
+            currentPublishedVersionId: null
+          }
         }))
       }
     });
@@ -693,6 +1000,7 @@ describe("knowledge entry service", () => {
           submittedById: "author-1",
           entry: {
             id: "knowledge-entry-1",
+            status: "ACTIVE",
             version: 5,
             currentPublishedVersionId: "knowledge-version-published-1"
           }
@@ -739,6 +1047,7 @@ describe("knowledge entry service", () => {
           status: "PUBLISHED",
           entry: {
             id: "knowledge-entry-1",
+            status: "ACTIVE",
             version: 6,
             currentPublishedVersionId: "knowledge-version-1"
           }
