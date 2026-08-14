@@ -1,0 +1,100 @@
+import { randomUUID } from "node:crypto";
+
+import { describe, expect, it } from "vitest";
+
+import { db } from "@/lib/db";
+
+import { getKnowledgeSearchCapability } from "../application/knowledge-search-capability";
+import { searchPublishedKnowledge } from "../application/knowledge-search-service";
+import { createKnowledgeSearchRepository } from "./knowledge-repository";
+
+const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
+const suffix = randomUUID().slice(0, 8);
+const ids = {
+  user: `knowledge-search-user-${suffix}`,
+  project: `knowledge-search-project-${suffix}`,
+  entry: `knowledge-search-entry-${suffix}`,
+  version: `knowledge-search-version-${suffix}`
+};
+
+describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
+  it("server reports DEGRADED when pg_trgm is absent", async () => {
+    const extension = await db.$queryRaw<Array<{ available: boolean }>>`
+      SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS available
+    `;
+    if (extension[0]?.available) return;
+    await expect(getKnowledgeSearchCapability(db)).resolves.toBe("DEGRADED");
+  });
+
+  it("server reports TRIGRAM when the extension and GIN index exist", async () => {
+    const extension = await db.$queryRaw<Array<{ available: boolean }>>`
+      SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS available
+    `;
+    if (!extension[0]?.available) return;
+    await expect(getKnowledgeSearchCapability(db)).resolves.toBe("TRIGRAM");
+  });
+
+  it("bounded ILIKE seeds and returns published knowledge", async () => {
+    await db.user.create({
+      data: { id: ids.user, employeeNo: `KNOW-${suffix}`, name: "Knowledge search test" }
+    });
+    await db.project.create({
+      data: {
+        id: ids.project,
+        code: `KNOW.SEARCH.${suffix}`.toUpperCase(),
+        name: "Knowledge search source",
+        status: "CLOSED",
+        projectType: "CUSTOMER_DELIVERY",
+        createdById: ids.user
+      }
+    });
+    await db.knowledgeEntry.create({
+      data: {
+        id: ids.entry,
+        code: `KNOW.SEARCH.${suffix}`.toUpperCase(),
+        status: "ACTIVE",
+        createdById: ids.user,
+        updatedById: ids.user
+      }
+    });
+    await db.knowledgeEntryVersion.create({
+      data: {
+        id: ids.version,
+        entryId: ids.entry,
+        sourceProjectId: ids.project,
+        versionNo: 1,
+        status: "PUBLISHED",
+        title: "伺服抖动调参",
+        sanitizedSummary: "仅包含内部通用调参经验。",
+        experienceType: "COMMISSIONING",
+        discipline: "ELECTRICAL",
+        normalizedKeywordsJson: ["伺服", "抖动", "调参"],
+        normalizedKeywordsText: "伺服 抖动 调参",
+        applicableProjectTypesJson: ["CUSTOMER_DELIVERY"],
+        applicableStageCodesJson: ["S5"],
+        preconditions: "已备份基线参数。",
+        recommendedPractice: "逐轴调整。",
+        antiPatterns: "不得复制客户参数文件。",
+        limitations: "仅适用于空载调试。",
+        ipSanitizationDeclaration: "已完成脱敏。",
+        internalReusable: true,
+        contentChecksum: "a".repeat(64),
+        createdById: ids.user,
+        submittedById: ids.user,
+        submittedAt: new Date(),
+        publishedById: ids.user,
+        publishedAt: new Date()
+      }
+    });
+
+    const result = await searchPublishedKnowledge(
+      { query: "伺服", page: 1, pageSize: 20 },
+      { getCapability: async () => "DEGRADED", repository: createKnowledgeSearchRepository(db) }
+    );
+
+    expect(result).toMatchObject({ capability: "DEGRADED", warningCode: "SEARCH_DEGRADED" });
+    expect(result.items).toContainEqual(
+      expect.objectContaining({ entryCode: `KNOW.SEARCH.${suffix}`.toUpperCase() })
+    );
+  });
+});

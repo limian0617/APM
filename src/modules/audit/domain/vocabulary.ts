@@ -697,6 +697,29 @@ export const PROJECT_RETROSPECTIVE_AUDIT_FIELDS = [
   "version"
 ] as const;
 
+export const KNOWLEDGE_ENTRY_AUDIT_FIELDS = [
+  "knowledgeEntryId",
+  "knowledgeVersionId",
+  "sourceProjectId",
+  "finalArchiveVersionId",
+  "retrospectiveInputArchiveVersionId",
+  "retrospectiveVersionId",
+  "contentChecksum",
+  "status",
+  "decision",
+  "reason"
+] as const;
+
+export const KNOWLEDGE_REUSE_AUDIT_FIELDS = [
+  "reuseRecordId",
+  "targetProjectId",
+  "knowledgeEntryId",
+  "knowledgeVersionId",
+  "correctionId",
+  "correctionType",
+  "reason"
+] as const;
+
 export const PROJECT_CLOSURE_POLICY_AUDIT_FIELDS = [
   "projectId",
   "closurePolicyId",
