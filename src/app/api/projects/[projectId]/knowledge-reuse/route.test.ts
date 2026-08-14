@@ -24,7 +24,7 @@ const body = {
   scenario: "新产线复位。",
   evidenceSummary: "现场记录已归档。"
 };
-function request(value = body) {
+function request(value: unknown = body) {
   return new Request("http://localhost/api/projects/target-project-1/knowledge-reuse", {
     method: "POST",
     headers: { "content-type": "application/json", "idempotency-key": "reuse-1" },
@@ -72,6 +72,32 @@ describe("POST /api/projects/[projectId]/knowledge-reuse", () => {
     });
 
     expect((await POST(request(), context)).status).toBe(403);
+    expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
+    expect(reuseService.confirmKnowledgeReuse).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid target-project path before any command or service call", async () => {
+    projectGuard.authorizeProjectRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "manager-1" },
+      project: { departmentId: "engineering" }
+    });
+
+    expect((await POST(request(), { params: Promise.resolve({ projectId: " " }) })).status).toBe(
+      400
+    );
+    expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
+    expect(reuseService.confirmKnowledgeReuse).not.toHaveBeenCalled();
+  });
+
+  it("rejects a strict invalid reuse body before any command or service call", async () => {
+    projectGuard.authorizeProjectRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "manager-1" },
+      project: { departmentId: "engineering" }
+    });
+
+    expect((await POST(request({ ...body, unexpected: true }), context)).status).toBe(400);
     expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
     expect(reuseService.confirmKnowledgeReuse).not.toHaveBeenCalled();
   });

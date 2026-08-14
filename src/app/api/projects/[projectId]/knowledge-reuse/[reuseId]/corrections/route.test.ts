@@ -23,7 +23,7 @@ const body = {
   reason: "适用范围需要明确。",
   correctionText: "仅适用于停机状态。"
 };
-function request(value = body) {
+function request(value: unknown = body) {
   return new Request(
     "http://localhost/api/projects/target-project-1/knowledge-reuse/reuse-1/corrections",
     {
@@ -66,6 +66,36 @@ describe("POST /api/projects/[projectId]/knowledge-reuse/[reuseId]/corrections",
     });
 
     expect((await POST(request(), context)).status).toBe(403);
+    expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
+    expect(reuseService.correctKnowledgeReuse).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid target or reuse path before any command or service call", async () => {
+    projectGuard.authorizeProjectRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "manager-1" },
+      project: { departmentId: "engineering" }
+    });
+
+    expect(
+      (
+        await POST(request(), {
+          params: Promise.resolve({ projectId: "target-project-1", reuseId: " " })
+        })
+      ).status
+    ).toBe(400);
+    expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
+    expect(reuseService.correctKnowledgeReuse).not.toHaveBeenCalled();
+  });
+
+  it("rejects a strict invalid correction body before any command or service call", async () => {
+    projectGuard.authorizeProjectRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "manager-1" },
+      project: { departmentId: "engineering" }
+    });
+
+    expect((await POST(request({ ...body, unexpected: true }), context)).status).toBe(400);
     expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
     expect(reuseService.correctKnowledgeReuse).not.toHaveBeenCalled();
   });

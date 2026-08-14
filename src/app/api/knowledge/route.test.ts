@@ -1,16 +1,82 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { KnowledgeEntryServiceError } from "@/modules/knowledge/application/knowledge-entry-service";
+import { KnowledgeSearchCapabilityError } from "@/modules/knowledge/application/knowledge-search-capability";
 
 const systemGuard = vi.hoisted(() => ({ authorizeSystemRequest: vi.fn() }));
+const projectGuard = vi.hoisted(() => ({ authorizeProjectRequest: vi.fn() }));
+const command = vi.hoisted(() => ({ idempotentCommandResponse: vi.fn() }));
+const entryService = vi.hoisted(() => ({ createKnowledgeEntryVersion: vi.fn() }));
 const searchService = vi.hoisted(() => ({ searchPublishedKnowledge: vi.fn() }));
 
 vi.mock("@/lib/auth/system-guard", () => systemGuard);
-vi.mock("@/modules/knowledge/application/knowledge-search-service", () => searchService);
+vi.mock("@/lib/auth/project-guard", () => projectGuard);
+vi.mock("@/modules/platform-api/application/idempotent-command", () => command);
+vi.mock("@/modules/knowledge/application/knowledge-entry-service", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/modules/knowledge/application/knowledge-entry-service")
+  >()),
+  ...entryService
+}));
+vi.mock("@/modules/knowledge/application/knowledge-search-service", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/modules/knowledge/application/knowledge-search-service")
+  >()),
+  ...searchService
+}));
 
-import { GET } from "./route";
+import { GET, POST } from "./route";
+
+const createBody = () => ({
+  code: "KNW-001",
+  sourceProjectId: "source-project-1",
+  finalArchiveVersionId: "archive-b-1",
+  retrospectiveInputArchiveVersionId: "archive-a-1",
+  retrospectiveVersionId: "retrospective-1",
+  issueHistoryIds: [],
+  draft: {
+    title: "安全复位",
+    sanitizedSummary: "已移除来源敏感信息。",
+    experienceType: "LESSON_LEARNED",
+    discipline: "MECHANICAL",
+    keywords: ["复位"],
+    applicableProjectTypes: ["LINE"],
+    applicableStageCodes: ["S4"],
+    preconditions: "停机。",
+    recommendedPractice: "隔离后复位。",
+    antiPatterns: "不得带电操作。",
+    limitations: "仅限停机状态。",
+    ipSanitizationDeclaration: "已完成脱敏。",
+    internalReusable: true
+  },
+  expectedEntryVersion: null
+});
+
+function createRequest(body: unknown = createBody()) {
+  return new Request("http://localhost/api/knowledge", {
+    method: "POST",
+    headers: { "content-type": "application/json", "idempotency-key": "create-knowledge-1" },
+    body: JSON.stringify(body)
+  });
+}
+
+function authorizeCreate() {
+  systemGuard.authorizeSystemRequest.mockResolvedValue({
+    authorized: true,
+    actor: { id: "author-1" }
+  });
+  projectGuard.authorizeProjectRequest.mockResolvedValue({
+    authorized: true,
+    actor: { id: "author-1" },
+    project: { departmentId: "engineering" }
+  });
+}
 
 describe("GET /api/knowledge", () => {
   beforeEach(() => {
     systemGuard.authorizeSystemRequest.mockReset();
+    projectGuard.authorizeProjectRequest.mockReset();
+    command.idempotentCommandResponse.mockReset();
+    entryService.createKnowledgeEntryVersion.mockReset();
     searchService.searchPublishedKnowledge.mockReset();
   });
 
@@ -77,5 +143,114 @@ describe("GET /api/knowledge", () => {
         }
       ]
     });
+  });
+
+  it("maps an unavailable search capability to HTTP 503", async () => {
+    systemGuard.authorizeSystemRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "reader-1" }
+    });
+    searchService.searchPublishedKnowledge.mockRejectedValue(
+      new KnowledgeSearchCapabilityError(
+        "KNOWLEDGE_SEARCH_CAPABILITY_UNAVAILABLE",
+        "无法确认知识检索数据库能力。"
+      )
+    );
+
+    expect(
+      (await GET(new Request("http://localhost/api/knowledge?query=%E5%A4%8D%E4%BD%8D"))).status
+    ).toBe(503);
+  });
+});
+
+describe("POST /api/knowledge", () => {
+  beforeEach(() => {
+    systemGuard.authorizeSystemRequest.mockReset();
+    projectGuard.authorizeProjectRequest.mockReset();
+    command.idempotentCommandResponse.mockReset();
+    entryService.createKnowledgeEntryVersion.mockReset();
+  });
+
+  it("stops at a denied global knowledge guard", async () => {
+    systemGuard.authorizeSystemRequest.mockResolvedValue({
+      authorized: false,
+      response: Response.json({ code: "FORBIDDEN" }, { status: 403 })
+    });
+
+    expect((await POST(createRequest())).status).toBe(403);
+    expect(projectGuard.authorizeProjectRequest).not.toHaveBeenCalled();
+    expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
+    expect(entryService.createKnowledgeEntryVersion).not.toHaveBeenCalled();
+  });
+
+  it("rejects a strict invalid body before source authorization or writes", async () => {
+    systemGuard.authorizeSystemRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "author-1" }
+    });
+
+    expect((await POST(createRequest({ ...createBody(), unexpected: true }))).status).toBe(400);
+    expect(projectGuard.authorizeProjectRequest).not.toHaveBeenCalled();
+    expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
+    expect(entryService.createKnowledgeEntryVersion).not.toHaveBeenCalled();
+  });
+
+  it("stops at a denied source-project read guard", async () => {
+    systemGuard.authorizeSystemRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "author-1" }
+    });
+    projectGuard.authorizeProjectRequest.mockResolvedValue({
+      authorized: false,
+      response: Response.json({ code: "FORBIDDEN" }, { status: 403 })
+    });
+
+    expect((await POST(createRequest())).status).toBe(403);
+    expect(projectGuard.authorizeProjectRequest).toHaveBeenCalledWith(
+      expect.any(Request),
+      "source-project-1",
+      "PROJECT_RETROSPECTIVE_READ"
+    );
+    expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
+    expect(entryService.createKnowledgeEntryVersion).not.toHaveBeenCalled();
+  });
+
+  it("uses the idempotent create command and returns a replay conflict without invoking the service", async () => {
+    authorizeCreate();
+    command.idempotentCommandResponse.mockResolvedValue(
+      Response.json({ code: "IDEMPOTENCY_KEY_CONFLICT" }, { status: 409 })
+    );
+
+    expect((await POST(createRequest())).status).toBe(409);
+    expect(command.idempotentCommandResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: "author-1",
+        operation: "knowledge.entry.create",
+        idempotencyKey: "create-knowledge-1"
+      })
+    );
+    expect(entryService.createKnowledgeEntryVersion).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "missing entry",
+      new KnowledgeEntryServiceError("KNOWLEDGE_ENTRY_NOT_FOUND", "不存在。", 404),
+      404
+    ],
+    [
+      "entry version conflict",
+      new KnowledgeEntryServiceError("KNOWLEDGE_ENTRY_VERSION_CONFLICT", "冲突。", 409),
+      409
+    ]
+  ])("maps a service %s error to HTTP %i", async (_case, serviceError, status) => {
+    authorizeCreate();
+    entryService.createKnowledgeEntryVersion.mockRejectedValue(serviceError);
+    command.idempotentCommandResponse.mockImplementation(async (input) => {
+      const result = await input.execute({} as never);
+      return Response.json(result.body, { status: result.status });
+    });
+
+    expect((await POST(createRequest())).status).toBe(status);
   });
 });
