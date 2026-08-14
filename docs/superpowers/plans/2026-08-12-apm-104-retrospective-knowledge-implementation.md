@@ -884,3 +884,23 @@ Stop after document validation and send APM-规划 a fourth-round implementation
 2. 删除关闭服务本地 parser/evaluator，使用 governance 的同名 exports；不改变关项的锁顺序、SERIALIZABLE 重试、G9 evidence 或 archive currentness 逻辑。
 3. 将纯 evaluator 的 checksum/default-deny 断言移入 governance 测试；关闭服务测试以共享 evaluator 的无效结果验证 `CLOSURE_POLICY_BINDING_MISMATCH`，不保留第二份规则测试。
 4. 运行 shared binding、project-close-service、R1.1 query/page-state/route 聚焦测试，`npm run typecheck`、`npm run format:check`、`git diff --check` 和 `rg -n "function evaluateClosurePolicyBinding|export function evaluateClosurePolicyBinding" src`。预期 `rg` 只输出 governance 定义；本机 PostgreSQL/迁移回放仍记为 `SKIPPED`，Task 12 Linux CI 必须实跑。只提交本节列出的文件后停止并请求复审。
+
+## Recovery R2（Task 9 生命周期迁移修补）
+
+**根因和授权：** 已批准设计冻结 `PUBLISHED | SUPERSEDED -> REVOKED`；`knowledge-policy.ts` 和 Prisma 枚举均已表达该状态机，但尚未发布的唯一 APM-104 migration 在 `validate_knowledge_entry_version_mutation()` 中遗漏 `SUPERSEDED -> REVOKED`。真实 PostgreSQL 会以 `23514` 拒绝该设计允许的状态变迁。因分支尚无 upstream 且 migration 未发布，获准在同一 migration 作单行修补，不新建补丁 migration，也不缩窄生命周期。
+
+**唯一允许范围：**
+
+- Modify: `prisma/migrations/20260812010000_apm_104_retrospectives_knowledge_closure_policy/migration.sql`，仅在 `validate_knowledge_entry_version_mutation()` 的允许转换中追加 `OR (OLD."status" = 'SUPERSEDED' AND NEW."status" = 'REVOKED')`；不得改动其他状态、可更新字段、SQLSTATE、trigger、enum、legacy DDL marker 或 APM-054 兼容逻辑。
+- Modify/Test: `src/modules/knowledge/domain/knowledge-persistence.test.ts`，从该函数的限定函数体读取状态机，精确验证两条终态撤销、反向转换缺席和 `23514` default-deny。
+- Create/Test: `src/modules/knowledge/infrastructure/knowledge-entry-version-mutation.integration.test.ts`，在真实 PostgreSQL 事务内建立临时 probe table 并挂载真实 trigger function，验证 `SUPERSEDED -> REVOKED` 成功、`REVOKED -> PUBLISHED` 只可由 `23514` 拒绝、内容事实改动只可由 `55000` 拒绝。
+- Modify: 本实施计划。
+- 禁止：Prisma Schema、新 migration、AuditAction/KnowledgeReviewDecision enum、知识领域/API/UI、Task 10–12、推送、PR 和开发进度表。
+
+**恢复步骤固定为：**
+
+1. 先为 migration 函数体追加 named static RED，限定提取 `validate_knowledge_entry_version_mutation()`，使遗漏的 `SUPERSEDED -> REVOKED` 导致失败；不得用全文件宽泛文本断言或行号断言。
+2. 只追加该状态转换，重跑 static persistence、knowledge policy 与 revoke-service 聚焦测试；保留撤销审计为既有 `KNOWLEDGE_ENTRY_REVIEWED`，payload 冻结 `decision="REVOKE"`、reason、版本/项目/状态，成功 Outbox 保持 `knowledge.entry-version.revoked`。
+3. 创建真实 PostgreSQL trigger 行为测试；本机 `RUN_DATABASE_INTEGRATION`、`psql` 或 Docker 不可用时只能记录为 `SKIPPED`，不得把 skip 作为通过。Task 12 Linux CI 必须在空库、APM-054→104 升级和受限 pg_trgm 回放后实跑此测试。
+4. 运行 `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run db:generate`、`npm run db:validate` 和 `git diff --check`。本机没有可用 PostgreSQL 时，migration marker 与升级回放同样只能记录 `SKIPPED`。
+5. 仅暂存本计划、同一 migration、static persistence test 与新的 PostgreSQL integration test，提交 `fix(apm-104): align knowledge revocation migration`；绝不混入正在进行的 Task 9 business files。提交后无需复审等待，立即恢复 Task 9；Task 9 完成后才暂停复审。

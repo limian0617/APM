@@ -56,4 +56,33 @@ describe("APM-104 knowledge persistence contract", () => {
       expect(migration).toContain(declaration);
     }
   });
+
+  it("allows only the approved terminal revocations in the immutable-version trigger", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260812010000_apm_104_retrospectives_knowledge_closure_policy/migration.sql"
+      ),
+      "utf8"
+    );
+    const functionMatch = migration.match(
+      /CREATE OR REPLACE FUNCTION "validate_knowledge_entry_version_mutation"\(\)\s+RETURNS TRIGGER AS \$\$(?<body>[\s\S]*?)\$\$ LANGUAGE plpgsql;/u
+    );
+    const body = functionMatch?.groups?.body;
+
+    expect(body).toBeDefined();
+    expect(body).toContain(
+      `OLD."status" = 'PUBLISHED' AND NEW."status" IN ('SUPERSEDED', 'REVOKED')`
+    );
+    expect(body).toContain(`OLD."status" = 'SUPERSEDED' AND NEW."status" = 'REVOKED'`);
+    expect(body).not.toMatch(
+      /OLD\."status"\s*=\s*'REVOKED'\s+AND\s+NEW\."status"\s*=\s*'PUBLISHED'/u
+    );
+    expect(body).not.toMatch(
+      /OLD\."status"\s*=\s*'SUPERSEDED'\s+AND\s+NEW\."status"\s*=\s*'PUBLISHED'/u
+    );
+    expect(body).toContain(
+      "RAISE EXCEPTION 'invalid knowledge version status transition' USING ERRCODE = '23514'"
+    );
+  });
 });

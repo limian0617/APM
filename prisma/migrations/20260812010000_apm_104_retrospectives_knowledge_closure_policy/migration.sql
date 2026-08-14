@@ -907,7 +907,8 @@ BEGIN
   END IF;
   IF (OLD."status" = 'DRAFT' AND NEW."status" IN ('IN_REVIEW', 'SUPERSEDED'))
      OR (OLD."status" = 'IN_REVIEW' AND NEW."status" IN ('PUBLISHED', 'REJECTED'))
-     OR (OLD."status" = 'PUBLISHED' AND NEW."status" IN ('SUPERSEDED', 'REVOKED')) THEN
+     OR (OLD."status" = 'PUBLISHED' AND NEW."status" IN ('SUPERSEDED', 'REVOKED'))
+     OR (OLD."status" = 'SUPERSEDED' AND NEW."status" = 'REVOKED') THEN
     RETURN NEW;
   END IF;
   IF OLD."status" = NEW."status"
