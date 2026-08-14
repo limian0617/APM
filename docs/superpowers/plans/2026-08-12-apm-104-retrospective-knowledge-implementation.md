@@ -845,3 +845,23 @@ Large Task 2 migration work follows this same loop per enum/model/constraint/tri
 6. 运行 focused tests、typecheck、format、`git diff --check`；PostgreSQL 集成/升级回放在本机不可用时记录 `SKIPPED`，Linux CI 必须实跑。仅提交上述恢复文件（含本计划与批准设计文档），提交后停止，不进入 Task 9。
 
 Stop after document validation and send APM-规划 a fourth-round implementation-plan review request. Do not begin TDD.
+
+## Recovery R1.1（R1 复审后的 Task 9 前独立修订）
+
+**复审结论：** Recovery R1 的权限、四身份 fixture 和 fail-closed disposable 数据库保护保持有效；但复盘查询仍把 `findFirst` 的 Archive B 当作当前事实、没有查询 G9 批准证据，并且在没有复盘聚合时遗漏可创建复盘所需的 Archive A。Task 9 继续暂停。R1.1 必须作为新提交，绝不 amend `4eb8038`，完成后再次暂停复审。
+
+**唯一允许范围：**
+
+- Create/Modify: archives 侧仅用于 `ARCHIVE.SOURCE@2` 的 currentness/readiness helper 及其测试；governance 侧仅用于完整 closure-policy binding 的纯规则及其测试。
+- Modify/Test: `src/modules/retrospectives/application/project-retrospective-query-service.ts`、其测试、`src/modules/retrospectives/contracts/project-retrospective-page-state.ts`、其测试、`src/app/api/projects/[projectId]/retrospectives/route.ts`、其测试。
+- Modify: 本实施计划。
+- 禁止：Prisma Schema、唯一 APM-104 migration、权限矩阵、fixture/identity route、Task 9 知识业务、推送、PR、进度表，以及任何对 `4eb8038` 的 amend。
+
+恢复步骤固定为：
+
+1. 先为 Archive B 非 G9 来源变化、G9 无/错配批准证据、self-reference/checker binding/checksum 不一致、无聚合/草稿/已批准复盘的 Archive A 指针，以及 GET 的 NORMAL/EMPTY/STALE/query-error 输出增加 RED。运行 query/page-state/route 聚焦测试并确认旧实现失败；测试不得以数组首项或裸 `findFirst` 证明正确性。
+2. 创建有类型的 archive V2 helper。它只接受 `READY`、`ARCHIVE.SOURCE@2`、`APPLICABLE`、最新 integrity `PASSED` 的候选；B 还必须含确切 `PROJECT_RETROSPECTIVE_VERSION` manifest item。helper 通过 `ArchiveSourceFormulaRegistry` 重建当前 V2 manifest，并同时比较 `sourceWatermark` 和 `manifestChecksum`；未知公式、读源失败、哈希不一致或缺少 latest integrity 一律返回 `null`。多个当前 B 按冻结 version/id 顺序确定性选择，绝不以单个裸 `findFirst` 推断。
+3. 将完整 V2 policy binding 收敛到 governance 纯规则，基于 `buildClosurePolicyVersionFacts` 重算并校验两项 checker、`ARCHIVE.SOURCE@2`、`CLOSURE.SELF_REFERENCE_EXCLUSION@1`、current ACTIVE version、source G9 definition/checkerBindings、source template snapshot、bindingChecksum 和 policyChecksum。查询只消费该完整规则，不维护弱化副本；任何未知或不匹配均为 `closurePolicy=null`。
+4. 查询服务返回最小脱敏 `g9Approval`。它仅在 exact active policy、exact current B、`currentVersionId === latestApprovedVersionId`、APPROVED submission、两个 PASSED checker，以及 submission/snapshot/instance tuple 和两个 checker evidence 的 archive/policy/retrospective ID、manifest checksum、source watermark、retrospective checksum 全部匹配时出现。`RUN_G9` 只依赖 current B 和完整 policy；`CLOSE_PROJECT` 额外依赖该 G9 fact。
+5. 无聚合时查询仍返回稳定完整 DTO，并用当前 V2 manifest 解析精确 Archive A；仅 `canCreate && archiveA` 显示 CREATE。无批准版本的 current draft 使用其冻结且当前的 Archive A；存在 approved 指针时 A/B 始终根据 approved version 冻结的来源解析，不能让后续 draft 替换治理来源。A/B 或指针缺失、过期、FAILED integrity、未知公式均 fail closed。
+6. 重跑全部 R1.1 query/page-state/route/pure-rule/helper 聚焦测试，随后 `npm run typecheck`、`npm run format:check`、`git diff --check`。本机 PostgreSQL、迁移回放和 PostgreSQL integration 继续只能记为 `SKIPPED`；Task 12 Linux CI 必须实跑。只提交上述文件后停止并将提交、RED/GREEN、聚焦结果、限制和 `git status` 交 APM-规划复审。

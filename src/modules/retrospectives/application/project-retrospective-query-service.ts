@@ -1,16 +1,64 @@
 import type { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
+import {
+  findCurrentV2Archive,
+  findReadyApplicableV2Archive,
+  isReadyApplicableV2Archive,
+  type ArchiveV2Candidate,
+  type ArchiveV2CurrentManifest,
+  type ArchiveV2CurrentnessClient
+} from "@/modules/archives/application/archive-v2-currentness";
+import {
+  evaluateClosurePolicyBinding,
+  parseClosureCheckerBindings,
+  resolveExactActiveClosurePolicy
+} from "@/modules/governance/domain/closure-policy-binding";
 
 type RetrospectiveVersionView = {
   id: string;
   status: string;
   retrospectiveId: string;
   retrospectiveInputArchiveVersionId: string;
+  retrospectiveInputManifestChecksum?: string;
+  retrospectiveInputSourceWatermark?: string;
+  retrospectiveInputWatermarkVersion?: string;
+  retrospectiveInputWatermark?: string;
+  contentChecksum?: string;
   createdAt?: { toISOString?(): string } | unknown;
   submittedAt?: { toISOString?(): string } | unknown;
   [field: string]: unknown;
 };
+
+type RetrospectiveAggregate = {
+  id: string;
+  projectId: string;
+  version: number;
+  currentVersionId: string | null;
+  latestApprovedVersionId: string | null;
+  currentVersion: RetrospectiveVersionView | null;
+  latestApprovedVersion: RetrospectiveVersionView | null;
+  versions: RetrospectiveVersionView[];
+  reviews: Array<Record<string, unknown>>;
+};
+
+type CurrentManifestReader = (input: {
+  projectId: string;
+  client: ArchiveV2CurrentnessClient;
+}) => Promise<ArchiveV2CurrentManifest>;
+
+type ClosurePolicyVersion = NonNullable<
+  NonNullable<Parameters<typeof resolveExactActiveClosurePolicy>[0]>["currentVersion"]
+>;
+
+type GateEvidence = Record<string, unknown>;
+
+export class ProjectRetrospectiveQueryError extends Error {
+  constructor(public readonly code: "PROJECT_RETROSPECTIVE_POINTER_INVALID") {
+    super(code);
+    this.name = "ProjectRetrospectiveQueryError";
+  }
+}
 
 function versionView(version: RetrospectiveVersionView) {
   return {
@@ -28,44 +76,18 @@ function versionView(version: RetrospectiveVersionView) {
   };
 }
 
-export class ProjectRetrospectiveQueryError extends Error {
-  constructor(public readonly code: "PROJECT_RETROSPECTIVE_POINTER_INVALID") {
-    super(code);
-  }
+function reviewView(review: Record<string, unknown>) {
+  const reviewedAt = review.reviewedAt;
+  return {
+    ...review,
+    reviewedAt:
+      reviewedAt && typeof (reviewedAt as { toISOString?: unknown }).toISOString === "function"
+        ? (reviewedAt as { toISOString(): string }).toISOString()
+        : reviewedAt
+  };
 }
 
-const V2_CLOSURE_BINDINGS = {
-  archiveCheckerCode: "CLOSURE.ARCHIVE.G9",
-  archiveCheckerVersion: 2,
-  retrospectiveCheckerCode: "CLOSURE.RETROSPECTIVE.G9",
-  retrospectiveCheckerVersion: 1,
-  archiveSourceFormulaVersion: "V2"
-} as const;
-
-type ArchiveReadiness = {
-  id: string;
-  status: string;
-  archiveSourceFormulaVersion: string;
-  retrospectiveInputApplicability: string;
-  integrityChecks: Array<{ status: string }>;
-};
-
-function isReadyApplicableV2Archive(archive: ArchiveReadiness | null) {
-  return (
-    archive?.status === "READY" &&
-    archive.archiveSourceFormulaVersion === "V2" &&
-    archive.retrospectiveInputApplicability === "APPLICABLE" &&
-    archive.integrityChecks[0]?.status === "PASSED"
-  );
-}
-
-function assertRetrospectivePointers(aggregate: {
-  id: string;
-  currentVersionId: string | null;
-  latestApprovedVersionId: string | null;
-  currentVersion: RetrospectiveVersionView | null;
-  latestApprovedVersion: RetrospectiveVersionView | null;
-}) {
+function assertRetrospectivePointers(aggregate: RetrospectiveAggregate) {
   if (
     (aggregate.currentVersionId && !aggregate.currentVersion) ||
     (aggregate.latestApprovedVersionId && !aggregate.latestApprovedVersion) ||
@@ -79,49 +101,222 @@ function assertRetrospectivePointers(aggregate: {
   }
 }
 
-function isV2ClosurePolicy(
-  policy: {
-    status: string;
-    currentVersionId: string | null;
-    currentVersion: {
-      id: string;
-      status: string;
-      archiveCheckerCode: string;
-      archiveCheckerVersion: number;
-      retrospectiveCheckerCode: string;
-      retrospectiveCheckerVersion: number;
-      archiveSourceFormulaVersion: string;
-      sourceGateDefinition: { code: string; scope: string } | null;
-      sourceTemplateSnapshot: { id: string } | null;
-    } | null;
-  } | null
+function archiveView(archive: ArchiveV2Candidate | null) {
+  return archive && isReadyApplicableV2Archive(archive)
+    ? { id: archive.id, status: archive.status }
+    : null;
+}
+
+function frozenArchiveAIsBound(
+  version: RetrospectiveVersionView,
+  archive: ArchiveV2Candidate | null
 ) {
-  if (!policy?.currentVersion || policy.status !== "ACTIVE") return null;
-  const version = policy.currentVersion;
-  if (
-    policy.currentVersionId !== version.id ||
-    version.status !== "ACTIVE" ||
-    version.archiveCheckerCode !== V2_CLOSURE_BINDINGS.archiveCheckerCode ||
-    version.archiveCheckerVersion !== V2_CLOSURE_BINDINGS.archiveCheckerVersion ||
-    version.retrospectiveCheckerCode !== V2_CLOSURE_BINDINGS.retrospectiveCheckerCode ||
-    version.retrospectiveCheckerVersion !== V2_CLOSURE_BINDINGS.retrospectiveCheckerVersion ||
-    version.archiveSourceFormulaVersion !== V2_CLOSURE_BINDINGS.archiveSourceFormulaVersion ||
-    version.sourceGateDefinition?.code !== "G9" ||
-    version.sourceGateDefinition.scope !== "PROJECT" ||
-    !version.sourceTemplateSnapshot
-  ) {
+  return Boolean(
+    archive &&
+    isReadyApplicableV2Archive(archive) &&
+    version.retrospectiveInputArchiveVersionId === archive.id &&
+    version.retrospectiveInputManifestChecksum === archive.manifestChecksum &&
+    version.retrospectiveInputSourceWatermark === archive.sourceWatermark &&
+    version.retrospectiveInputWatermarkVersion === archive.retrospectiveInputWatermarkVersion &&
+    version.retrospectiveInputWatermark === archive.retrospectiveInputWatermark
+  );
+}
+
+function sameTuple(
+  row: {
+    projectId?: string;
+    closurePolicyVersionId?: string | null;
+    closurePolicyChecksum?: string | null;
+    archiveSourceFormulaVersion?: string | null;
+  },
+  projectId: string,
+  policy: ClosurePolicyVersion
+) {
+  return (
+    row.projectId === projectId &&
+    row.closurePolicyVersionId === policy.id &&
+    row.closurePolicyChecksum === policy.policyChecksum &&
+    row.archiveSourceFormulaVersion === "V2"
+  );
+}
+
+function record(value: unknown): GateEvidence {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as GateEvidence) : {};
+}
+
+function archiveEvidenceMatches(
+  evidence: GateEvidence,
+  input: {
+    projectId: string;
+    archiveA: ArchiveV2Candidate;
+    archiveB: ArchiveV2Candidate;
+    retrospective: RetrospectiveVersionView;
+  }
+) {
+  return (
+    evidence.projectId === input.projectId &&
+    evidence.archiveBId === input.archiveB.id &&
+    evidence.archiveSourceFormulaVersion === "ARCHIVE.SOURCE@2" &&
+    evidence.archiveAId === input.archiveA.id &&
+    evidence.archiveAInputWatermark === input.archiveA.retrospectiveInputWatermark &&
+    evidence.archiveBInputWatermark === input.archiveB.retrospectiveInputWatermark &&
+    evidence.manifestChecksum === input.archiveB.manifestChecksum &&
+    evidence.sourceWatermark === input.archiveB.sourceWatermark &&
+    evidence.retrospectiveVersionId === input.retrospective.id &&
+    evidence.currentRetrospectiveVersionId === input.retrospective.id &&
+    evidence.latestApprovedRetrospectiveVersionId === input.retrospective.id &&
+    evidence.archiveBIncludesRetrospectiveVersion === true &&
+    evidence.sourceFactsCurrent === true
+  );
+}
+
+function retrospectiveEvidenceMatches(
+  evidence: GateEvidence,
+  input: {
+    projectId: string;
+    archiveA: ArchiveV2Candidate;
+    archiveB: ArchiveV2Candidate;
+    retrospective: RetrospectiveVersionView;
+  }
+) {
+  return (
+    evidence.projectId === input.projectId &&
+    evidence.archiveBId === input.archiveB.id &&
+    evidence.archiveAId === input.archiveA.id &&
+    evidence.archiveAInputWatermark === input.archiveA.retrospectiveInputWatermark &&
+    evidence.archiveBInputWatermark === input.archiveB.retrospectiveInputWatermark &&
+    (evidence.archiveBManifestChecksum ?? evidence.manifestChecksum) ===
+      input.archiveB.manifestChecksum &&
+    (evidence.archiveBSourceWatermark ?? evidence.sourceWatermark) ===
+      input.archiveB.sourceWatermark &&
+    evidence.retrospectiveVersionId === input.retrospective.id &&
+    evidence.retrospectiveContentChecksum === input.retrospective.contentChecksum &&
+    evidence.currentVersionId === input.retrospective.id &&
+    evidence.latestApprovedVersionId === input.retrospective.id &&
+    evidence.archiveBIncludesRetrospectiveVersion === true
+  );
+}
+
+async function readApprovedG9(input: {
+  client: ArchiveV2CurrentnessClient & {
+    gateSubmission?: { findMany(input: unknown): Promise<Array<Record<string, unknown>>> };
+  };
+  projectId: string;
+  policy: ClosurePolicyVersion | null;
+  archiveA: ArchiveV2Candidate | null;
+  archiveB: ArchiveV2Candidate | null;
+  retrospective: RetrospectiveVersionView | null;
+}) {
+  if (!input.policy || !input.archiveA || !input.archiveB || !input.retrospective) return null;
+  if (!input.client.gateSubmission) return null;
+  const submissions = await input.client.gateSubmission.findMany({
+    where: {
+      projectId: input.projectId,
+      status: "APPROVED",
+      closurePolicyVersionId: input.policy.id
+    },
+    include: {
+      gateInstance: { include: { gateDefinition: true } },
+      gateCheckSnapshot: { include: { results: true } }
+    },
+    orderBy: [{ decidedAt: "desc" }, { sequence: "desc" }, { id: "desc" }]
+  });
+  const expected = {
+    projectId: input.projectId,
+    archiveA: input.archiveA,
+    archiveB: input.archiveB,
+    retrospective: input.retrospective
+  };
+  for (const candidate of submissions) {
+    if (candidate.status !== "APPROVED") continue;
+    const instance = candidate.gateInstance as {
+      projectId?: string;
+      gateDefinitionId?: string;
+      closurePolicyVersionId?: string | null;
+      closurePolicyChecksum?: string | null;
+      archiveSourceFormulaVersion?: string | null;
+      gateDefinition?: { id?: string; checkerBindingsJson?: unknown };
+    } | null;
+    const snapshot = candidate.gateCheckSnapshot as {
+      projectId?: string;
+      status?: string;
+      closurePolicyVersionId?: string | null;
+      closurePolicyChecksum?: string | null;
+      archiveSourceFormulaVersion?: string | null;
+      checkerBindingsJson?: unknown;
+      results?: Array<Record<string, unknown>>;
+    } | null;
+    if (
+      !sameTuple(candidate, input.projectId, input.policy) ||
+      !instance ||
+      !snapshot ||
+      !sameTuple(instance, input.projectId, input.policy) ||
+      !sameTuple(snapshot, input.projectId, input.policy) ||
+      instance.gateDefinitionId !== input.policy.sourceGateDefinitionId ||
+      instance.gateDefinition?.id !== input.policy.sourceGateDefinitionId ||
+      snapshot.status !== "PASSED"
+    ) {
+      continue;
+    }
+    const binding = evaluateClosurePolicyBinding({
+      projectId: input.projectId,
+      sourceTemplateSnapshotId: input.policy.sourceTemplateSnapshotId,
+      sourceGateDefinitionId: input.policy.sourceGateDefinitionId,
+      sourceGateDefinitionBindings: parseClosureCheckerBindings(
+        instance.gateDefinition?.checkerBindingsJson
+      ),
+      snapshotBindings: parseClosureCheckerBindings(snapshot.checkerBindingsJson),
+      persisted: input.policy
+    });
+    if (
+      !binding.policyFactsValid ||
+      !binding.sourceGateDefinitionBindingsValid ||
+      !binding.snapshotCheckerBindingsValid
+    ) {
+      continue;
+    }
+    const results = snapshot.results ?? [];
+    const archiveResult = results.find(
+      (result) =>
+        result.checkerCode === "CLOSURE.ARCHIVE.G9" &&
+        result.checkerVersion === 2 &&
+        result.status === "PASSED"
+    );
+    const retrospectiveResult = results.find(
+      (result) =>
+        result.checkerCode === "CLOSURE.RETROSPECTIVE.G9" &&
+        result.checkerVersion === 1 &&
+        result.status === "PASSED"
+    );
+    if (
+      !archiveResult ||
+      !retrospectiveResult ||
+      !archiveEvidenceMatches(record(archiveResult.evidenceJson), expected) ||
+      !retrospectiveEvidenceMatches(record(retrospectiveResult.evidenceJson), expected)
+    ) {
+      continue;
+    }
+    return { submissionId: String(candidate.id), status: "APPROVED" as const };
+  }
+  return null;
+}
+
+async function safely<T>(read: () => Promise<T | null>): Promise<T | null> {
+  try {
+    return await read();
+  } catch {
     return null;
   }
-  return { id: version.id, status: version.status };
 }
 
 export async function getProjectRetrospective(input: {
   projectId: string;
   client?: Prisma.TransactionClient | typeof db;
   allowedActions?: readonly string[];
+  readCurrentV2Manifest?: CurrentManifestReader;
 }) {
   const client = input.client ?? db;
-  const aggregate = await client.projectRetrospective.findUnique({
+  const aggregate = (await client.projectRetrospective.findUnique({
     where: { projectId: input.projectId },
     include: {
       currentVersion: true,
@@ -129,70 +324,92 @@ export async function getProjectRetrospective(input: {
       versions: { orderBy: { versionNo: "desc" } },
       reviews: { orderBy: { reviewedAt: "desc" } }
     }
-  });
+  })) as RetrospectiveAggregate | null;
+  const archiveClient = client as unknown as ArchiveV2CurrentnessClient & {
+    gateSubmission?: { findMany(input: unknown): Promise<Array<Record<string, unknown>>> };
+  };
   if (!aggregate) {
+    const archiveA = await safely(() =>
+      findCurrentV2Archive({
+        projectId: input.projectId,
+        client: archiveClient,
+        readCurrentManifest: input.readCurrentV2Manifest
+      })
+    );
     return {
       projectId: input.projectId,
       retrospective: null,
+      currentVersionId: null,
+      latestApprovedVersionId: null,
+      staleApprovedPointer: false,
+      currentVersion: null,
+      latestApprovedVersion: null,
+      archiveA: archiveView(archiveA),
+      archiveB: null,
+      closurePolicy: null,
+      g9Approval: null,
       versions: [],
+      reviews: [],
       allowedActions: input.allowedActions ?? []
     };
   }
   assertRetrospectivePointers(aggregate);
   const currentVersion = aggregate.currentVersion;
   const latestApprovedVersion = aggregate.latestApprovedVersion;
-  const [archiveA, archiveB, closurePolicy] = await Promise.all([
-    latestApprovedVersion?.retrospectiveInputArchiveVersionId
-      ? client.projectArchiveVersion.findUnique({
-          where: {
-            id_projectId: {
-              id: latestApprovedVersion.retrospectiveInputArchiveVersionId,
-              projectId: input.projectId
-            }
-          },
-          select: {
-            id: true,
-            status: true,
-            archiveSourceFormulaVersion: true,
-            retrospectiveInputApplicability: true,
-            integrityChecks: { orderBy: { sequence: "desc" }, take: 1, select: { status: true } }
-          }
-        })
-      : Promise.resolve(null),
-    latestApprovedVersion
-      ? client.projectArchiveVersion.findFirst({
-          where: {
+  const governingVersion = latestApprovedVersion ?? currentVersion;
+  const archiveA = governingVersion
+    ? await safely(async () => {
+        const candidate = latestApprovedVersion
+          ? await findReadyApplicableV2Archive({
+              projectId: input.projectId,
+              archiveVersionId: governingVersion.retrospectiveInputArchiveVersionId,
+              client: archiveClient
+            })
+          : await findCurrentV2Archive({
+              projectId: input.projectId,
+              archiveVersionId: governingVersion.retrospectiveInputArchiveVersionId,
+              client: archiveClient,
+              readCurrentManifest: input.readCurrentV2Manifest
+            });
+        return frozenArchiveAIsBound(governingVersion, candidate) ? candidate : null;
+      })
+    : null;
+  const archiveB =
+    latestApprovedVersion && currentVersion?.id === latestApprovedVersion.id
+      ? await safely(() =>
+          findCurrentV2Archive({
             projectId: input.projectId,
-            status: "READY",
-            archiveSourceFormulaVersion: "V2",
-            retrospectiveInputApplicability: "APPLICABLE",
-            manifestItems: {
-              some: {
-                sourceType: "PROJECT_RETROSPECTIVE_VERSION",
-                sourceId: latestApprovedVersion.id
-              }
-            }
-          },
-          orderBy: { version: "desc" },
-          select: {
-            id: true,
-            status: true,
-            archiveSourceFormulaVersion: true,
-            retrospectiveInputApplicability: true,
-            integrityChecks: { orderBy: { sequence: "desc" }, take: 1, select: { status: true } }
-          }
-        })
-      : Promise.resolve(null),
+            retrospectiveVersionId: latestApprovedVersion.id,
+            client: archiveClient,
+            readCurrentManifest: input.readCurrentV2Manifest
+          })
+        )
+      : null;
+  const closurePolicyRecord = await safely(async () =>
     client.projectClosurePolicy.findUnique({
       where: { projectId: input.projectId },
       include: {
         currentVersion: { include: { sourceGateDefinition: true, sourceTemplateSnapshot: true } }
       }
     })
-  ]);
-  if (latestApprovedVersion?.retrospectiveInputArchiveVersionId && !archiveA) {
-    throw new ProjectRetrospectiveQueryError("PROJECT_RETROSPECTIVE_POINTER_INVALID");
-  }
+  );
+  const policyVersion = resolveExactActiveClosurePolicy(
+    closurePolicyRecord as Parameters<typeof resolveExactActiveClosurePolicy>[0],
+    input.projectId
+  );
+  const g9Approval =
+    policyVersion && archiveA && archiveB && currentVersion?.id === latestApprovedVersion?.id
+      ? await safely(() =>
+          readApprovedG9({
+            client: archiveClient,
+            projectId: input.projectId,
+            policy: policyVersion,
+            archiveA,
+            archiveB,
+            retrospective: latestApprovedVersion
+          })
+        )
+      : null;
   return {
     projectId: input.projectId,
     retrospective: {
@@ -206,20 +423,12 @@ export async function getProjectRetrospective(input: {
     staleApprovedPointer: aggregate.currentVersionId !== aggregate.latestApprovedVersionId,
     currentVersion: currentVersion ? versionView(currentVersion) : null,
     latestApprovedVersion: latestApprovedVersion ? versionView(latestApprovedVersion) : null,
-    archiveA:
-      archiveA && isReadyApplicableV2Archive(archiveA)
-        ? { id: archiveA.id, status: archiveA.status }
-        : null,
-    archiveB:
-      archiveB && isReadyApplicableV2Archive(archiveB)
-        ? { id: archiveB.id, status: archiveB.status }
-        : null,
-    closurePolicy: isV2ClosurePolicy(closurePolicy),
+    archiveA: archiveView(archiveA),
+    archiveB: archiveView(archiveB),
+    closurePolicy: policyVersion ? { id: policyVersion.id, status: policyVersion.status } : null,
+    g9Approval,
     versions: aggregate.versions.map(versionView),
-    reviews: aggregate.reviews.map((review: Record<string, any>) => ({
-      ...review,
-      reviewedAt: review.reviewedAt?.toISOString?.() ?? review.reviewedAt
-    })),
+    reviews: aggregate.reviews.map(reviewView),
     allowedActions: input.allowedActions ?? []
   };
 }

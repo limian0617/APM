@@ -5,6 +5,7 @@ export type RetrospectivePageStateInput = {
   latestApprovedVersion: { id: string; status: string } | null;
   archiveB: { id: string; status: string } | null;
   closurePolicy: { id: string; status: string } | null;
+  g9Approval: { submissionId: string; status: "APPROVED" } | null;
   canCreate: boolean;
   canSubmit: boolean;
   canReview: boolean;
@@ -28,7 +29,8 @@ export function buildProjectRetrospectivePageState(
     input.latestApprovedVersion !== null &&
     input.currentVersion.id !== input.latestApprovedVersion.id;
   const allowedActions: ProjectRetrospectivePageState["allowedActions"] = [];
-  if (input.canCreate && !input.currentVersion) allowedActions.push("CREATE");
+  if (input.canCreate && input.archiveA?.status === "READY" && !input.currentVersion)
+    allowedActions.push("CREATE");
   if (input.canSubmit && input.currentVersion?.status === "DRAFT") allowedActions.push("SUBMIT");
   if (input.canReview && input.currentVersion?.status === "IN_REVIEW")
     allowedActions.push("REVIEW");
@@ -46,7 +48,13 @@ export function buildProjectRetrospectivePageState(
   if (!stale && input.canRunG9 && hasFrozenArchiveB && hasExactClosurePolicy) {
     allowedActions.push("RUN_G9");
   }
-  if (!stale && input.canClose && hasFrozenArchiveB && hasExactClosurePolicy) {
+  if (
+    !stale &&
+    input.canClose &&
+    hasFrozenArchiveB &&
+    hasExactClosurePolicy &&
+    input.g9Approval?.status === "APPROVED"
+  ) {
     allowedActions.push("CLOSE_PROJECT");
   }
   return {

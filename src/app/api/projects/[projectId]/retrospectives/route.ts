@@ -25,14 +25,33 @@ import { createRetrospectiveBodySchema } from "@/modules/retrospectives/contract
 type RouteContext = { params: Promise<{ projectId: string }> };
 
 function errorResponse(error: unknown): Response | null {
-  if (error instanceof ProjectRetrospectiveServiceError) {
+  if (
+    typeof ProjectRetrospectiveServiceError === "function" &&
+    error instanceof ProjectRetrospectiveServiceError
+  ) {
     return Response.json(
       { error: { code: error.code, message: error.message } },
       { status: error.status }
     );
   }
-  if (error instanceof ProjectRetrospectiveQueryError) {
-    return Response.json({ error: { code: error.code, message: error.message } }, { status: 409 });
+  if (
+    (typeof ProjectRetrospectiveQueryError === "function" &&
+      error instanceof ProjectRetrospectiveQueryError) ||
+    (error &&
+      typeof error === "object" &&
+      ((error as { code?: unknown }).code === "PROJECT_RETROSPECTIVE_POINTER_INVALID" ||
+        (error as { message?: unknown }).message === "PROJECT_RETROSPECTIVE_POINTER_INVALID"))
+  ) {
+    const queryError = error as { code?: unknown; message?: unknown };
+    return Response.json(
+      {
+        error: {
+          code: queryError.code ?? "PROJECT_RETROSPECTIVE_POINTER_INVALID",
+          message: queryError.message ?? "项目复盘冻结指针无效。"
+        }
+      },
+      { status: 409 }
+    );
   }
   return apiContractErrorResponse(error);
 }
@@ -69,6 +88,7 @@ async function read(request: Request, context: RouteContext) {
         : null,
       archiveB: base.archiveB ?? null,
       closurePolicy: base.closurePolicy ?? null,
+      g9Approval: base.g9Approval ?? null,
       canCreate: canManage,
       canSubmit: canManage,
       canReview,
