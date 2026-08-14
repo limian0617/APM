@@ -14,13 +14,12 @@ import {
   AUDIT_SOURCES
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
+import {
+  evaluateClosurePolicyBinding,
+  parseClosureCheckerBindings
+} from "@/modules/governance/domain/closure-policy-binding";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 import { payloadHash, type JsonValue } from "@/modules/governance/domain/idempotency";
-import {
-  CLOSURE_POLICY_BINDINGS,
-  CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION,
-  buildClosurePolicyVersionFacts
-} from "@/modules/governance/domain/project-closure-policy";
 
 export type ProjectCloseFacts = {
   projectId: string;
@@ -364,112 +363,6 @@ export function isRetryableCloseTransactionError(error: unknown): boolean {
   return false;
 }
 
-function parseCheckerBindings(value: unknown): Array<{ code: string; version: number }> | null {
-  if (!Array.isArray(value)) return null;
-  const bindings = value.flatMap((entry) => {
-    if (
-      !entry ||
-      typeof entry !== "object" ||
-      Array.isArray(entry) ||
-      typeof (entry as Record<string, unknown>).code !== "string" ||
-      !Number.isInteger((entry as Record<string, unknown>).version)
-    ) {
-      return [];
-    }
-    return [
-      {
-        code: (entry as Record<string, unknown>).code as string,
-        version: (entry as Record<string, unknown>).version as number
-      }
-    ];
-  });
-  return bindings.length === value.length ? bindings : null;
-}
-
-function hasExactClosureBindings(
-  bindings: Array<{ code: string; version: number }> | null
-): boolean {
-  if (!bindings) return false;
-  try {
-    const expected = buildClosurePolicyVersionFacts({
-      projectId: "binding-check-project",
-      sourceTemplateSnapshotId: "binding-check-template",
-      sourceGateDefinitionId: "binding-check-definition",
-      checkerBindings: bindings
-    });
-    return expected.archiveCheckerCode === CLOSURE_POLICY_BINDINGS[0].code;
-  } catch {
-    return false;
-  }
-}
-
-export function evaluateClosurePolicyBinding(input: {
-  projectId: string;
-  sourceTemplateSnapshotId: string;
-  sourceGateDefinitionId: string;
-  sourceGateDefinitionBindings: Array<{ code: string; version: number }> | null;
-  snapshotBindings: Array<{ code: string; version: number }> | null;
-  persisted: {
-    archiveCheckerCode: string;
-    archiveCheckerVersion: number;
-    retrospectiveCheckerCode: string;
-    retrospectiveCheckerVersion: number;
-    archiveSourceFormulaVersion: string;
-    selfReferenceExclusionVersion: string;
-    bindingChecksum: string;
-    policyChecksum: string;
-  } | null;
-}) {
-  const sourceGateDefinitionBindingsValid = hasExactClosureBindings(
-    input.sourceGateDefinitionBindings
-  );
-  const snapshotCheckerBindingsValid = hasExactClosureBindings(input.snapshotBindings);
-  try {
-    const snapshotFacts =
-      input.persisted && input.snapshotBindings
-        ? buildClosurePolicyVersionFacts({
-            projectId: input.projectId,
-            sourceTemplateSnapshotId: input.sourceTemplateSnapshotId,
-            sourceGateDefinitionId: input.sourceGateDefinitionId,
-            checkerBindings: input.snapshotBindings
-          })
-        : null;
-    const sourceDefinitionFacts =
-      input.persisted && input.sourceGateDefinitionBindings
-        ? buildClosurePolicyVersionFacts({
-            projectId: input.projectId,
-            sourceTemplateSnapshotId: input.sourceTemplateSnapshotId,
-            sourceGateDefinitionId: input.sourceGateDefinitionId,
-            checkerBindings: input.sourceGateDefinitionBindings
-          })
-        : null;
-    return {
-      sourceGateDefinitionBindingsValid,
-      snapshotCheckerBindingsValid,
-      policyFactsValid: Boolean(
-        snapshotFacts &&
-        sourceDefinitionFacts &&
-        input.persisted?.bindingChecksum === snapshotFacts.bindingChecksum &&
-        input.persisted.policyChecksum === snapshotFacts.policyChecksum &&
-        sourceDefinitionFacts.bindingChecksum === snapshotFacts.bindingChecksum &&
-        sourceDefinitionFacts.policyChecksum === snapshotFacts.policyChecksum &&
-        input.persisted.archiveCheckerCode === snapshotFacts.archiveCheckerCode &&
-        input.persisted.archiveCheckerVersion === snapshotFacts.archiveCheckerVersion &&
-        input.persisted.retrospectiveCheckerCode === snapshotFacts.retrospectiveCheckerCode &&
-        input.persisted.retrospectiveCheckerVersion === snapshotFacts.retrospectiveCheckerVersion &&
-        input.persisted.archiveSourceFormulaVersion === "V2" &&
-        input.persisted.selfReferenceExclusionVersion === CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION
-      )
-    };
-  } catch {
-    return {
-      sourceGateDefinitionBindingsValid,
-      snapshotCheckerBindingsValid,
-      policyFactsValid: false
-    };
-  }
-}
-
 function parseCloseReplay(
   value: Prisma.JsonValue | null
 ): Omit<CloseProjectResult, "idempotent"> | null {
@@ -710,8 +603,8 @@ export async function closeProject(rawInput: CloseProjectInput): Promise<ClosePr
     const policyChecksum = policy?.policyChecksum ?? null;
     const gateInstance = submission?.gateInstance ?? null;
     const snapshot = submission?.gateCheckSnapshot ?? null;
-    const snapshotBindings = parseCheckerBindings(snapshot?.checkerBindingsJson);
-    const sourceGateDefinitionBindings = parseCheckerBindings(
+    const snapshotBindings = parseClosureCheckerBindings(snapshot?.checkerBindingsJson);
+    const sourceGateDefinitionBindings = parseClosureCheckerBindings(
       gateInstance?.gateDefinition.checkerBindingsJson
     );
     const bindingValidation = evaluateClosurePolicyBinding({

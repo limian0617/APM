@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { evaluateClosurePolicyBinding } from "@/modules/governance/domain/closure-policy-binding";
+
 const database = vi.hoisted(() => ({
   db: {
     $transaction: vi.fn(),
@@ -17,7 +19,6 @@ import {
   archiveFormulaForClose,
   assertProjectCanClose,
   closeProject,
-  evaluateClosurePolicyBinding,
   isRetryableCloseTransactionError,
   latestIntegrityStatus
 } from "./project-close-service";
@@ -250,8 +251,8 @@ describe("project closure", () => {
     );
   });
 
-  it("rejects exact checker bindings when their persisted policy checksum was built for another template", () => {
-    const checked = evaluateClosurePolicyBinding({
+  it("fails closed when the shared binding rule rejects a persisted policy checksum", () => {
+    const binding = evaluateClosurePolicyBinding({
       projectId: "project-1",
       sourceTemplateSnapshotId: "template-snapshot-1",
       sourceGateDefinitionId: "g9-definition-1",
@@ -274,11 +275,18 @@ describe("project closure", () => {
         policyChecksum: "b".repeat(64)
       }
     });
-    expect(checked).toEqual({
-      sourceGateDefinitionBindingsValid: true,
-      snapshotCheckerBindingsValid: true,
-      policyFactsValid: false
-    });
+    expect(binding.policyFactsValid).toBe(false);
+    expect(() =>
+      assertProjectCanClose({
+        ...facts,
+        policyBindingsValid: binding.policyFactsValid,
+        snapshotCheckerBindingsValid: binding.snapshotCheckerBindingsValid,
+        sourceGateDefinitionBindingsValid: binding.sourceGateDefinitionBindingsValid,
+        policyFactsValid: binding.policyFactsValid
+      })
+    ).toThrowError(
+      expect.objectContaining({ code: "CLOSURE_POLICY_BINDING_MISMATCH", status: 409 })
+    );
   });
 
   it("requires the approved retrospective to keep its exact ready Archive A", () => {

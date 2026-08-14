@@ -865,3 +865,22 @@ Stop after document validation and send APM-规划 a fourth-round implementation
 4. 查询服务返回最小脱敏 `g9Approval`。它仅在 exact active policy、exact current B、`currentVersionId === latestApprovedVersionId`、APPROVED submission、两个 PASSED checker，以及 submission/snapshot/instance tuple 和两个 checker evidence 的 archive/policy/retrospective ID、manifest checksum、source watermark、retrospective checksum 全部匹配时出现。`RUN_G9` 只依赖 current B 和完整 policy；`CLOSE_PROJECT` 额外依赖该 G9 fact。
 5. 无聚合时查询仍返回稳定完整 DTO，并用当前 V2 manifest 解析精确 Archive A；仅 `canCreate && archiveA` 显示 CREATE。无批准版本的 current draft 使用其冻结且当前的 Archive A；存在 approved 指针时 A/B 始终根据 approved version 冻结的来源解析，不能让后续 draft 替换治理来源。A/B 或指针缺失、过期、FAILED integrity、未知公式均 fail closed。
 6. 重跑全部 R1.1 query/page-state/route/pure-rule/helper 聚焦测试，随后 `npm run typecheck`、`npm run format:check`、`git diff --check`。本机 PostgreSQL、迁移回放和 PostgreSQL integration 继续只能记为 `SKIPPED`；Task 12 Linux CI 必须实跑。只提交上述文件后停止并将提交、RED/GREEN、聚焦结果、限制和 `git status` 交 APM-规划复审。
+
+## Recovery R1.2（R1.1 复审后的 Task 9 前单一策略规则修订）
+
+**复审结论：** R1.1 已将复盘 query/page-state 切换到 `closure-policy-binding`，但 `project-close-service` 仍保留 `parseCheckerBindings`、`hasExactClosureBindings` 与 `evaluateClosurePolicyBinding` 的近似副本。这会使页面可执行性与真实 SERIALIZABLE 关项事务在未来策略变更后产生不同判定。Task 9 继续暂停；R1.2 必须作为独立提交，绝不 amend `97250a4`。
+
+**唯一允许范围：**
+
+- Modify: `src/modules/projects/application/project-close-service.ts`，直接导入并调用 governance 侧的 `parseClosureCheckerBindings` 和 `evaluateClosurePolicyBinding`，删除本地副本与仅为副本存在的 imports。
+- Create/Test: `src/modules/governance/domain/closure-policy-binding.test.ts`，覆盖纯规则的完整绑定解析、checksum 不匹配默认拒绝，以及无脆弱行号的架构断言：`src` 仅有一个 evaluator 定义，关项服务通过共享模块导入。
+- Modify/Test: `src/modules/projects/application/project-close-service.test.ts`，不再从关闭服务导入纯规则；以共享规则的失败输出驱动 close guard 拒绝。
+- Modify: 本实施计划。
+- 禁止：R1 权限与 fixture、Prisma Schema、migration、Archive 算法、知识业务和 Task 9–12、推送、PR、进度表；不得修改 `97250a4`。
+
+**恢复步骤固定为：**
+
+1. 先新增共享规则/架构 RED；旧源码必须因 `src` 内存在两处 `evaluateClosurePolicyBinding` 定义以及关闭服务没有共享 import 而失败。
+2. 删除关闭服务本地 parser/evaluator，使用 governance 的同名 exports；不改变关项的锁顺序、SERIALIZABLE 重试、G9 evidence 或 archive currentness 逻辑。
+3. 将纯 evaluator 的 checksum/default-deny 断言移入 governance 测试；关闭服务测试以共享 evaluator 的无效结果验证 `CLOSURE_POLICY_BINDING_MISMATCH`，不保留第二份规则测试。
+4. 运行 shared binding、project-close-service、R1.1 query/page-state/route 聚焦测试，`npm run typecheck`、`npm run format:check`、`git diff --check` 和 `rg -n "function evaluateClosurePolicyBinding|export function evaluateClosurePolicyBinding" src`。预期 `rg` 只输出 governance 定义；本机 PostgreSQL/迁移回放仍记为 `SKIPPED`，Task 12 Linux CI 必须实跑。只提交本节列出的文件后停止并请求复审。
