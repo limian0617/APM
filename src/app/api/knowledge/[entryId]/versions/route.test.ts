@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KnowledgeEntryServiceError } from "@/modules/knowledge/application/knowledge-entry-service";
+import { ApiContractError } from "@/modules/platform-api/contracts/errors";
 
 const systemGuard = vi.hoisted(() => ({ authorizeSystemRequest: vi.fn() }));
 const projectGuard = vi.hoisted(() => ({ authorizeProjectRequest: vi.fn() }));
@@ -138,13 +139,32 @@ describe("POST /api/knowledge/[entryId]/versions", () => {
     expect(entryService.createKnowledgeEntryVersion).not.toHaveBeenCalled();
   });
 
-  it("uses the idempotent version command and returns a replay conflict without invoking the service", async () => {
+  it("maps an idempotency replay conflict without invoking the version service", async () => {
     authorizeCreate();
-    command.idempotentCommandResponse.mockResolvedValue(
-      Response.json({ code: "IDEMPOTENCY_KEY_CONFLICT" }, { status: 409 })
+    command.idempotentCommandResponse.mockRejectedValue(
+      new ApiContractError(
+        "IDEMPOTENCY_KEY_REUSED",
+        "Idempotency-Key 已绑定到不同的请求负载。",
+        409,
+        [
+          {
+            field: "headers.idempotencyKey",
+            code: "CONFLICT",
+            message: "请为不同请求使用新的幂等键。"
+          }
+        ]
+      )
     );
 
-    expect((await POST(createRequest(), context)).status).toBe(409);
+    const response = await POST(createRequest(), context);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "IDEMPOTENCY_KEY_REUSED",
+        issues: [{ field: "headers.idempotencyKey", code: "CONFLICT" }]
+      }
+    });
     expect(command.idempotentCommandResponse).toHaveBeenCalledWith(
       expect.objectContaining({
         actorId: "author-1",
