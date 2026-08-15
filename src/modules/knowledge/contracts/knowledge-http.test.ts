@@ -4,6 +4,7 @@ import {
   createKnowledgeEntryBodySchema,
   createKnowledgeEntryVersionBodySchema,
   knowledgeCorrectionBodySchema,
+  knowledgePageStateQuerySchema,
   knowledgeReviewBodySchema,
   knowledgeRevokeBodySchema,
   knowledgeReuseBodySchema,
@@ -55,6 +56,30 @@ describe("knowledge HTTP contracts", () => {
       false
     );
     expect(knowledgeSearchQuerySchema.safeParse({ query: "知".repeat(65) }).success).toBe(false);
+  });
+
+  it("accepts target-project page-state context only with an exact optional reuse selector", () => {
+    expect(
+      knowledgePageStateQuerySchema.parse({
+        view: "PAGE_STATE",
+        targetProjectId: " target-project-1 ",
+        reuseId: " reuse-1 "
+      })
+    ).toEqual({
+      view: "PAGE_STATE",
+      targetProjectId: "target-project-1",
+      reuseId: "reuse-1"
+    });
+    expect(
+      knowledgePageStateQuerySchema.safeParse({ view: "PAGE_STATE", reuseId: "reuse-1" }).success
+    ).toBe(false);
+    expect(
+      knowledgePageStateQuerySchema.safeParse({
+        view: "PAGE_STATE",
+        targetProjectId: "target-project-1",
+        leakedSourceProjectId: "source-project-1"
+      }).success
+    ).toBe(false);
   });
 
   it("requires exact sanitized source facts and rejects unknown create fields", () => {
@@ -133,12 +158,21 @@ describe("knowledge HTTP contracts", () => {
     expect(
       knowledgeReuseBodySchema.parse({
         targetDeliveryUnitId: null,
+        entryCode: " knw-001 ",
+        version: 3,
+        scenario: "新产线的上料段复位。",
+        evidenceSummary: "现场验证记录已归档。"
+      })
+    ).toMatchObject({ entryCode: "KNW-001", version: 3 });
+    expect(
+      knowledgeReuseBodySchema.safeParse({
+        targetDeliveryUnitId: null,
         knowledgeEntryId: "knowledge-entry-1",
         knowledgeVersionId: "knowledge-version-1",
         scenario: "新产线的上料段复位。",
         evidenceSummary: "现场验证记录已归档。"
-      })
-    ).toMatchObject({ knowledgeEntryId: "knowledge-entry-1" });
+      }).success
+    ).toBe(false);
     expect(
       knowledgeCorrectionBodySchema.parse({
         expectedReuseVersion: 2,

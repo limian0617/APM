@@ -542,6 +542,7 @@ export async function createKnowledgeEntryVersion(
           updatedById: input.actorId
         }
       }));
+    const entryVersion = existing ? existing.version + 1 : entry.version;
     const latestVersion = await client.knowledgeEntryVersion.findFirst({
       where: { entryId: entry.id },
       orderBy: { versionNo: "desc" },
@@ -625,6 +626,7 @@ export async function createKnowledgeEntryVersion(
     return {
       entryId: entry.id,
       versionId: version.id,
+      entryVersion,
       status: version.status,
       contentChecksum: content.contentChecksum,
       auditId: audit.id,
@@ -729,7 +731,14 @@ export async function submitKnowledgeEntryVersion(
         auditId: audit.id
       }
     });
-    return { entryId, versionId: version.id, status, auditId: audit.id, outboxEventId: outbox.id };
+    return {
+      entryId,
+      versionId: version.id,
+      entryVersion: input.expectedEntryVersion + 1,
+      status,
+      auditId: audit.id,
+      outboxEventId: outbox.id
+    };
   });
 }
 

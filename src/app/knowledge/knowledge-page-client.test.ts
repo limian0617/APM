@@ -1,7 +1,8 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import * as knowledgeUi from "./knowledge-page-client";
 import { KnowledgePageClient } from "./knowledge-page-client";
 
 const item = {
@@ -70,5 +71,178 @@ describe("KnowledgePageClient", () => {
     );
     expect(markup).not.toContain("创建知识草稿");
     expect(markup).not.toContain("确认复用");
+    expect(markup).not.toMatch(/entryId|versionId/);
+  });
+
+  it("builds only the strict server command contracts, including the public reuse selector", () => {
+    const build = (knowledgeUi as Record<string, unknown>).buildKnowledgeCommandRequest;
+    expect(build).toBeTypeOf("function");
+
+    expect(
+      (build as (input: any) => unknown)({
+        action: "REUSE",
+        targetProjectId: "target-project-1",
+        targetDeliveryUnitId: null,
+        entryCode: "KNW-1",
+        version: 1,
+        scenario: "上线调试采用。",
+        evidenceSummary: "已完成现场确认。"
+      })
+    ).toEqual({
+      endpoint: "/api/projects/target-project-1/knowledge-reuse",
+      body: {
+        targetDeliveryUnitId: null,
+        entryCode: "KNW-1",
+        version: 1,
+        scenario: "上线调试采用。",
+        evidenceSummary: "已完成现场确认。"
+      }
+    });
+
+    expect(
+      (build as (input: any) => unknown)({
+        action: "PUBLISH",
+        entryId: "author-entry-1",
+        versionId: "author-version-1",
+        expectedEntryVersion: 2,
+        reason: "已完成知识产权和脱敏复核。"
+      })
+    ).toEqual({
+      endpoint: "/api/knowledge/author-entry-1/versions/author-version-1/reviews",
+      body: {
+        expectedEntryVersion: 2,
+        decision: "PUBLISH",
+        reason: "已完成知识产权和脱敏复核。",
+        ipConfirmed: true,
+        sanitizationConfirmed: true
+      }
+    });
+  });
+
+  it("renders real form controls only for server-granted knowledge actions", () => {
+    const markup = renderToStaticMarkup(
+      createElement(KnowledgePageClient, {
+        initialState: {
+          status: "NORMAL",
+          allowedActions: ["CREATE", "CONFIRM_REUSE", "CORRECT_REUSE"],
+          capability: "TRIGRAM",
+          warningCode: null,
+          items: [item]
+        }
+      })
+    );
+
+    expect(markup).toContain("知识编码");
+    expect(markup).toContain("提交知识草稿");
+    expect(markup).toContain("确认采用");
+    expect(markup).toContain("提交更正");
+    expect(markup).not.toMatch(/sourceProjectId|issueHistoryIds|finalArchiveVersionId/);
+  });
+
+  it("loads initial and search states exclusively from the server page-state without clearing allowed actions", async () => {
+    const load = (knowledgeUi as Record<string, unknown>).loadKnowledgePageState;
+    expect(load).toBeTypeOf("function");
+
+    const initialFetcher = vi.fn(async () =>
+      Response.json({
+        pageState: { status: "EMPTY", allowedActions: ["CREATE"] },
+        items: []
+      })
+    );
+    const initial = await (load as (input: any) => Promise<any>)({
+      fetcher: initialFetcher,
+      query: "",
+      targetProjectId: null,
+      reuseId: null
+    });
+
+    expect(initialFetcher).toHaveBeenCalledWith("/api/knowledge?view=PAGE_STATE", {
+      cache: "no-store"
+    });
+    expect(initial).toMatchObject({
+      state: { status: "EMPTY", allowedActions: ["CREATE"], items: [] }
+    });
+
+    const search = await (load as (input: any) => Promise<any>)({
+      fetcher: vi.fn(async () =>
+        Response.json({
+          pageState: { status: "NORMAL", allowedActions: ["CREATE", "CONFIRM_REUSE"] },
+          capability: "DEGRADED",
+          warningCode: "SEARCH_DEGRADED",
+          items: [item]
+        })
+      ),
+      query: "复位",
+      targetProjectId: "target-project-1",
+      reuseId: null
+    });
+
+    expect(search).toMatchObject({
+      state: {
+        status: "NORMAL",
+        allowedActions: ["CREATE", "CONFIRM_REUSE"],
+        capability: "DEGRADED",
+        warningCode: "SEARCH_DEGRADED",
+        items: [item]
+      }
+    });
+  });
+
+  it("requests server page-state once on initial mount and never synthesizes a later reload from typed input", () => {
+    const shouldLoad = (knowledgeUi as Record<string, unknown>).shouldLoadInitialKnowledgeState;
+    expect(shouldLoad).toBeTypeOf("function");
+    expect(
+      (shouldLoad as (input: any) => boolean)({ hasInitialState: false, hasLoaded: false })
+    ).toBe(true);
+    expect(
+      (shouldLoad as (input: any) => boolean)({ hasInitialState: true, hasLoaded: false })
+    ).toBe(false);
+    expect(
+      (shouldLoad as (input: any) => boolean)({ hasInitialState: false, hasLoaded: true })
+    ).toBe(false);
+  });
+
+  it("keeps server page-state actions after search and runs public-selector reuse only through the exact command endpoint", async () => {
+    const execute = (knowledgeUi as Record<string, unknown>).executeKnowledgeCommand;
+    expect(execute).toBeTypeOf("function");
+
+    const reload = vi.fn(async () => undefined);
+    const result = await (execute as (input: any) => Promise<any>)({
+      fetcher: vi.fn(async () => Response.json({ id: "reuse-1" }, { status: 201 })),
+      endpoint: "/api/projects/target-project-1/knowledge-reuse",
+      body: {
+        targetDeliveryUnitId: null,
+        entryCode: "KNW-1",
+        version: 1,
+        scenario: "上线调试采用。",
+        evidenceSummary: "已完成人工确认。"
+      },
+      idempotencyKey: "reuse-1",
+      reload
+    });
+
+    expect(result).toMatchObject({ kind: "SUCCESS" });
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [403, "DENIED"],
+    [503, "UNAVAILABLE"]
+  ])("maps command HTTP %i to %s without clearing user input", async (status, kind) => {
+    const execute = (knowledgeUi as Record<string, unknown>).executeKnowledgeCommand;
+    expect(execute).toBeTypeOf("function");
+
+    const draft = { entryCode: "KNW-1", version: 1 };
+    const result = await (execute as (input: any) => Promise<any>)({
+      fetcher: vi.fn(async () =>
+        Response.json({ error: { code: "SERVER_CODE", message: "服务端拒绝。" } }, { status })
+      ),
+      endpoint: "/api/projects/target-project-1/knowledge-reuse",
+      body: draft,
+      idempotencyKey: "reuse-2",
+      reload: vi.fn(async () => undefined)
+    });
+
+    expect(result).toMatchObject({ kind, preserveInput: true, idempotencyKey: "reuse-2" });
   });
 });

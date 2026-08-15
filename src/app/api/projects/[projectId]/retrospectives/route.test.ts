@@ -22,11 +22,18 @@ const service = vi.hoisted(() => ({
   }
 }));
 const decide = vi.hoisted(() => ({ decideAuthorization: vi.fn() }));
+const gateSubmission = vi.hoisted(() => ({ findGateSubmissionApproverIds: vi.fn() }));
 
 vi.mock("@/lib/auth/project-guard", () => guard);
 vi.mock("@/lib/auth/authorize", () => decide);
 vi.mock("@/modules/retrospectives/application/project-retrospective-query-service", () => query);
 vi.mock("@/modules/retrospectives/application/project-retrospective-service", () => service);
+vi.mock("@/modules/governance/application/gate-submission-service", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/modules/governance/application/gate-submission-service")
+  >()),
+  ...gateSubmission
+}));
 vi.mock("@/modules/platform-api/application/idempotent-command", () => ({
   idempotentCommandResponse: async (input: any) => {
     const result = await input.execute(undefined);
@@ -42,6 +49,7 @@ describe("project retrospective route", () => {
     query.getProjectRetrospective.mockReset();
     service.createRetrospectiveVersion.mockReset();
     decide.decideAuthorization.mockReset();
+    gateSubmission.findGateSubmissionApproverIds.mockReset();
   });
 
   it("denies before reading retrospective", async () => {
@@ -105,7 +113,7 @@ describe("project retrospective route", () => {
     decide.decideAuthorization.mockReturnValue({ allowed: true });
     query.getProjectRetrospective.mockResolvedValue({
       projectId: "p-1",
-      retrospective: { id: "retro-1" },
+      retrospective: { id: "retro-1", version: 7 },
       currentVersionId: "retro-version-1",
       latestApprovedVersionId: "retro-version-1",
       currentVersion: { id: "retro-version-1", status: "APPROVED" },
@@ -151,7 +159,8 @@ describe("project retrospective route", () => {
         retrospectiveInputWatermark: "archive-b-input"
       },
       currentVersionId: "retro-version-1",
-      latestApprovedVersionId: "retro-version-1"
+      latestApprovedVersionId: "retro-version-1",
+      aggregateVersion: 7
     });
     expect(body.allowedActions).toContain("RUN_G9");
     expect(body.allowedActions).not.toContain("CLOSE_PROJECT");
@@ -223,6 +232,94 @@ describe("project retrospective route", () => {
     expect(body.allowedActions).toContain("SUBMIT");
     expect(body.allowedActions).not.toContain("RUN_G9");
     expect(body.allowedActions).not.toContain("CLOSE_PROJECT");
+  });
+
+  it("returns only server-authorized exact G9 workflow steps, never a one-click G9 command", async () => {
+    guard.authorizeProjectRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "u-1" },
+      project: {
+        status: "IN_PROGRESS",
+        version: 8,
+        departmentId: "engineering",
+        memberRoles: ["PROJECT_MANAGER"]
+      }
+    });
+    decide.decideAuthorization.mockReturnValue({ allowed: true });
+    gateSubmission.findGateSubmissionApproverIds.mockResolvedValue(["u-1"]);
+    query.getProjectRetrospective.mockResolvedValue({
+      projectId: "p-1",
+      retrospective: { id: "retro-1", version: 2 },
+      currentVersion: { id: "version-1", status: "APPROVED" },
+      latestApprovedVersion: { id: "version-1", status: "APPROVED" },
+      archiveA: { id: "archive-a", status: "READY" },
+      archiveB: { id: "archive-b", status: "READY" },
+      closurePolicy: { id: "policy-v2", status: "ACTIVE" },
+      g9Approval: null,
+      g9Workflow: {
+        instanceId: "g9-instance",
+        instanceVersion: 4,
+        latestCheckStatus: "PASSED",
+        submission: { id: "g9-submission", version: 2, status: "PENDING" }
+      },
+      versions: [],
+      reviews: [],
+      allowedActions: []
+    });
+
+    const response = await GET(new Request("http://localhost/api/projects/p-1/retrospectives"), {
+      params: Promise.resolve({ projectId: "p-1" })
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.allowedActions).toContain("RUN_G9");
+    expect(body.g9Workflow).toEqual({
+      instanceId: "g9-instance",
+      instanceVersion: 4,
+      latestCheckStatus: "PASSED",
+      submission: { id: "g9-submission", version: 2, status: "PENDING" },
+      canRunChecks: false,
+      canSubmit: false,
+      canApprove: true
+    });
+  });
+
+  it("uses the authorized project's CLOSED status as the page-state fact and removes every write action", async () => {
+    guard.authorizeProjectRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "u-1" },
+      project: {
+        status: "CLOSED",
+        version: 9,
+        departmentId: "engineering",
+        memberRoles: ["PROJECT_MANAGER"]
+      }
+    });
+    decide.decideAuthorization.mockReturnValue({ allowed: true });
+    query.getProjectRetrospective.mockResolvedValue({
+      projectId: "p-1",
+      retrospective: { id: "retro-1" },
+      currentVersion: { id: "retro-version-1", status: "DRAFT" },
+      latestApprovedVersion: null,
+      archiveA: { id: "archive-a", status: "READY" },
+      archiveB: null,
+      closurePolicy: null,
+      g9Approval: null,
+      versions: [],
+      reviews: [],
+      allowedActions: []
+    });
+
+    const response = await GET(new Request("http://localhost/api/projects/p-1/retrospectives"), {
+      params: Promise.resolve({ projectId: "p-1" })
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.projectStatus).toBe("CLOSED");
+    expect(body.projectVersion).toBe(9);
+    expect(body.allowedActions).toEqual([]);
   });
 
   it("maps query pointer errors to a conflict response", async () => {

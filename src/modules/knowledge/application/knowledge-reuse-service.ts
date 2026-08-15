@@ -27,8 +27,8 @@ export class KnowledgeReuseServiceError extends Error {
 export type ConfirmKnowledgeReuseInput = {
   targetProjectId: string;
   targetDeliveryUnitId: string | null;
-  knowledgeEntryId: string;
-  knowledgeVersionId: string;
+  entryCode: string;
+  version: number;
   scenario: string;
   evidenceSummary: string;
   actorId: string;
@@ -58,6 +58,13 @@ function text(value: string, field: string, max = 4096) {
   return normalized;
 }
 
+function positiveVersion(value: unknown, field: string) {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 2_147_483_647) {
+    throw new KnowledgeReuseServiceError("KNOWLEDGE_REUSE_INPUT_INVALID", `${field} 无效。`);
+  }
+  return value as number;
+}
+
 function auditContext(input: { actorId: string; projectId: string; auditContext?: AuditContext }) {
   return {
     ...(input.auditContext ?? {}),
@@ -78,6 +85,50 @@ async function databaseNow(client: Client): Promise<Date> {
     );
   }
   return clock.now;
+}
+
+type AdoptableKnowledgeVersion = {
+  entryId: string;
+  entryStatus: string;
+  currentPublishedVersionId: string | null;
+  knowledgeVersionId: string;
+  knowledgeVersionStatus: string;
+  internalReusable: boolean;
+};
+
+async function lockAdoptableKnowledgeVersion(
+  client: Client,
+  input: { entryCode: string; version: number }
+): Promise<{ entryId: string; knowledgeVersionId: string }> {
+  const entryCode = text(input.entryCode, "entryCode", 64).toUpperCase();
+  const versionNo = positiveVersion(input.version, "version");
+  const [candidate] = await client.$queryRaw<AdoptableKnowledgeVersion[]>`
+    SELECT
+      e."id" AS "entryId",
+      e."status" AS "entryStatus",
+      e."current_published_version_id" AS "currentPublishedVersionId",
+      v."id" AS "knowledgeVersionId",
+      v."status" AS "knowledgeVersionStatus",
+      v."internal_reusable" AS "internalReusable"
+    FROM "knowledge_entries" AS e
+    INNER JOIN "knowledge_entry_versions" AS v ON v."entry_id" = e."id"
+    WHERE e."code" = ${entryCode} AND v."version_no" = ${versionNo}
+    FOR UPDATE OF e, v
+  `;
+  if (
+    !candidate ||
+    candidate.entryStatus !== "ACTIVE" ||
+    candidate.knowledgeVersionStatus !== "PUBLISHED" ||
+    candidate.internalReusable !== true ||
+    candidate.currentPublishedVersionId !== candidate.knowledgeVersionId
+  ) {
+    throw new KnowledgeReuseServiceError(
+      "KNOWLEDGE_REUSE_VERSION_NOT_ADOPTABLE",
+      "只能确认已发布且内部可复用的确切知识版本。",
+      409
+    );
+  }
+  return { entryId: candidate.entryId, knowledgeVersionId: candidate.knowledgeVersionId };
 }
 
 export async function confirmKnowledgeReuse(
@@ -120,32 +171,7 @@ export async function confirmKnowledgeReuse(
         403
       );
     }
-    const entryId = text(input.knowledgeEntryId, "knowledgeEntryId", 191);
-    const knowledgeVersionId = text(input.knowledgeVersionId, "knowledgeVersionId", 191);
-    const version = await client.knowledgeEntryVersion.findUnique({
-      where: { id_entryId: { id: knowledgeVersionId, entryId } },
-      select: {
-        id: true,
-        entryId: true,
-        status: true,
-        internalReusable: true,
-        entry: { select: { status: true, currentPublishedVersionId: true } }
-      }
-    });
-    if (
-      !version ||
-      version.status !== "PUBLISHED" ||
-      !version.internalReusable ||
-      version.entryId !== entryId ||
-      version.entry.status !== "ACTIVE" ||
-      version.entry.currentPublishedVersionId !== version.id
-    ) {
-      throw new KnowledgeReuseServiceError(
-        "KNOWLEDGE_REUSE_VERSION_NOT_ADOPTABLE",
-        "只能确认已发布且内部可复用的确切知识版本。",
-        409
-      );
-    }
+    const { entryId, knowledgeVersionId } = await lockAdoptableKnowledgeVersion(client, input);
     if (targetDeliveryUnitId) {
       const deliveryUnit = await client.deliveryUnit.findFirst({
         where: {

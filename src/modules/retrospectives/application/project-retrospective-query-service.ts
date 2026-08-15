@@ -52,6 +52,12 @@ type ClosurePolicyVersion = NonNullable<
 >;
 
 type GateEvidence = Record<string, unknown>;
+type G9Workflow = {
+  instanceId: string;
+  instanceVersion: number;
+  latestCheckStatus: string | null;
+  submission: { id: string; version: number; status: string } | null;
+};
 
 export class ProjectRetrospectiveQueryError extends Error {
   constructor(public readonly code: "PROJECT_RETROSPECTIVE_POINTER_INVALID") {
@@ -307,6 +313,91 @@ async function readApprovedG9(input: {
   return null;
 }
 
+async function readG9Workflow(input: {
+  client: ArchiveV2CurrentnessClient & {
+    projectGateInstance?: { findFirst(input: unknown): Promise<Record<string, unknown> | null> };
+    gateSubmission?: {
+      findFirst(input: unknown): Promise<Record<string, unknown> | null>;
+    };
+  };
+  projectId: string;
+  policy: ClosurePolicyVersion | null;
+}): Promise<G9Workflow | null> {
+  if (!input.policy || !input.client.projectGateInstance) return null;
+  const instance = await input.client.projectGateInstance.findFirst({
+    where: {
+      projectId: input.projectId,
+      gateDefinitionId: input.policy.sourceGateDefinitionId,
+      scope: "PROJECT"
+    },
+    select: {
+      id: true,
+      version: true,
+      projectId: true,
+      gateDefinitionId: true,
+      closurePolicyVersionId: true,
+      closurePolicyChecksum: true,
+      archiveSourceFormulaVersion: true,
+      checkSnapshots: {
+        orderBy: { sequence: "desc" },
+        take: 1,
+        select: { status: true }
+      }
+    }
+  });
+  if (
+    !instance ||
+    typeof instance.id !== "string" ||
+    typeof instance.version !== "number" ||
+    instance.gateDefinitionId !== input.policy.sourceGateDefinitionId ||
+    !sameTuple(instance, input.projectId, input.policy)
+  ) {
+    return null;
+  }
+  const submission = input.client.gateSubmission?.findFirst
+    ? await input.client.gateSubmission.findFirst({
+        where: {
+          projectId: input.projectId,
+          gateInstanceId: instance.id,
+          closurePolicyVersionId: input.policy.id
+        },
+        orderBy: [{ sequence: "desc" }, { id: "desc" }],
+        select: {
+          id: true,
+          version: true,
+          status: true,
+          projectId: true,
+          gateInstanceId: true,
+          closurePolicyVersionId: true,
+          closurePolicyChecksum: true,
+          archiveSourceFormulaVersion: true
+        }
+      })
+    : null;
+  const workflowSubmission =
+    submission &&
+    typeof submission.id === "string" &&
+    typeof submission.version === "number" &&
+    typeof submission.status === "string" &&
+    submission.gateInstanceId === instance.id &&
+    sameTuple(submission, input.projectId, input.policy)
+      ? { id: submission.id, version: submission.version, status: submission.status }
+      : null;
+  const checkSnapshots = Array.isArray(instance.checkSnapshots) ? instance.checkSnapshots : [];
+  const latestCheckStatus =
+    checkSnapshots[0] &&
+    typeof checkSnapshots[0] === "object" &&
+    typeof (checkSnapshots[0] as { status?: unknown }).status === "string"
+      ? (checkSnapshots[0] as { status: string }).status
+      : null;
+  return {
+    instanceId: instance.id,
+    instanceVersion: instance.version,
+    latestCheckStatus,
+    submission: workflowSubmission
+  };
+}
+
 async function safely<T>(read: () => Promise<T | null>): Promise<T | null> {
   try {
     return await read();
@@ -332,7 +423,11 @@ export async function getProjectRetrospective(input: {
     }
   })) as RetrospectiveAggregate | null;
   const archiveClient = client as unknown as ArchiveV2CurrentnessClient & {
-    gateSubmission?: { findMany(input: unknown): Promise<Array<Record<string, unknown>>> };
+    projectGateInstance?: { findFirst(input: unknown): Promise<Record<string, unknown> | null> };
+    gateSubmission?: {
+      findMany(input: unknown): Promise<Array<Record<string, unknown>>>;
+      findFirst(input: unknown): Promise<Record<string, unknown> | null>;
+    };
   };
   if (!aggregate) {
     const archiveA = await safely(() =>
@@ -354,6 +449,7 @@ export async function getProjectRetrospective(input: {
       archiveB: null,
       closurePolicy: null,
       g9Approval: null,
+      g9Workflow: null,
       versions: [],
       reviews: [],
       allowedActions: input.allowedActions ?? []
@@ -416,6 +512,15 @@ export async function getProjectRetrospective(input: {
           })
         )
       : null;
+  const g9Workflow = policyVersion
+    ? await safely(() =>
+        readG9Workflow({
+          client: archiveClient,
+          projectId: input.projectId,
+          policy: policyVersion
+        })
+      )
+    : null;
   return {
     projectId: input.projectId,
     retrospective: {
@@ -433,6 +538,7 @@ export async function getProjectRetrospective(input: {
     archiveB: archiveView(archiveB),
     closurePolicy: policyVersion ? { id: policyVersion.id, status: policyVersion.status } : null,
     g9Approval,
+    g9Workflow,
     versions: aggregate.versions.map(versionView),
     reviews: aggregate.reviews.map(reviewView),
     allowedActions: input.allowedActions ?? []

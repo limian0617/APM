@@ -330,7 +330,11 @@ describe("knowledge entry service", () => {
 
     const result = await createKnowledgeEntryVersion(command, client);
 
-    expect(result).toMatchObject({ status: "DRAFT", entryId: "knowledge-entry-1" });
+    expect(result).toMatchObject({
+      status: "DRAFT",
+      entryId: "knowledge-entry-1",
+      entryVersion: 1
+    });
     const versionCall = client.knowledgeEntryVersion.create.mock.calls[0]?.[0] as {
       data: Record<string, unknown>;
     };
@@ -735,7 +739,7 @@ describe("knowledge entry service", () => {
       client
     );
 
-    expect(result).toMatchObject({ status: "IN_REVIEW" });
+    expect(result).toMatchObject({ status: "IN_REVIEW", entryVersion: 5 });
     expect(client.knowledgeEntryVersion.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ entry: { is: { status: "ACTIVE" } } }),

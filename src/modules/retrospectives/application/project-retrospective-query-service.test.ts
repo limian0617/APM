@@ -599,11 +599,13 @@ describe("project retrospective query service", () => {
       archiveSourceFormulaVersion: "V2",
       gateInstance: {
         id: "g9-instance",
+        version: 4,
         projectId: "project-1",
         gateDefinitionId: "g9-v2",
         closurePolicyVersionId: policy.currentVersion.id,
         closurePolicyChecksum: policy.currentVersion.policyChecksum,
         archiveSourceFormulaVersion: "V2",
+        checkSnapshots: [{ status: "PASSED" }],
         gateDefinition: policy.currentVersion.sourceGateDefinition
       },
       gateCheckSnapshot: {
@@ -652,7 +654,20 @@ describe("project retrospective query service", () => {
           )
       },
       projectClosurePolicy: { findUnique: vi.fn().mockResolvedValue(policy) },
-      gateSubmission: { findMany: vi.fn().mockResolvedValue([submission]) }
+      projectGateInstance: { findFirst: vi.fn().mockResolvedValue(submission.gateInstance) },
+      gateSubmission: {
+        findMany: vi.fn().mockResolvedValue([submission]),
+        findFirst: vi.fn().mockResolvedValue({
+          id: submission.id,
+          version: 2,
+          status: "APPROVED",
+          projectId: submission.projectId,
+          gateInstanceId: submission.gateInstance.id,
+          closurePolicyVersionId: submission.closurePolicyVersionId,
+          closurePolicyChecksum: submission.closurePolicyChecksum,
+          archiveSourceFormulaVersion: submission.archiveSourceFormulaVersion
+        })
+      }
     };
 
     const result = await getProjectRetrospective({
@@ -667,6 +682,12 @@ describe("project retrospective query service", () => {
     expect(result.g9Approval).toMatchObject({
       submissionId: submission.id,
       status: "APPROVED"
+    });
+    expect(result.g9Workflow).toEqual({
+      instanceId: "g9-instance",
+      instanceVersion: 4,
+      latestCheckStatus: "PASSED",
+      submission: { id: "g9-submission", version: 2, status: "APPROVED" }
     });
 
     for (const mutation of [

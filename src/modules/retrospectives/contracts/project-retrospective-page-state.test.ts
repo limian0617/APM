@@ -6,6 +6,8 @@ describe("project retrospective page state", () => {
   it("returns server-computed actions and exposes stale approval explicitly", () => {
     const state = buildProjectRetrospectivePageState({
       projectId: "project-1",
+      projectStatus: "IN_PROGRESS",
+      projectVersion: 3,
       archiveA: {
         id: "archive-a",
         status: "READY",
@@ -40,6 +42,8 @@ describe("project retrospective page state", () => {
   it("returns EMPTY with only CREATE when no retrospective exists", () => {
     const state = buildProjectRetrospectivePageState({
       projectId: "project-1",
+      projectStatus: "IN_PROGRESS",
+      projectVersion: 3,
       archiveA: { id: "archive-a", status: "READY" },
       currentVersion: null,
       latestApprovedVersion: null,
@@ -60,6 +64,8 @@ describe("project retrospective page state", () => {
   it("fails closed for B/G9/close actions when any frozen source fact is unavailable", () => {
     const state = buildProjectRetrospectivePageState({
       projectId: "project-1",
+      projectStatus: "IN_PROGRESS",
+      projectVersion: 3,
       archiveA: null,
       currentVersion: { id: "version-1", status: "APPROVED" },
       latestApprovedVersion: { id: "version-1", status: "APPROVED" },
@@ -82,6 +88,8 @@ describe("project retrospective page state", () => {
   it("requires a server-verified approved G9 fact before exposing project close", () => {
     const base = {
       projectId: "project-1",
+      projectStatus: "IN_PROGRESS",
+      projectVersion: 3,
       archiveA: { id: "archive-a", status: "READY" },
       currentVersion: { id: "version-1", status: "APPROVED" },
       latestApprovedVersion: { id: "version-1", status: "APPROVED" },
@@ -96,22 +104,24 @@ describe("project retrospective page state", () => {
     };
 
     expect(
-      buildProjectRetrospectivePageState({ ...base, g9Approval: null } as any).allowedActions
+      buildProjectRetrospectivePageState({ ...base, g9Approval: null }).allowedActions
     ).toContain("RUN_G9");
     expect(
-      buildProjectRetrospectivePageState({ ...base, g9Approval: null } as any).allowedActions
+      buildProjectRetrospectivePageState({ ...base, g9Approval: null }).allowedActions
     ).not.toContain("CLOSE_PROJECT");
     expect(
       buildProjectRetrospectivePageState({
         ...base,
         g9Approval: { submissionId: "g9-submission", status: "APPROVED" }
-      } as any).allowedActions
+      }).allowedActions
     ).toContain("CLOSE_PROJECT");
   });
 
   it("does not allow create without an exact usable Archive A", () => {
     const state = buildProjectRetrospectivePageState({
       projectId: "project-1",
+      projectStatus: "IN_PROGRESS",
+      projectVersion: 3,
       archiveA: null,
       currentVersion: null,
       latestApprovedVersion: null,
@@ -124,8 +134,31 @@ describe("project retrospective page state", () => {
       canRunG9: false,
       canClose: false,
       g9Approval: null
-    } as any);
+    });
 
     expect(state.allowedActions).not.toContain("CREATE");
+  });
+
+  it("takes CLOSED from the server project fact and removes every write action", () => {
+    const state = buildProjectRetrospectivePageState({
+      projectId: "project-1",
+      projectStatus: "CLOSED",
+      projectVersion: 3,
+      archiveA: { id: "archive-a", status: "READY" },
+      currentVersion: { id: "version-1", status: "DRAFT" },
+      latestApprovedVersion: null,
+      archiveB: { id: "archive-b", status: "READY" },
+      closurePolicy: { id: "policy-v2", status: "ACTIVE" },
+      g9Approval: { submissionId: "submission-1", status: "APPROVED" },
+      canCreate: true,
+      canSubmit: true,
+      canReview: true,
+      canGenerateArchiveB: true,
+      canRunG9: true,
+      canClose: true
+    });
+
+    expect(state.projectStatus).toBe("CLOSED");
+    expect(state.allowedActions).toEqual([]);
   });
 });

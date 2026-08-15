@@ -19,6 +19,7 @@ import {
   createRetrospectiveVersion,
   ProjectRetrospectiveServiceError
 } from "@/modules/retrospectives/application/project-retrospective-service";
+import { findGateSubmissionApproverIds } from "@/modules/governance/application/gate-submission-service";
 import { buildProjectRetrospectivePageState } from "@/modules/retrospectives/contracts/project-retrospective-page-state";
 import { createRetrospectiveBodySchema } from "@/modules/retrospectives/contracts/project-retrospective-http";
 
@@ -77,8 +78,35 @@ async function read(request: Request, context: RouteContext) {
       memberRoles: guard.project.memberRoles,
       resourceDepartmentId: guard.project.departmentId
     }).allowed;
+    const canGateSubmit = decideAuthorization(guard.actor, PERMISSIONS.GATE_SUBMIT, {
+      projectId: path.projectId,
+      memberRoles: guard.project.memberRoles,
+      resourceDepartmentId: guard.project.departmentId
+    }).allowed;
+    const approverIds = base.g9Workflow?.submission
+      ? await findGateSubmissionApproverIds(path.projectId, base.g9Workflow.submission.id)
+      : [];
+    const canGateApprove = decideAuthorization(guard.actor, PERMISSIONS.GATE_APPROVE, {
+      projectId: path.projectId,
+      memberRoles: guard.project.memberRoles,
+      resourceDepartmentId: guard.project.departmentId,
+      assignedUserIds: approverIds ?? []
+    }).allowed;
+    const g9Workflow = base.g9Workflow
+      ? {
+          ...base.g9Workflow,
+          canRunChecks: canGateSubmit && base.g9Workflow.submission === null,
+          canSubmit:
+            canGateSubmit &&
+            base.g9Workflow.latestCheckStatus === "PASSED" &&
+            base.g9Workflow.submission === null,
+          canApprove: canGateApprove && base.g9Workflow.submission?.status === "PENDING"
+        }
+      : null;
     const state = buildProjectRetrospectivePageState({
       projectId: path.projectId,
+      projectStatus: guard.project.status,
+      projectVersion: guard.project.version,
       archiveA: base.archiveA ?? null,
       currentVersion: base.currentVersion
         ? { id: base.currentVersion.id, status: base.currentVersion.status }
@@ -92,11 +120,16 @@ async function read(request: Request, context: RouteContext) {
       canCreate: canManage,
       canSubmit: canManage,
       canReview,
-      canGenerateArchiveB: canManage,
-      canRunG9: canManage,
-      canClose: canManage
+      canGenerateArchiveB: canGateSubmit,
+      canRunG9: canGateSubmit,
+      canClose: canGateApprove
     });
-    return Response.json({ ...base, ...state });
+    return Response.json({
+      ...base,
+      aggregateVersion: base.retrospective?.version ?? null,
+      g9Workflow,
+      ...state
+    });
   } catch (error) {
     return errorResponse(error) ?? Promise.reject(error);
   }

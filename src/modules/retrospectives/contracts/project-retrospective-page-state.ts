@@ -8,6 +8,8 @@ export type RetrospectiveArchivePageFacts = {
 
 export type RetrospectivePageStateInput = {
   projectId: string;
+  projectStatus: string;
+  projectVersion: number;
   archiveA: RetrospectiveArchivePageFacts | null;
   currentVersion: { id: string; status: string } | null;
   latestApprovedVersion: { id: string; status: string } | null;
@@ -32,6 +34,13 @@ export type ProjectRetrospectivePageState = RetrospectivePageStateInput & {
 export function buildProjectRetrospectivePageState(
   input: RetrospectivePageStateInput
 ): ProjectRetrospectivePageState {
+  if (input.projectStatus === "CLOSED") {
+    return {
+      ...input,
+      status: input.currentVersion ? "NORMAL" : "EMPTY",
+      allowedActions: []
+    };
+  }
   const stale =
     input.currentVersion !== null &&
     input.latestApprovedVersion !== null &&

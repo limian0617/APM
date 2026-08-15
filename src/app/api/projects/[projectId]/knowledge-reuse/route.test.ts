@@ -19,8 +19,8 @@ import { POST } from "./route";
 const context = { params: Promise.resolve({ projectId: "target-project-1" }) };
 const body = {
   targetDeliveryUnitId: "delivery-unit-1",
-  knowledgeEntryId: "entry-1",
-  knowledgeVersionId: "version-1",
+  entryCode: "KNW-001",
+  version: 2,
   scenario: "新产线复位。",
   evidenceSummary: "现场记录已归档。"
 };
@@ -119,11 +119,36 @@ describe("POST /api/projects/[projectId]/knowledge-reuse", () => {
       expect.objectContaining({
         targetProjectId: "target-project-1",
         targetDeliveryUnitId: "delivery-unit-1",
+        entryCode: "KNW-001",
+        version: 2,
         targetProjectAccess: true,
         auditContext: expect.objectContaining({ projectId: "target-project-1" })
       }),
       expect.anything()
     );
+  });
+
+  it("rejects forged internal knowledge identifiers before target command execution", async () => {
+    projectGuard.authorizeProjectRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "manager-1" },
+      project: { departmentId: "engineering" }
+    });
+
+    expect(
+      (
+        await POST(
+          request({
+            ...body,
+            knowledgeEntryId: "entry-1",
+            knowledgeVersionId: "version-1"
+          }),
+          context
+        )
+      ).status
+    ).toBe(400);
+    expect(command.idempotentCommandResponse).not.toHaveBeenCalled();
+    expect(reuseService.confirmKnowledgeReuse).not.toHaveBeenCalled();
   });
 
   it("maps a target-scoped reuse IDOR failure without exposing another project record", async () => {

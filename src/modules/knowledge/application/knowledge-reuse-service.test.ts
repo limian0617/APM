@@ -14,9 +14,29 @@ import { confirmKnowledgeReuse, correctKnowledgeReuse } from "./knowledge-reuse-
 
 const transactionNow = new Date("2026-08-14T12:34:56.000Z");
 
+function adoptableSelector(overrides: Record<string, unknown> = {}) {
+  return {
+    entryId: "knowledge-entry-1",
+    entryStatus: "ACTIVE",
+    currentPublishedVersionId: "knowledge-version-1",
+    knowledgeVersionId: "knowledge-version-1",
+    knowledgeVersionStatus: "PUBLISHED",
+    internalReusable: true,
+    ...overrides
+  };
+}
+
+function selectorAwareClock(overrides: Record<string, unknown> = {}) {
+  return vi.fn(async (strings: TemplateStringsArray) =>
+    strings.join("").includes("knowledge_entries")
+      ? [adoptableSelector(overrides)]
+      : [{ now: transactionNow }]
+  );
+}
+
 function transaction(overrides: Record<string, unknown> = {}) {
   return {
-    $queryRaw: vi.fn(async () => [{ now: transactionNow }]),
+    $queryRaw: selectorAwareClock(),
     project: {
       findUnique: vi.fn(async () => ({ id: "target-project-1", status: "IN_PROGRESS" }))
     },
@@ -24,19 +44,6 @@ function transaction(overrides: Record<string, unknown> = {}) {
       findFirst: vi.fn(async () => ({ id: "target-membership-1", projectId: "target-project-1" }))
     },
     deliveryUnit: { findFirst: vi.fn(async () => null) },
-    knowledgeEntryVersion: {
-      findUnique: vi.fn(async () => ({
-        id: "knowledge-version-1",
-        entryId: "knowledge-entry-1",
-        status: "PUBLISHED",
-        internalReusable: true,
-        entry: {
-          id: "knowledge-entry-1",
-          status: "ACTIVE",
-          currentPublishedVersionId: "knowledge-version-1"
-        }
-      }))
-    },
     knowledgeReuseRecord: {
       findUnique: vi.fn(async () => null),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
@@ -56,14 +63,49 @@ beforeEach(() => {
 });
 
 describe("knowledge reuse service", () => {
+  it("resolves and locks a public entryCode plus version selector before persisting internal IDs", async () => {
+    const client = transaction();
+
+    await expect(
+      confirmKnowledgeReuse(
+        {
+          targetProjectId: "target-project-1",
+          targetDeliveryUnitId: null,
+          entryCode: "KNW-001",
+          version: 1,
+          scenario: "Adopt the commissioning tuning checklist.",
+          evidenceSummary: "Project manager confirmed its use during commissioning review.",
+          actorId: "target-manager-1",
+          idempotencyKey: "knowledge-reuse-public-selector-1",
+          targetProjectAccess: true
+        } as any,
+        client
+      )
+    ).resolves.toMatchObject({ id: "reuse-1" });
+
+    expect(client.knowledgeReuseRecord.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          knowledgeEntryId: "knowledge-entry-1",
+          knowledgeVersionId: "knowledge-version-1"
+        })
+      })
+    );
+    expect(client.$queryRaw).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.stringContaining("knowledge_entries")]),
+      "KNW-001",
+      1
+    );
+  });
+
   it("creates one target-project reuse fact only after an authorized person manually confirms a published reusable version", async () => {
     const client = transaction();
 
     const result = await confirmKnowledgeReuse(
       {
         targetProjectId: "target-project-1",
-        knowledgeEntryId: "knowledge-entry-1",
-        knowledgeVersionId: "knowledge-version-1",
+        entryCode: "KNW-001",
+        version: 1,
         targetDeliveryUnitId: null,
         scenario: "Adopt the commissioning tuning checklist.",
         evidenceSummary: "Project manager confirmed its use during commissioning review.",
@@ -100,23 +142,18 @@ describe("knowledge reuse service", () => {
       }
     ]) {
       const client = transaction({
-        knowledgeEntryVersion: {
-          findUnique: vi.fn(async () => ({
-            id: "knowledge-version-1",
-            entryId: "knowledge-entry-1",
-            status: "PUBLISHED",
-            internalReusable: true,
-            entry
-          }))
-        }
+        $queryRaw: selectorAwareClock({
+          entryStatus: entry.status,
+          currentPublishedVersionId: entry.currentPublishedVersionId
+        })
       });
 
       await expect(
         confirmKnowledgeReuse(
           {
             targetProjectId: "target-project-1",
-            knowledgeEntryId: "knowledge-entry-1",
-            knowledgeVersionId: "knowledge-version-1",
+            entryCode: "KNW-001",
+            version: 1,
             targetDeliveryUnitId: null,
             scenario: "Adopt the commissioning tuning checklist.",
             evidenceSummary: "Project manager confirmed the actual use.",
@@ -134,14 +171,18 @@ describe("knowledge reuse service", () => {
   });
 
   it("fails before creating a reuse fact when the transaction clock is unavailable", async () => {
-    const client = transaction({ $queryRaw: vi.fn(async () => []) });
+    const client = transaction({
+      $queryRaw: vi.fn(async (strings: TemplateStringsArray) =>
+        strings.join("").includes("knowledge_entries") ? [adoptableSelector()] : []
+      )
+    });
 
     await expect(
       confirmKnowledgeReuse(
         {
           targetProjectId: "target-project-1",
-          knowledgeEntryId: "knowledge-entry-1",
-          knowledgeVersionId: "knowledge-version-1",
+          entryCode: "KNW-001",
+          version: 1,
           targetDeliveryUnitId: null,
           scenario: "Adopt the commissioning tuning checklist.",
           evidenceSummary: "Project manager confirmed the actual use.",
@@ -174,8 +215,8 @@ describe("knowledge reuse service", () => {
     const result = await confirmKnowledgeReuse(
       {
         targetProjectId: "target-project-1",
-        knowledgeEntryId: "knowledge-entry-1",
-        knowledgeVersionId: "knowledge-version-1",
+        entryCode: "KNW-001",
+        version: 1,
         targetDeliveryUnitId: null,
         scenario: "Adopt the commissioning tuning checklist.",
         evidenceSummary: "Project manager confirmed its use during commissioning review.",
@@ -200,8 +241,8 @@ describe("knowledge reuse service", () => {
     await confirmKnowledgeReuse(
       {
         targetProjectId: "target-project-1",
-        knowledgeEntryId: "knowledge-entry-1",
-        knowledgeVersionId: "knowledge-version-1",
+        entryCode: "KNW-001",
+        version: 1,
         targetDeliveryUnitId: " target-unit-1 ",
         scenario: "Adopt the commissioning tuning checklist.",
         evidenceSummary: "Project manager confirmed its use during commissioning review.",

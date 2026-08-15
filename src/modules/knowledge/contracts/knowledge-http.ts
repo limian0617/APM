@@ -82,25 +82,53 @@ export const createKnowledgeEntryVersionBodySchema = z.strictObject({
   expectedEntryVersion: positiveVersionSchema
 });
 
-export const knowledgeSearchQuerySchema = z.strictObject({
-  query: z.string().trim().min(1).max(64),
-  page: z
-    .string()
-    .regex(/^\d{1,4}$/u)
-    .optional()
-    .transform((value) => (value === undefined ? 1 : Number(value)))
-    .pipe(z.number().int().min(1).max(10_000)),
-  pageSize: z
-    .string()
-    .regex(/^\d{1,3}$/u)
-    .optional()
-    .transform((value) => (value === undefined ? 20 : Number(value)))
-    .pipe(z.number().int().min(1).max(20)),
-  experienceType: controlledCodeSchema.optional(),
-  discipline: controlledCodeSchema.optional(),
-  applicableProjectType: controlledCodeSchema.optional(),
-  applicableStageCode: controlledCodeSchema.optional()
-});
+export const knowledgeSearchQuerySchema = z
+  .strictObject({
+    query: z.string().trim().min(1).max(64),
+    page: z
+      .string()
+      .regex(/^\d{1,4}$/u)
+      .optional()
+      .transform((value) => (value === undefined ? 1 : Number(value)))
+      .pipe(z.number().int().min(1).max(10_000)),
+    pageSize: z
+      .string()
+      .regex(/^\d{1,3}$/u)
+      .optional()
+      .transform((value) => (value === undefined ? 20 : Number(value)))
+      .pipe(z.number().int().min(1).max(20)),
+    experienceType: controlledCodeSchema.optional(),
+    discipline: controlledCodeSchema.optional(),
+    applicableProjectType: controlledCodeSchema.optional(),
+    applicableStageCode: controlledCodeSchema.optional(),
+    targetProjectId: identifierSchema.optional(),
+    reuseId: identifierSchema.optional()
+  })
+  .superRefine((value, context) => {
+    if (value.reuseId && !value.targetProjectId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reuseId"],
+        message: "reuseId 必须与目标项目上下文一起提供。"
+      });
+    }
+  });
+
+export const knowledgePageStateQuerySchema = z
+  .strictObject({
+    view: z.literal("PAGE_STATE"),
+    targetProjectId: identifierSchema.optional(),
+    reuseId: identifierSchema.optional()
+  })
+  .superRefine((value, context) => {
+    if (value.reuseId && !value.targetProjectId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reuseId"],
+        message: "reuseId 必须与目标项目上下文一起提供。"
+      });
+    }
+  });
 
 export const knowledgeSubmitBodySchema = z.strictObject({
   expectedEntryVersion: positiveVersionSchema
@@ -122,8 +150,8 @@ export const knowledgeRevokeBodySchema = z.strictObject({
 
 export const knowledgeReuseBodySchema = z.strictObject({
   targetDeliveryUnitId: identifierSchema.nullable(),
-  knowledgeEntryId: identifierSchema,
-  knowledgeVersionId: identifierSchema,
+  entryCode: controlledCodeSchema,
+  version: positiveVersionSchema,
   scenario: z.string().trim().min(1).max(4_096),
   evidenceSummary: z.string().trim().min(1).max(4_096)
 });
