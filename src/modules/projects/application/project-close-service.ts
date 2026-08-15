@@ -10,8 +10,7 @@ import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   ARCHIVE_VERSION_AUDIT_FIELDS,
   AUDIT_ACTIONS,
-  AUDIT_OBJECT_TYPES,
-  AUDIT_SOURCES
+  AUDIT_OBJECT_TYPES
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import {
@@ -20,6 +19,7 @@ import {
 } from "@/modules/governance/domain/closure-policy-binding";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 import { payloadHash, type JsonValue } from "@/modules/governance/domain/idempotency";
+import { normalizeTraceId } from "@/modules/observability/domain/correlation";
 
 export type ProjectCloseFacts = {
   projectId: string;
@@ -283,18 +283,15 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function workerContext(actorId: string, projectId: string, operationId: string): AuditContext {
+function commandAuditContext(input: CloseProjectInput): AuditContext {
+  const traceId = normalizeTraceId(input.auditContext?.traceId);
+  if (!traceId) throw new TypeError("traceId 必须是有效的 W3C trace id。");
   return {
-    actorId,
-    requestId: null,
-    traceId: operationId,
-    source: AUDIT_SOURCES.API,
-    sourceIp: null,
-    userAgent: null,
-    reason: null,
-    projectId,
-    departmentId: null,
-    operationId
+    ...input.auditContext,
+    actorId: input.actorId,
+    traceId,
+    projectId: input.projectId,
+    operationId: input.operationId
   };
 }
 
@@ -314,6 +311,7 @@ export type CloseProjectInput = {
   actorId: string;
   operationId: string;
   idempotencyKey: string;
+  auditContext: AuditContext;
 };
 
 export type CloseProjectResult = {
@@ -390,6 +388,7 @@ export async function closeProject(rawInput: CloseProjectInput): Promise<ClosePr
     operationId: rawInput.operationId
   });
   const input = { ...rawInput, actorId, idempotencyKey };
+  const auditContext = commandAuditContext(input);
   const operation = async (transaction: Prisma.TransactionClient): Promise<CloseProjectResult> => {
     await transaction.$queryRaw`SELECT id FROM "projects" WHERE id = ${input.projectId} FOR UPDATE`;
     const project = await transaction.project.findUnique({
@@ -795,7 +794,7 @@ export async function closeProject(rawInput: CloseProjectInput): Promise<ClosePr
       action: AUDIT_ACTIONS.PROJECT_CLOSED,
       objectType: AUDIT_OBJECT_TYPES.PROJECT,
       objectId: input.projectId,
-      context: workerContext(input.actorId, input.projectId, input.operationId),
+      context: auditContext,
       after: {
         value: {
           projectId: input.projectId,
@@ -818,13 +817,13 @@ export async function closeProject(rawInput: CloseProjectInput): Promise<ClosePr
         finalArchiveVersionId: input.archiveVersionId,
         closedAt: now.toISOString()
       },
-      traceId: input.operationId
+      traceId: auditContext.traceId
     });
     await writeAudit(transaction, {
       action: AUDIT_ACTIONS.PROJECT_CLOSURE_RECORD_CREATED,
       objectType: AUDIT_OBJECT_TYPES.PROJECT_CLOSURE_RECORD,
       objectId: closureRecordCreated.id,
-      context: workerContext(input.actorId, input.projectId, input.operationId),
+      context: auditContext,
       after: {
         value: {
           projectId: input.projectId,

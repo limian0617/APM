@@ -5,6 +5,7 @@ import {
   ProjectCloseError
 } from "@/modules/projects/application/project-close-service";
 import { archiveCloseBodySchema } from "@/modules/archives/contracts/archive-http";
+import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
 import {
   parseIdempotencyHeaders,
@@ -34,7 +35,14 @@ async function close(request: Request, context: RouteContext) {
       expectedProjectVersion: body.expectedProjectVersion,
       actorId: guard.actor.id,
       operationId: body.operationId,
-      idempotencyKey
+      idempotencyKey,
+      auditContext: auditContextFromRequest(request, {
+        actorId: guard.actor.id,
+        projectId: path.projectId,
+        departmentId: guard.project.departmentId,
+        operationId: body.operationId,
+        reason: "关闭项目"
+      })
     });
     return Response.json(result, {
       status: 200,

@@ -17,6 +17,8 @@ const ids = {
   entry: `knowledge-reuse-entry-${suffix}`,
   version: `knowledge-reuse-version-${suffix}`
 };
+const sourceTemplateChecksum = "3".repeat(64);
+const snapshotChecksum = "4".repeat(64);
 const auditContext = (operationId: string): AuditContext => ({
   actorId: ids.actor,
   source: "API" as const,
@@ -30,6 +32,72 @@ const auditContext = (operationId: string): AuditContext => ({
   operationId
 });
 
+async function createReadyProjects() {
+  const publishedAt = new Date("2026-08-15T00:00:00.000Z");
+  const template = await db.projectTemplate.create({
+    data: {
+      code: `KNOWLEDGE.REUSE.TEMPLATE.${suffix}`.toUpperCase(),
+      name: "Knowledge reuse fixture template",
+      status: "ACTIVE",
+      currentVersion: 1,
+      createdById: ids.actor,
+      updatedById: ids.actor,
+      versions: {
+        create: {
+          version: 1,
+          status: "PUBLISHED",
+          name: "Knowledge reuse fixture template",
+          checksum: sourceTemplateChecksum,
+          publishedById: ids.actor,
+          publishedAt
+        }
+      }
+    },
+    include: { versions: true }
+  });
+  const version = template.versions[0]!;
+  for (const project of [
+    {
+      id: ids.sourceProject,
+      code: `KNOWLEDGE.REUSE.SOURCE.${suffix}`.toUpperCase(),
+      name: "Knowledge reuse source project",
+      status: "CLOSED" as const
+    },
+    {
+      id: ids.targetProject,
+      code: `KNOWLEDGE.REUSE.TARGET.${suffix}`.toUpperCase(),
+      name: "Knowledge reuse target project",
+      status: "IN_PROGRESS" as const
+    }
+  ]) {
+    await db.project.create({
+      data: {
+        ...project,
+        initializationStatus: "READY",
+        projectType: "CUSTOMER_DELIVERY",
+        equipmentShape: "SINGLE_MACHINE",
+        structureStatus: "READY",
+        sourceTemplateVersionId: version.id,
+        sourceTemplateChecksum: version.checksum,
+        initializedAt: publishedAt,
+        createdById: ids.actor
+      }
+    });
+    await db.projectTemplateSnapshot.create({
+      data: {
+        projectId: project.id,
+        sourceTemplateVersionId: version.id,
+        sourceTemplateChecksum: version.checksum,
+        snapshotChecksum,
+        templateCode: template.code,
+        templateName: version.name,
+        templateVersion: version.version,
+        templatePublishedAt: version.publishedAt
+      }
+    });
+  }
+}
+
 describeDatabase("APM-104 PostgreSQL knowledge reuse and correction", () => {
   beforeAll(async () => {
     await db.user.create({
@@ -39,32 +107,7 @@ describeDatabase("APM-104 PostgreSQL knowledge reuse and correction", () => {
         name: "Knowledge reuse integration actor"
       }
     });
-    await db.project.createMany({
-      data: [
-        {
-          id: ids.sourceProject,
-          code: `KNOWLEDGE.REUSE.SOURCE.${suffix}`.toUpperCase(),
-          name: "Knowledge reuse source project",
-          status: "CLOSED",
-          initializationStatus: "READY",
-          projectType: "CUSTOMER_DELIVERY",
-          equipmentShape: "SINGLE_MACHINE",
-          structureStatus: "READY",
-          createdById: ids.actor
-        },
-        {
-          id: ids.targetProject,
-          code: `KNOWLEDGE.REUSE.TARGET.${suffix}`.toUpperCase(),
-          name: "Knowledge reuse target project",
-          status: "IN_PROGRESS",
-          initializationStatus: "READY",
-          projectType: "CUSTOMER_DELIVERY",
-          equipmentShape: "SINGLE_MACHINE",
-          structureStatus: "READY",
-          createdById: ids.actor
-        }
-      ]
-    });
+    await createReadyProjects();
     await db.projectMember.create({
       data: {
         id: ids.membership,

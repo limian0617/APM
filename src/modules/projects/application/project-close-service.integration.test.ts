@@ -42,7 +42,10 @@ function auditContext(
   return {
     actorId,
     requestId: `request-${operationId}`,
-    traceId: createHash("sha256").update(operationId).digest("hex").slice(0, 32),
+    traceId: createHash("sha256")
+      .update(`integration-request-trace:${suffix}:${actorId}:${projectId ?? "global"}`)
+      .digest("hex")
+      .slice(0, 32),
     source: "API",
     sourceIp: null,
     userAgent: "Vitest",
@@ -550,7 +553,8 @@ describeDatabase("APM-104 project close PostgreSQL integration", () => {
       expectedProjectVersion: flow.project.version,
       actorId: ids.reviewer,
       operationId: `close-success-${suffix}`,
-      idempotencyKey: `close-success-${suffix}`
+      idempotencyKey: `close-success-${suffix}`,
+      auditContext: auditContext(ids.reviewer, `close-success-${suffix}`, flow.project.id)
     };
     const [first, replay] = await Promise.all([closeProject(input), closeProject(input)]);
     expect([first.idempotent, replay.idempotent].filter(Boolean)).toHaveLength(1);
@@ -588,6 +592,15 @@ describeDatabase("APM-104 project close PostgreSQL integration", () => {
     await expect(
       db.projectArchiveVersion.findUniqueOrThrow({ where: { id: flow.archiveB.id } })
     ).resolves.toMatchObject({ status: "FINALIZED" });
+    const closeOutbox = await db.outboxEvent.findFirst({
+      where: {
+        eventType: "project.closed",
+        idempotencyKey: `${flow.project.id}:closed:${flow.archiveB.id}`
+      },
+      select: { traceId: true }
+    });
+    expect(closeOutbox).toMatchObject({ traceId: input.auditContext.traceId });
+    expect(closeOutbox?.traceId).not.toBe(input.operationId);
     await expect(
       db.apiIdempotencyRecord.count({
         where: { actorId: ids.reviewer, operation: "projects.close", completedAt: { not: null } }
@@ -608,7 +621,8 @@ describeDatabase("APM-104 project close PostgreSQL integration", () => {
         expectedProjectVersion: local.project.version,
         actorId: ids.reviewer,
         operationId: `close-cross-project-${suffix}`,
-        idempotencyKey: `close-cross-project-${suffix}`
+        idempotencyKey: `close-cross-project-${suffix}`,
+        auditContext: auditContext(ids.reviewer, `close-cross-project-${suffix}`, local.project.id)
       })
     ).rejects.toMatchObject({ code: "CLOSURE_SUBMISSION_PROJECT_MISMATCH", status: 409 });
     await addNonClosureGateSubmission({
@@ -629,7 +643,8 @@ describeDatabase("APM-104 project close PostgreSQL integration", () => {
         expectedProjectVersion: local.project.version,
         actorId: ids.reviewer,
         operationId: `close-stale-${suffix}`,
-        idempotencyKey: `close-stale-${suffix}`
+        idempotencyKey: `close-stale-${suffix}`,
+        auditContext: auditContext(ids.reviewer, `close-stale-${suffix}`, local.project.id)
       })
     ).rejects.toMatchObject({ code: "PROJECT_ARCHIVE_FACTS_STALE", status: 409 });
     await expect(
@@ -659,7 +674,8 @@ describeDatabase("APM-104 project close PostgreSQL integration", () => {
         expectedProjectVersion: flow.project.version,
         actorId: ids.reviewer,
         operationId: `close-rollback-${suffix}`,
-        idempotencyKey
+        idempotencyKey,
+        auditContext: auditContext(ids.reviewer, `close-rollback-${suffix}`, flow.project.id)
       })
     ).rejects.toMatchObject({ code: "P2002" });
     await expect(

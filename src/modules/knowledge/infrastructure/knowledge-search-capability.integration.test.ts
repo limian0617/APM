@@ -22,6 +22,63 @@ const ids = {
   staleCurrentVersion: `knowledge-search-version-current-${suffix}`
 };
 
+const sourceTemplateChecksum = "7".repeat(64);
+const snapshotChecksum = "8".repeat(64);
+
+async function createReadySourceProject() {
+  const publishedAt = new Date("2026-08-15T00:00:00.000Z");
+  const template = await db.projectTemplate.create({
+    data: {
+      code: `KNOWLEDGE.SEARCH.TEMPLATE.${suffix}`.toUpperCase(),
+      name: "Knowledge search fixture template",
+      status: "ACTIVE",
+      currentVersion: 1,
+      createdById: ids.user,
+      updatedById: ids.user,
+      versions: {
+        create: {
+          version: 1,
+          status: "PUBLISHED",
+          name: "Knowledge search fixture template",
+          checksum: sourceTemplateChecksum,
+          publishedById: ids.user,
+          publishedAt
+        }
+      }
+    },
+    include: { versions: true }
+  });
+  const version = template.versions[0]!;
+  await db.project.create({
+    data: {
+      id: ids.project,
+      code: `KNOW.SEARCH.${suffix}`.toUpperCase(),
+      name: "Knowledge search source",
+      status: "CLOSED",
+      initializationStatus: "READY",
+      projectType: "CUSTOMER_DELIVERY",
+      equipmentShape: "SINGLE_MACHINE",
+      structureStatus: "READY",
+      sourceTemplateVersionId: version.id,
+      sourceTemplateChecksum: version.checksum,
+      initializedAt: publishedAt,
+      createdById: ids.user
+    }
+  });
+  await db.projectTemplateSnapshot.create({
+    data: {
+      projectId: ids.project,
+      sourceTemplateVersionId: version.id,
+      sourceTemplateChecksum: version.checksum,
+      snapshotChecksum,
+      templateCode: template.code,
+      templateName: version.name,
+      templateVersion: version.version,
+      templatePublishedAt: version.publishedAt
+    }
+  });
+}
+
 describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
   it.skipIf(process.env.APM104_RESTRICTED_NO_EXTENSION !== "1")(
     "server reports DEGRADED only when the restricted gate proves pg_trgm is absent",
@@ -49,19 +106,7 @@ describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
     await db.user.create({
       data: { id: ids.user, employeeNo: `KNOW-${suffix}`, name: "Knowledge search test" }
     });
-    await db.project.create({
-      data: {
-        id: ids.project,
-        code: `KNOW.SEARCH.${suffix}`.toUpperCase(),
-        name: "Knowledge search source",
-        status: "CLOSED",
-        initializationStatus: "READY",
-        projectType: "CUSTOMER_DELIVERY",
-        equipmentShape: "SINGLE_MACHINE",
-        structureStatus: "READY",
-        createdById: ids.user
-      }
-    });
+    await createReadySourceProject();
     await db.knowledgeEntry.create({
       data: {
         id: ids.entry,

@@ -21,6 +21,8 @@ const ids = {
 };
 
 const checksum = (value: string) => value.padEnd(64, "0").slice(0, 64);
+const sourceTemplateChecksum = "1".repeat(64);
+const snapshotChecksum = "2".repeat(64);
 const auditContext = (actorId: string, operationId: string): AuditContext => ({
   actorId,
   source: "API" as const,
@@ -33,6 +35,60 @@ const auditContext = (actorId: string, operationId: string): AuditContext => ({
   departmentId: null,
   operationId
 });
+
+async function createReadySourceProject() {
+  const publishedAt = new Date("2026-08-15T00:00:00.000Z");
+  const template = await db.projectTemplate.create({
+    data: {
+      code: `KNOWLEDGE.ENTRY.TEMPLATE.${suffix}`.toUpperCase(),
+      name: "Knowledge entry fixture template",
+      status: "ACTIVE",
+      currentVersion: 1,
+      createdById: ids.author,
+      updatedById: ids.author,
+      versions: {
+        create: {
+          version: 1,
+          status: "PUBLISHED",
+          name: "Knowledge entry fixture template",
+          checksum: sourceTemplateChecksum,
+          publishedById: ids.author,
+          publishedAt
+        }
+      }
+    },
+    include: { versions: true }
+  });
+  const version = template.versions[0]!;
+  await db.project.create({
+    data: {
+      id: ids.project,
+      code: `KNOWLEDGE.ENTRY.${suffix}`.toUpperCase(),
+      name: "Knowledge entry source project",
+      status: "CLOSED",
+      initializationStatus: "READY",
+      projectType: "CUSTOMER_DELIVERY",
+      equipmentShape: "SINGLE_MACHINE",
+      structureStatus: "READY",
+      sourceTemplateVersionId: version.id,
+      sourceTemplateChecksum: version.checksum,
+      initializedAt: publishedAt,
+      createdById: ids.author
+    }
+  });
+  await db.projectTemplateSnapshot.create({
+    data: {
+      projectId: ids.project,
+      sourceTemplateVersionId: version.id,
+      sourceTemplateChecksum: version.checksum,
+      snapshotChecksum,
+      templateCode: template.code,
+      templateName: version.name,
+      templateVersion: version.version,
+      templatePublishedAt: version.publishedAt
+    }
+  });
+}
 
 async function createSourceGraph() {
   const archive = await db.projectArchive.create({ data: { projectId: ids.project } });
@@ -124,19 +180,7 @@ describeDatabase("APM-104 PostgreSQL knowledge publish and revoke", () => {
         }
       ]
     });
-    await db.project.create({
-      data: {
-        id: ids.project,
-        code: `KNOWLEDGE.ENTRY.${suffix}`.toUpperCase(),
-        name: "Knowledge entry source project",
-        status: "CLOSED",
-        initializationStatus: "READY",
-        projectType: "CUSTOMER_DELIVERY",
-        equipmentShape: "SINGLE_MACHINE",
-        structureStatus: "READY",
-        createdById: ids.author
-      }
-    });
+    await createReadySourceProject();
     const graph = await createSourceGraph();
     await db.knowledgeEntry.create({
       data: {

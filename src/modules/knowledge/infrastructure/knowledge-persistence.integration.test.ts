@@ -21,6 +21,75 @@ function checksum(value: string) {
   return value.padEnd(64, "0").slice(0, 64);
 }
 
+const sourceTemplateChecksum = "5".repeat(64);
+const snapshotChecksum = "6".repeat(64);
+
+async function createReadyProjects() {
+  const publishedAt = new Date("2026-08-15T00:00:00.000Z");
+  const template = await db.projectTemplate.create({
+    data: {
+      code: `KNOWLEDGE.PERSISTENCE.TEMPLATE.${suffix}`.toUpperCase(),
+      name: "Knowledge persistence fixture template",
+      status: "ACTIVE",
+      currentVersion: 1,
+      createdById: ids.user,
+      updatedById: ids.user,
+      versions: {
+        create: {
+          version: 1,
+          status: "PUBLISHED",
+          name: "Knowledge persistence fixture template",
+          checksum: sourceTemplateChecksum,
+          publishedById: ids.user,
+          publishedAt
+        }
+      }
+    },
+    include: { versions: true }
+  });
+  const version = template.versions[0]!;
+  for (const project of [
+    {
+      id: ids.sourceProject,
+      code: `KNOWLEDGE.SOURCE.${suffix}`.toUpperCase(),
+      name: "Knowledge source project",
+      status: "CLOSED" as const
+    },
+    {
+      id: ids.otherProject,
+      code: `KNOWLEDGE.OTHER.${suffix}`.toUpperCase(),
+      name: "Knowledge other project",
+      status: "IN_PROGRESS" as const
+    }
+  ]) {
+    await db.project.create({
+      data: {
+        ...project,
+        initializationStatus: "READY",
+        projectType: "CUSTOMER_DELIVERY",
+        equipmentShape: "SINGLE_MACHINE",
+        structureStatus: "READY",
+        sourceTemplateVersionId: version.id,
+        sourceTemplateChecksum: version.checksum,
+        initializedAt: publishedAt,
+        createdById: ids.user
+      }
+    });
+    await db.projectTemplateSnapshot.create({
+      data: {
+        projectId: project.id,
+        sourceTemplateVersionId: version.id,
+        sourceTemplateChecksum: version.checksum,
+        snapshotChecksum,
+        templateCode: template.code,
+        templateName: version.name,
+        templateVersion: version.version,
+        templatePublishedAt: version.publishedAt
+      }
+    });
+  }
+}
+
 async function createArchiveAndRetrospective(projectId: string, label: string) {
   const archive = await db.projectArchive.create({ data: { projectId } });
   const archiveA = await db.projectArchiveVersion.create({
@@ -137,32 +206,7 @@ describeDatabase("APM-104 PostgreSQL knowledge composite foreign keys", () => {
         name: "Knowledge persistence integration user"
       }
     });
-    await db.project.createMany({
-      data: [
-        {
-          id: ids.sourceProject,
-          code: `KNOWLEDGE.SOURCE.${suffix}`.toUpperCase(),
-          name: "Knowledge source project",
-          status: "CLOSED",
-          initializationStatus: "READY",
-          projectType: "CUSTOMER_DELIVERY",
-          equipmentShape: "SINGLE_MACHINE",
-          structureStatus: "READY",
-          createdById: ids.user
-        },
-        {
-          id: ids.otherProject,
-          code: `KNOWLEDGE.OTHER.${suffix}`.toUpperCase(),
-          name: "Knowledge other project",
-          status: "IN_PROGRESS",
-          initializationStatus: "READY",
-          projectType: "CUSTOMER_DELIVERY",
-          equipmentShape: "SINGLE_MACHINE",
-          structureStatus: "READY",
-          createdById: ids.user
-        }
-      ]
-    });
+    await createReadyProjects();
     await db.projectMember.create({
       data: {
         id: ids.targetMembership,

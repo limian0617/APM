@@ -86,6 +86,21 @@ const facts = {
   openResidualItemIds: [] as string[]
 };
 
+function closeAuditContext() {
+  return {
+    actorId: "quality-user",
+    requestId: "close-request-1",
+    traceId: "1".repeat(32),
+    source: "API" as const,
+    sourceIp: null,
+    userAgent: "Vitest",
+    reason: "关闭项目",
+    projectId: "project-1",
+    departmentId: "quality",
+    operationId: "close-operation-1"
+  };
+}
+
 describe("project closure", () => {
   beforeEach(() => {
     database.db.$transaction.mockReset();
@@ -121,6 +136,40 @@ describe("project closure", () => {
     expect(isRetryableCloseTransactionError(new Error("connection reset"))).toBe(false);
   });
 
+  it("rejects a missing, malformed, or all-zero request trace before beginning the close transaction", async () => {
+    database.db.$transaction.mockRejectedValue({ code: "P2034" });
+    const command = {
+      projectId: "project-1",
+      archiveVersionId: "archive-b",
+      g9SubmissionId: "g9-submission",
+      expectedProjectVersion: 6,
+      actorId: "quality-user",
+      operationId: "business-operation-is-not-a-trace",
+      idempotencyKey: "trace-required-key"
+    };
+
+    for (const traceId of [null, "not-a-w3c-trace", "0".repeat(32)]) {
+      await expect(
+        closeProject({
+          ...command,
+          auditContext: {
+            actorId: "forged-actor",
+            requestId: "request-1",
+            traceId,
+            source: "API",
+            sourceIp: null,
+            userAgent: null,
+            reason: null,
+            projectId: "forged-project",
+            departmentId: "forged-department",
+            operationId: "forged-operation"
+          }
+        })
+      ).rejects.toThrow("traceId 必须是有效的 W3C trace id。");
+    }
+    expect(database.db.$transaction).not.toHaveBeenCalled();
+  });
+
   it("retries exhausted serializable close transactions and returns a retryable conflict", async () => {
     database.db.$transaction.mockRejectedValue({ code: "P2034" });
 
@@ -132,7 +181,8 @@ describe("project closure", () => {
         expectedProjectVersion: 6,
         actorId: "quality-user",
         operationId: "close-serialization-conflict",
-        idempotencyKey: "serialization-conflict-key"
+        idempotencyKey: "serialization-conflict-key",
+        auditContext: closeAuditContext()
       })
     ).rejects.toMatchObject({ code: "CLOSURE_TRANSACTION_CONFLICT", status: 409 });
     expect(database.db.$transaction).toHaveBeenCalledTimes(CLOSE_PROJECT_TRANSACTION_MAX_ATTEMPTS);
@@ -174,7 +224,8 @@ describe("project closure", () => {
         expectedProjectVersion: 6,
         actorId: "quality-user",
         operationId: "close-retry-with-new-key",
-        idempotencyKey: "new-close-key"
+        idempotencyKey: "new-close-key",
+        auditContext: closeAuditContext()
       })
     ).rejects.toMatchObject({ code: "PROJECT_VERSION_CONFLICT", status: 409 });
     expect(record.apiIdempotencyRecord.create).toHaveBeenCalledOnce();
