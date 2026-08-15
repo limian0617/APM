@@ -614,6 +614,12 @@ Executed TDD evidence: RED first observed missing `loadKnowledgePageState`, stri
 - **Minimal GREEN contract:** only the sequence-2 `REJECTED` fixture receives `decidedAt: new Date()`. The sequence-1 `PENDING` fixture remains undecided, and both submissions retain their single explicit transaction with the exact existing QUALITY frozen approver. The terminal-row CHECK is independent from the deferred frozen-approver constraint, so this recovery neither relaxes either contract nor changes production, schema, migration, permissions, workflows, or command behavior. The stale legacy-G9 resubmit assertion remains `CLOSURE_POLICY_STALE` / 409.
 - **Verification boundary:** local database-gated integration remains `SKIPPED` without PostgreSQL and is not database GREEN. The next CI must re-establish the full PostgreSQL suite, build, and audit evidence; any new failure stops the work. The disposable four-identity browser chain remains frozen pending a complete green CI.
 
+#### Recovery T12-R8.2 (legacy retrospective nested relation ownership)
+
+- **CI RED and root cause:** CI run `31893066674` passed every named database replay, upgrade, normal/restricted search-capability, Bash-wrapper, formatting, lint, Prisma, and typecheck gate, then failed the final full suite with `PrismaClientValidationError` in the legacy G9 retrospective fixture. The parent `ProjectRetrospectiveVersion` nested relation owns and supplies `projectId` and `retrospectiveVersionId`; its `ProjectRetrospectiveContributionUncheckedCreateWithoutRetrospectiveVersionInput` and `ProjectRetrospectiveReviewUncheckedCreateWithoutRetrospectiveVersionInput` therefore reject nested `projectId`.
+- **Minimal GREEN contract:** remove only `projectId: facts.project.id` from the nested contribution and review creates. The parent version retains its `projectId` and `retrospectiveId`; the review retains its required `retrospectiveId`, which is valid in the nested unchecked review input. The R8.1 terminal timestamp, the PENDING/REJECTED submission transactions with their exact QUALITY frozen approvers, and the legacy G9 `CLOSURE_POLICY_STALE` / 409 assertion remain unchanged.
+- **Verification boundary:** the CI failure is the real PostgreSQL RED. Local database-gated integration remains `SKIPPED` without PostgreSQL and is not database GREEN; the next full CI must establish the complete full-test, build, and audit evidence. The disposable four-identity browser chain remains frozen pending a complete green CI.
+
 ## 附录 A - 完整持久化契约
 
 ### A.1 Enums

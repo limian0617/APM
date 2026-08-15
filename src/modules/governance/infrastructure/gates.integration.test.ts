@@ -1146,7 +1146,6 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
         createdById: ids.projectManager,
         contributions: {
           create: {
-            projectId: facts.project.id,
             scopeType: "PROJECT",
             discipline: "QUALITY",
             contributorMembershipId: projectManagerMembership.id,
@@ -1158,7 +1157,6 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
         },
         reviews: {
           create: {
-            projectId: facts.project.id,
             retrospectiveId: retrospective.id,
             decision: "APPROVED",
             reason: "独立质量复核通过。",
