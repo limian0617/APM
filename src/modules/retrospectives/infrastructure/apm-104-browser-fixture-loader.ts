@@ -10,10 +10,9 @@ import {
 } from "@/modules/configuration/application/template-service";
 import { MemoryObjectStorage } from "@/modules/documents/infrastructure/memory-object-storage";
 import { requestArchiveGeneration } from "@/modules/archives/application/archive-service";
-import { createPrismaArchiveGenerationHandler } from "@/modules/archives/application/archive-generation-handler";
-import { createArchiveIntegrityHandler } from "@/modules/archives/application/archive-integrity-handler";
-import { payloadHash } from "@/modules/governance/domain/idempotency";
 import { createProjectFromTemplate } from "@/modules/projects/application/create-project";
+import { createArchiveJobHandlers } from "@/workers/archive-job-handlers";
+import { runJobBatch } from "@/workers/job-runner";
 
 const FIXTURE_TEMPLATE_CODE = "APM104.BROWSER.FIXTURE";
 const FIXTURE_SOURCE_CODE = "APM104-FIXTURE-SOURCE";
@@ -25,6 +24,13 @@ const fixtureUsers = {
   targetManagerId: "apm104-target-manager"
 } as const;
 const browserIdentityTokens = new Map<string, string>();
+const FIXTURE_WORKER_POLICY = {
+  claimBatchSize: 1,
+  leaseSeconds: 60,
+  retryBaseSeconds: 1,
+  retryMaxSeconds: 10,
+  defaultMaxAttempts: 1
+} as const;
 
 type BrowserFixtureUsers = {
   sourceManagerId: string;
@@ -291,20 +297,37 @@ async function ensureMembership(
   });
 }
 
-function workerJob(id: string, projectId: string, payload: Record<string, string>) {
-  return {
-    id,
-    jobType: "archive.generate",
-    payload: payloadHash(payload).value,
-    payloadHash: payloadHash(payload).hash,
-    idempotencyKey: id,
-    traceId: id,
-    attemptId: `${id}-attempt`,
-    attemptNumber: 1,
-    maxAttempts: 1,
-    isReplay: false,
-    workerId: "apm104-browser-fixture"
-  } as const;
+type FixtureArchiveEventType = "archive.generate" | "archive.integrity.check";
+
+export async function runApm104FixtureArchiveWorkerStage(input: {
+  eventType: FixtureArchiveEventType;
+  projectId: string;
+  storage: MemoryObjectStorage;
+}): Promise<string> {
+  const registeredHandlers =
+    input.eventType === "archive.generate"
+      ? createArchiveJobHandlers()
+      : createArchiveJobHandlers({ storage: input.storage });
+  const handler = registeredHandlers[input.eventType];
+  if (!handler) {
+    throw new Error("APM104_BROWSER_FIXTURE_ARCHIVE_WORKER_HANDLER_MISSING");
+  }
+  const batch = await runJobBatch({
+    workerId: `apm104-browser-fixture-${input.projectId}-${input.eventType.replaceAll(".", "-")}`,
+    handlers: { [input.eventType]: handler },
+    policy: FIXTURE_WORKER_POLICY
+  });
+  const [jobId] = batch.materializedJobIds;
+  const succeeded =
+    batch.materializedJobIds.length === 1 &&
+    batch.claimedCount === 1 &&
+    batch.outcomes.length === 1 &&
+    batch.outcomes[0]?.jobId === jobId &&
+    batch.outcomes[0]?.status === "SUCCEEDED";
+  if (!jobId || !succeeded) {
+    throw new Error("APM104_BROWSER_FIXTURE_ARCHIVE_WORKER_STAGE_FAILED");
+  }
+  return jobId;
 }
 
 async function ensureArchiveA(projectId: string) {
@@ -329,20 +352,20 @@ async function ensureArchiveA(projectId: string) {
     actorId: fixtureUsers.sourceManagerId,
     auditContext: context(fixtureUsers.sourceManagerId, `archive-request-${projectId}`, projectId)
   });
-  const generationId = `apm104-browser-archive-${projectId}`;
-  await createPrismaArchiveGenerationHandler()(
-    workerJob(generationId, projectId, {
-      projectId,
-      requestedById: fixtureUsers.sourceManagerId,
-      archiveSourceFormulaVersion: "ARCHIVE.SOURCE@2"
-    })
-  );
+  const storage = new MemoryObjectStorage();
+  const generationId = await runApm104FixtureArchiveWorkerStage({
+    eventType: "archive.generate",
+    projectId,
+    storage
+  });
   const created = await db.projectArchiveVersion.findUniqueOrThrow({
     where: { generationJobId: generationId }
   });
-  await createArchiveIntegrityHandler({ storage: new MemoryObjectStorage() })(
-    workerJob(`${generationId}-integrity`, projectId, { projectId, archiveVersionId: created.id })
-  );
+  await runApm104FixtureArchiveWorkerStage({
+    eventType: "archive.integrity.check",
+    projectId,
+    storage
+  });
   return db.projectArchiveVersion.findUniqueOrThrow({
     where: { id: created.id },
     include: { integrityChecks: { orderBy: { sequence: "desc" }, take: 1 } }

@@ -5,14 +5,19 @@ const fixtureDatabase = vi.hoisted(() => ({
   user: { createMany: vi.fn() },
   userRole: { upsert: vi.fn() }
 }));
+const archiveJobHandlers = vi.hoisted(() => ({ createArchiveJobHandlers: vi.fn() }));
+const jobRunner = vi.hoisted(() => ({ runJobBatch: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({ db: fixtureDatabase }));
+vi.mock("@/workers/archive-job-handlers", () => archiveJobHandlers);
+vi.mock("@/workers/job-runner", () => jobRunner);
 
 import {
   buildApm104BrowserFixture,
   consumeApm104BrowserIdentityToken,
   issueApm104BrowserIdentityToken,
   provisionApm104BrowserFixture,
+  runApm104FixtureArchiveWorkerStage,
   validateApm104FixtureEnvironment
 } from "./apm-104-browser-fixture-loader";
 
@@ -22,6 +27,8 @@ describe("APM-104 browser fixture", () => {
     fixtureDatabase.$queryRaw.mockReset();
     fixtureDatabase.user.createMany.mockReset();
     fixtureDatabase.userRole.upsert.mockReset();
+    archiveJobHandlers.createArchiveJobHandlers.mockReset();
+    jobRunner.runJobBatch.mockReset();
   });
   it("returns exact IDs for a disposable V2 workflow without pre-closing it", async () => {
     await expect(
@@ -109,5 +116,86 @@ describe("APM-104 browser fixture", () => {
       "APM104_BROWSER_FIXTURE_DATABASE_NOT_DISPOSABLE"
     );
     expect(fixtureDatabase.user.createMany).not.toHaveBeenCalled();
+  });
+
+  it("runs each archive fixture stage through exactly one successful durable job batch", async () => {
+    const generationHandler = vi.fn();
+    const integrityHandler = vi.fn();
+    archiveJobHandlers.createArchiveJobHandlers.mockReturnValue({
+      "archive.generate": generationHandler,
+      "archive.integrity.check": integrityHandler
+    });
+    jobRunner.runJobBatch
+      .mockResolvedValueOnce({
+        materializedJobIds: ["generation-job"],
+        claimedCount: 1,
+        outcomes: [{ jobId: "generation-job", status: "SUCCEEDED" }]
+      })
+      .mockResolvedValueOnce({
+        materializedJobIds: ["integrity-job"],
+        claimedCount: 1,
+        outcomes: [{ jobId: "integrity-job", status: "SUCCEEDED" }]
+      });
+
+    await expect(
+      runApm104FixtureArchiveWorkerStage({
+        eventType: "archive.generate",
+        projectId: "project-1",
+        storage: {} as never
+      })
+    ).resolves.toBe("generation-job");
+    await expect(
+      runApm104FixtureArchiveWorkerStage({
+        eventType: "archive.integrity.check",
+        projectId: "project-1",
+        storage: {} as never
+      })
+    ).resolves.toBe("integrity-job");
+
+    expect(archiveJobHandlers.createArchiveJobHandlers).toHaveBeenNthCalledWith(1);
+    expect(archiveJobHandlers.createArchiveJobHandlers).toHaveBeenNthCalledWith(2, {
+      storage: expect.anything()
+    });
+    expect(jobRunner.runJobBatch).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        workerId: "apm104-browser-fixture-project-1-archive-generate",
+        handlers: { "archive.generate": generationHandler },
+        policy: {
+          claimBatchSize: 1,
+          leaseSeconds: 60,
+          retryBaseSeconds: 1,
+          retryMaxSeconds: 10,
+          defaultMaxAttempts: 1
+        }
+      })
+    );
+    expect(jobRunner.runJobBatch).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        workerId: "apm104-browser-fixture-project-1-archive-integrity-check",
+        handlers: { "archive.integrity.check": integrityHandler }
+      })
+    );
+  });
+
+  it("fails closed unless a fixture archive stage materializes, claims, and completes one job", async () => {
+    const generationHandler = vi.fn();
+    archiveJobHandlers.createArchiveJobHandlers.mockReturnValue({
+      "archive.generate": generationHandler
+    });
+    jobRunner.runJobBatch.mockResolvedValue({
+      materializedJobIds: ["generation-job"],
+      claimedCount: 0,
+      outcomes: []
+    });
+
+    await expect(
+      runApm104FixtureArchiveWorkerStage({
+        eventType: "archive.generate",
+        projectId: "project-1",
+        storage: {} as never
+      })
+    ).rejects.toThrow("APM104_BROWSER_FIXTURE_ARCHIVE_WORKER_STAGE_FAILED");
   });
 });
