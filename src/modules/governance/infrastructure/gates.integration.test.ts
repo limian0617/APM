@@ -1053,6 +1053,7 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
           approverRolesJson: ["QUALITY"],
           submittedReason: "旧 G9 HTTP 重提拒绝夹具",
           submittedById: ids.projectManager,
+          decidedAt: new Date(),
           closurePolicyVersionId: null,
           archiveSourceFormulaVersion: null,
           closurePolicyChecksum: null
