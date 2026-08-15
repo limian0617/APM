@@ -157,8 +157,18 @@ describe("project retrospective query service", () => {
     });
 
     expect(result).toMatchObject({
-      archiveA: { id: "archive-a" },
-      archiveB: { id: "archive-b" },
+      archiveA: {
+        id: "archive-a",
+        manifestChecksum: archiveA.manifestChecksum,
+        sourceWatermark: archiveA.sourceWatermark,
+        retrospectiveInputWatermark: archiveA.retrospectiveInputWatermark
+      },
+      archiveB: {
+        id: "archive-b",
+        manifestChecksum: archiveB.manifestChecksum,
+        sourceWatermark: archiveB.sourceWatermark,
+        retrospectiveInputWatermark: archiveB.retrospectiveInputWatermark
+      },
       closurePolicy: null
     });
     expect(db.projectArchiveVersion.findMany).toHaveBeenCalledWith(
@@ -810,7 +820,13 @@ describe("project retrospective query service", () => {
       readCurrentV2Manifest: vi.fn().mockResolvedValue(currentManifest)
     });
 
-    expect(result.archiveB).toEqual({ id: "archive-b-newer", status: "READY" });
+    expect(result.archiveB).toMatchObject({
+      id: "archive-b-newer",
+      status: "READY",
+      manifestChecksum: "c".repeat(64),
+      sourceWatermark: "d".repeat(64),
+      retrospectiveInputWatermark: "i".repeat(64)
+    });
   });
 
   it.each([

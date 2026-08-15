@@ -444,10 +444,10 @@ type PublicKnowledgeVersionDto = {
 
 - Create: src/app/projects/[projectId]/governance/page.tsx
 - Create: src/app/projects/[projectId]/governance/retrospective-page-client.tsx
-- Create/Test: src/app/projects/[projectId]/governance/retrospective-page-client.test.tsx
+- Create/Test: src/app/projects/[projectId]/governance/retrospective-page-client.test.ts
 - Create: src/app/knowledge/page.tsx
 - Create: src/app/knowledge/knowledge-page-client.tsx
-- Create/Test: src/app/knowledge/knowledge-page-client.test.tsx
+- Create/Test: src/app/knowledge/knowledge-page-client.test.ts
 - Modify/Test: src/modules/projects/contracts/project-navigation.ts, src/modules/projects/contracts/project-navigation.test.ts, src/app/projects/[projectId]/project-navigation-client.tsx, src/app/projects/[projectId]/project-navigation-client.test.ts
 - Modify: src/app/globals.css
 
@@ -456,7 +456,7 @@ type PublicKnowledgeVersionDto = {
 - [ ] Step 3: responsive CSS 使用 min-width:0、overflow-wrap:anywhere、visible focus、mobile single column，不用页面级 overflow-x 隐藏问题。
 - [ ] Step 4: 启动 disposable PostgreSQL、migrate、npm run dev；POST /api/dev/apm-104/browser-fixture，切换四个身份，真实执行 create->submit->review->B->G9->close->knowledge publish->reuse->correction。
 - [ ] Step 5: 在 1440x900 和 390x844 验收各状态、键盘、scrollWidth<=innerWidth、Console/Network 无未处理异常/404/敏感字段。production fixture route 必须 404。
-- [ ] Step 6: 运行 `npm run test -- src/app/projects/[projectId]/governance/retrospective-page-client.test.tsx src/app/knowledge/knowledge-page-client.test.tsx src/modules/projects/contracts/project-navigation.test.ts src/app/projects/[projectId]/project-navigation-client.test.ts`；预期状态矩阵、allowedActions、焦点和导航断言全部 PASS 后提交；实现时测试文件必须与对应 `.tsx` 组件在本任务同一 RED/GREEN 批次创建。
+- [ ] Step 6: 运行 `npm run test -- src/app/projects/[projectId]/governance/retrospective-page-client.test.ts src/app/knowledge/knowledge-page-client.test.ts src/modules/projects/contracts/project-navigation.test.ts src/app/projects/[projectId]/project-navigation-client.test.ts`；预期状态矩阵、allowedActions、焦点和导航断言全部 PASS 后提交；实现时测试文件必须与对应 `.tsx` 组件在本任务同一 RED/GREEN 批次创建。
 
 Browser acceptance uses these executable assertions after every identity switch:
 
@@ -467,6 +467,14 @@ expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.
 expect(page.locator('[data-state="stale"]')).toContainText(/已过期|重新生成/);
 expect(page.locator("button:focus-visible")).toBeVisible();
 ```
+
+## Task 11 Collector Recovery（2026-08-15）
+
+Task 11 初始 RED 严格按已批准的 `.test.tsx` 路径创建，但 `vitest.config.ts` 固定只收集 `src/**/*.test.ts`，命令退出 1 且报告 `No test files found`；这证明的是收集器冲突，不能作为组件尚不存在的有效 RED。经 APM-规划裁决，两个测试不使用 JSX，因此改为仓库既有约定的 `.test.ts`，同步修订 Task 11 文件清单和聚焦命令，且不修改全局 Vitest 配置。恢复后的第一步必须重新运行聚焦命令，确认失败原因是两个尚不存在的生产组件；仅在这一有效 RED 后开始本 Task 的最小 UI 实现。若以后确实需要 JSX 测试，必须先单独获得配置范围授权。
+
+## Task 11 Contract Recovery（2026-08-15）
+
+Task 8 的 `findCurrentV2Archive` / `findReadyApplicableV2Archive` 已在服务端选择 V2、READY、APPLICABLE、完整性 PASSED 且在需要时重算当前 manifest 的精确归档候选，但 `archiveView()` 先前只保留 `{ id, status }`。Task 11 不能在 Route 或客户端重算、补造或推导 `manifestChecksum`、`sourceWatermark`、`retrospectiveInputWatermark`，故经 APM-规划批准扩展此一服务端 DTO：仅对已经通过原有候选校验的 Archive A/B 透传这三项事实；候选不存在或不可用仍返回 `null`，不泄露 manifest items、源对象或内部关联。RED 断言候选字段最初缺失，GREEN 后 query、page-state 与 GET Route 测试确认其精确透传。Route 继续只把 query facts 送入 page-state，不查询 Prisma、不重新选择归档。此 Recovery 还精确恢复 Next 自动修改的 `next-env.d.ts` 为基线 `./.next/types/routes.d.ts`，提交前该文件不得有 diff。
 
 ### Task 12: Database replay、受限 pg_trgm CI 和最终门禁
 

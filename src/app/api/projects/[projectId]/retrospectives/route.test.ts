@@ -110,8 +110,20 @@ describe("project retrospective route", () => {
       latestApprovedVersionId: "retro-version-1",
       currentVersion: { id: "retro-version-1", status: "APPROVED" },
       latestApprovedVersion: { id: "retro-version-1", status: "APPROVED" },
-      archiveA: { id: "archive-a", status: "READY" },
-      archiveB: { id: "archive-b", status: "READY" },
+      archiveA: {
+        id: "archive-a",
+        status: "READY",
+        manifestChecksum: "archive-a-manifest",
+        sourceWatermark: "archive-a-source",
+        retrospectiveInputWatermark: "archive-a-input"
+      },
+      archiveB: {
+        id: "archive-b",
+        status: "READY",
+        manifestChecksum: "archive-b-manifest",
+        sourceWatermark: "archive-b-source",
+        retrospectiveInputWatermark: "archive-b-input"
+      },
       closurePolicy: { id: "policy-v2", status: "ACTIVE" },
       g9Approval: null,
       versions: [{ id: "retro-version-1", status: "APPROVED" }],
@@ -126,8 +138,18 @@ describe("project retrospective route", () => {
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
       status: "NORMAL",
-      archiveA: { id: "archive-a" },
-      archiveB: { id: "archive-b" },
+      archiveA: {
+        id: "archive-a",
+        manifestChecksum: "archive-a-manifest",
+        sourceWatermark: "archive-a-source",
+        retrospectiveInputWatermark: "archive-a-input"
+      },
+      archiveB: {
+        id: "archive-b",
+        manifestChecksum: "archive-b-manifest",
+        sourceWatermark: "archive-b-source",
+        retrospectiveInputWatermark: "archive-b-input"
+      },
       currentVersionId: "retro-version-1",
       latestApprovedVersionId: "retro-version-1"
     });

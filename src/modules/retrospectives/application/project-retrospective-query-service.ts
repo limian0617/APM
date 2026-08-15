@@ -103,7 +103,13 @@ function assertRetrospectivePointers(aggregate: RetrospectiveAggregate) {
 
 function archiveView(archive: ArchiveV2Candidate | null) {
   return archive && isReadyApplicableV2Archive(archive)
-    ? { id: archive.id, status: archive.status }
+    ? {
+        id: archive.id,
+        status: archive.status,
+        manifestChecksum: archive.manifestChecksum,
+        sourceWatermark: archive.sourceWatermark,
+        retrospectiveInputWatermark: archive.retrospectiveInputWatermark
+      }
     : null;
 }
 

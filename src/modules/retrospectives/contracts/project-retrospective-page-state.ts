@@ -1,9 +1,17 @@
+export type RetrospectiveArchivePageFacts = {
+  id: string;
+  status: string;
+  manifestChecksum?: string | null;
+  sourceWatermark?: string | null;
+  retrospectiveInputWatermark?: string | null;
+};
+
 export type RetrospectivePageStateInput = {
   projectId: string;
-  archiveA: { id: string; status: string } | null;
+  archiveA: RetrospectiveArchivePageFacts | null;
   currentVersion: { id: string; status: string } | null;
   latestApprovedVersion: { id: string; status: string } | null;
-  archiveB: { id: string; status: string } | null;
+  archiveB: RetrospectiveArchivePageFacts | null;
   closurePolicy: { id: string; status: string } | null;
   g9Approval: { submissionId: string; status: "APPROVED" } | null;
   canCreate: boolean;

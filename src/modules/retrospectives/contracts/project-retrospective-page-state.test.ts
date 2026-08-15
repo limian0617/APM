@@ -6,7 +6,13 @@ describe("project retrospective page state", () => {
   it("returns server-computed actions and exposes stale approval explicitly", () => {
     const state = buildProjectRetrospectivePageState({
       projectId: "project-1",
-      archiveA: { id: "archive-a", status: "READY" },
+      archiveA: {
+        id: "archive-a",
+        status: "READY",
+        manifestChecksum: "archive-a-manifest",
+        sourceWatermark: "archive-a-source",
+        retrospectiveInputWatermark: "archive-a-input"
+      },
       currentVersion: { id: "version-2", status: "DRAFT" },
       latestApprovedVersion: { id: "version-1", status: "APPROVED" },
       archiveB: null,
@@ -24,6 +30,11 @@ describe("project retrospective page state", () => {
     expect(state.allowedActions).not.toContain("GENERATE_ARCHIVE_B");
     expect(state.allowedActions).not.toContain("REVIEW");
     expect(state).not.toHaveProperty("contentChecksumInput");
+    expect(state.archiveA).toMatchObject({
+      manifestChecksum: "archive-a-manifest",
+      sourceWatermark: "archive-a-source",
+      retrospectiveInputWatermark: "archive-a-input"
+    });
   });
 
   it("returns EMPTY with only CREATE when no retrospective exists", () => {
