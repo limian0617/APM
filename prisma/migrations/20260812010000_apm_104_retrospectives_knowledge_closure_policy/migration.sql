@@ -61,8 +61,6 @@ ADD COLUMN     "retrospective_input_applicability" "RetrospectiveInputApplicabil
 ADD COLUMN     "retrospective_input_snapshot_json" JSONB,
 ADD COLUMN     "retrospective_input_watermark" TEXT,
 ADD COLUMN     "retrospective_input_watermark_version" TEXT,
-ALTER COLUMN "archive_source_formula_version" DROP DEFAULT,
-ALTER COLUMN "retrospective_input_applicability" DROP DEFAULT,
 ADD CONSTRAINT "archive_version_retrospective_input_check" CHECK (
   ("retrospective_input_applicability" = 'APPLICABLE'
     AND "retrospective_input_watermark_version" = 'RETROSPECTIVE.INPUT@1'
@@ -74,6 +72,10 @@ ADD CONSTRAINT "archive_version_retrospective_input_check" CHECK (
     AND "retrospective_input_snapshot_json" IS NULL
     AND "retrospective_input_watermark" IS NULL)
 );
+
+ALTER TABLE public."project_archive_versions"
+ALTER COLUMN "archive_source_formula_version" DROP DEFAULT,
+ALTER COLUMN "retrospective_input_applicability" DROP DEFAULT;
 
 -- APM104_LEGACY_DDL TABLE project_gate_definitions
 ALTER TABLE public."project_gate_definitions" ADD COLUMN     "revision" INTEGER NOT NULL DEFAULT 1;
