@@ -12,6 +12,7 @@ import {
   saveTemplateComponentDraft,
   setProjectTemplateEnabled
 } from "@/modules/configuration/application/template-service";
+import { templateChecksum } from "@/modules/configuration/domain/template-policy";
 import {
   assertProjectTemplateClosureBindings,
   createProjectFromTemplate,
@@ -609,11 +610,46 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
       auditContext: context(ids.admin, `legacy-g9-component-publish-${suffix}`)
     });
     const legacyTemplateCode = `PROJECT.LEGACY.CLOSURE.${suffix}`.toUpperCase();
-    const legacyTemplateChecksum = "b".repeat(64);
+    const legacyTemplateName = "Legacy closure template";
+    const legacyTemplateReferences = [
+      ...baseTemplate.components
+        .filter(({ componentType }) => componentType !== "GATE")
+        .map((component, position) => ({
+          componentVersionId: component.componentVersionId,
+          componentType: component.componentType,
+          slot: `LEGACY.${component.componentType}.${position}`,
+          position
+        })),
+      {
+        componentVersionId: legacyGate.publishedVersion.id,
+        componentType: "GATE" as const,
+        slot: "LEGACY.GATE.3",
+        position: 3
+      }
+    ];
+    const sourceChecksums = new Map(
+      (
+        await db.templateComponentVersion.findMany({
+          where: {
+            id: { in: legacyTemplateReferences.map(({ componentVersionId }) => componentVersionId) }
+          },
+          select: { id: true, checksum: true }
+        })
+      ).map(({ id, checksum }) => [id, checksum])
+    );
+    const legacyTemplateChecksum = templateChecksum({
+      name: legacyTemplateName,
+      description: null,
+      references: legacyTemplateReferences.map((reference) => {
+        const checksum = sourceChecksums.get(reference.componentVersionId);
+        if (!checksum) throw new Error("历史模板组件发布校验和缺失。");
+        return { ...reference, checksum };
+      })
+    });
     await db.projectTemplate.create({
       data: {
         code: legacyTemplateCode,
-        name: "Legacy closure template",
+        name: legacyTemplateName,
         status: "ACTIVE",
         currentVersion: 1,
         createdById: ids.admin,
@@ -621,36 +657,18 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
         versions: {
           create: {
             version: 1,
-            name: "Legacy closure template",
+            name: legacyTemplateName,
             checksum: legacyTemplateChecksum,
             publishedById: ids.admin,
             components: {
-              create: [
-                ...baseTemplate.components
-                  .filter(({ componentType }) => componentType !== "GATE")
-                  .map((component, position) => ({
-                    componentVersionId: component.componentVersionId,
-                    componentType: component.componentType,
-                    slot: `LEGACY.${component.componentType}.${position}`,
-                    position
-                  })),
-                {
-                  componentVersionId: legacyGate.publishedVersion.id,
-                  componentType: "GATE",
-                  slot: "LEGACY.GATE.3",
-                  position: 3
-                }
-              ]
+              create: legacyTemplateReferences
             }
           }
         }
       }
     });
     const projectCode = `PRJ-LEGACY-CLOSURE-${suffix}`.toUpperCase();
-    const [beforePolicyEvents, beforePolicyAudits] = await Promise.all([
-      db.outboxEvent.count({ where: { eventType: "project.closure-policy.version.activated" } }),
-      db.auditLog.count({ where: { action: "PROJECT_CLOSURE_POLICY_UPGRADED" } })
-    ]);
+    const operationId = `legacy-g9-project-${suffix}`;
 
     await expect(
       createProjectFromTemplate({
@@ -662,7 +680,7 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
         templateChecksum: legacyTemplateChecksum,
         reason: "不允许使用历史 G9 模板创建项目",
         actorId: ids.admin,
-        auditContext: context(ids.admin, `legacy-g9-project-${suffix}`)
+        auditContext: context(ids.admin, operationId)
       })
     ).rejects.toMatchObject({ code: "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID", status: 409 });
 
@@ -671,11 +689,16 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
       db.projectClosurePolicy.count({ where: { project: { code: projectCode } } })
     ).resolves.toBe(0);
     await expect(
-      db.outboxEvent.count({ where: { eventType: "project.closure-policy.version.activated" } })
-    ).resolves.toBe(beforePolicyEvents);
+      db.auditLog.count({ where: { action: "PROJECT_CLOSURE_POLICY_UPGRADED", operationId } })
+    ).resolves.toBe(0);
     await expect(
-      db.auditLog.count({ where: { action: "PROJECT_CLOSURE_POLICY_UPGRADED" } })
-    ).resolves.toBe(beforePolicyAudits);
+      db.outboxEvent.count({
+        where: {
+          eventType: "project.created",
+          payload: { path: ["projectCode"], equals: projectCode }
+        }
+      })
+    ).resolves.toBe(0);
   });
 
   it("rolls back Gate facts, audits, and Outbox events when an outer project transaction aborts", async () => {

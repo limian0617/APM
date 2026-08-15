@@ -231,7 +231,15 @@ describeDatabase("APM-104 PostgreSQL project closure policies", () => {
       projectVersion: created.project.version,
       projectType: "CUSTOMER_DELIVERY",
       equipmentShape: "SINGLE_MACHINE",
-      deliveryUnits: [],
+      deliveryUnits: [
+        {
+          code: "AUXILIARY.MACHINE",
+          name: "Auxiliary machine",
+          unitType: "MACHINE",
+          parentCode: null,
+          position: 0
+        }
+      ],
       modules: [],
       reason: "初始化辅助交付项目",
       actorId: adminId,
@@ -391,6 +399,8 @@ describeDatabase("APM-104 PostgreSQL project closure policies", () => {
 
   it("rolls back the V2 revision, policy, audit, and Outbox when the enclosing transaction aborts", async () => {
     const seeded = await seedLegacyProject(auxiliaryTemplate, "ROLLBACK");
+    const rollbackIdempotencyKey = `closure-rollback-${suffix}`;
+    const rollbackOperationId = `closure-rollback-${suffix}`;
     await expect(
       db.$transaction(async (transaction) => {
         await upgradeProjectClosurePolicy(
@@ -402,8 +412,8 @@ describeDatabase("APM-104 PostgreSQL project closure policies", () => {
             expectedPolicyVersion: 0,
             reason: "升级后故意回滚",
             actorId: adminId,
-            idempotencyKey: `closure-rollback-${suffix}`,
-            auditContext: context("closure-rollback", seeded.project.id)
+            idempotencyKey: rollbackIdempotencyKey,
+            auditContext: context(rollbackOperationId, seeded.project.id)
           },
           transaction
         );
@@ -417,7 +427,28 @@ describeDatabase("APM-104 PostgreSQL project closure policies", () => {
       db.projectClosurePolicy.count({ where: { projectId: seeded.project.id } })
     ).resolves.toBe(0);
     await expect(
-      db.outboxEvent.count({ where: { eventType: "project.closure-policy.version.activated" } })
+      db.auditLog.count({
+        where: {
+          operationId: rollbackOperationId,
+          action: { in: ["PROJECT_CLOSURE_POLICY_UPGRADED", "GATE_DEFINITION_MATERIALIZED"] }
+        }
+      })
+    ).resolves.toBe(0);
+    await expect(
+      db.outboxEvent.count({
+        where: {
+          eventType: "project.closure-policy.version.activated",
+          idempotencyKey: rollbackIdempotencyKey
+        }
+      })
+    ).resolves.toBe(0);
+    await expect(
+      db.outboxEvent.count({
+        where: {
+          eventType: "project.closure-policy.g9-revision.materialized",
+          idempotencyKey: `${rollbackIdempotencyKey}:closure-policy:g9-v2`
+        }
+      })
     ).resolves.toBe(0);
   });
 });

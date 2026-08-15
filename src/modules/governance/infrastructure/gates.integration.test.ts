@@ -913,7 +913,7 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
         data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
       });
     });
-    await db.projectMember.create({
+    const qualityMembership = await db.projectMember.create({
       data: {
         projectId: facts.project.id,
         userId: ids.quality,
@@ -977,30 +977,33 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
     const legacyCurrentInstance = await db.projectGateInstance.findUniqueOrThrow({
       where: { id: legacyInstance.id }
     });
-    const legacySubmission = await db.gateSubmission.create({
-      data: {
-        projectId: facts.project.id,
-        gateInstanceId: legacyInstance.id,
-        gateCheckSnapshotId: legacySnapshot.id,
-        sequence: 1,
-        status: "PENDING",
-        approvalMode: "ALL",
-        approverRolesJson: ["QUALITY"],
-        submittedReason: "旧 G9 HTTP 审批拒绝夹具",
-        submittedById: ids.projectManager,
-        closurePolicyVersionId: null,
-        archiveSourceFormulaVersion: null,
-        closurePolicyChecksum: null
-      }
-    });
-    await db.gateSubmissionApprover.create({
-      data: {
-        projectId: facts.project.id,
-        gateSubmissionId: legacySubmission.id,
-        userId: ids.quality,
-        membershipIdsJson: [],
-        projectRolesJson: ["QUALITY"]
-      }
+    const legacySubmission = await db.$transaction(async (transaction) => {
+      const submission = await transaction.gateSubmission.create({
+        data: {
+          projectId: facts.project.id,
+          gateInstanceId: legacyInstance.id,
+          gateCheckSnapshotId: legacySnapshot.id,
+          sequence: 1,
+          status: "PENDING",
+          approvalMode: "ALL",
+          approverRolesJson: ["QUALITY"],
+          submittedReason: "旧 G9 HTTP 审批拒绝夹具",
+          submittedById: ids.projectManager,
+          closurePolicyVersionId: null,
+          archiveSourceFormulaVersion: null,
+          closurePolicyChecksum: null
+        }
+      });
+      await transaction.gateSubmissionApprover.create({
+        data: {
+          projectId: facts.project.id,
+          gateSubmissionId: submission.id,
+          userId: ids.quality,
+          membershipIdsJson: [qualityMembership.id],
+          projectRolesJson: ["QUALITY"]
+        }
+      });
+      return submission;
     });
     const legacySubmissionUrl = `http://localhost/api/projects/${facts.project.id}/gate-instances/${legacyInstance.id}/submissions`;
     const legacySubmissionContext = {
@@ -1038,21 +1041,33 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
       error: { code: "CLOSURE_POLICY_STALE" }
     });
 
-    const rejectedLegacySubmission = await db.gateSubmission.create({
-      data: {
-        projectId: facts.project.id,
-        gateInstanceId: legacyInstance.id,
-        gateCheckSnapshotId: legacySnapshot.id,
-        sequence: 2,
-        status: "REJECTED",
-        approvalMode: "ALL",
-        approverRolesJson: ["QUALITY"],
-        submittedReason: "旧 G9 HTTP 重提拒绝夹具",
-        submittedById: ids.projectManager,
-        closurePolicyVersionId: null,
-        archiveSourceFormulaVersion: null,
-        closurePolicyChecksum: null
-      }
+    const rejectedLegacySubmission = await db.$transaction(async (transaction) => {
+      const submission = await transaction.gateSubmission.create({
+        data: {
+          projectId: facts.project.id,
+          gateInstanceId: legacyInstance.id,
+          gateCheckSnapshotId: legacySnapshot.id,
+          sequence: 2,
+          status: "REJECTED",
+          approvalMode: "ALL",
+          approverRolesJson: ["QUALITY"],
+          submittedReason: "旧 G9 HTTP 重提拒绝夹具",
+          submittedById: ids.projectManager,
+          closurePolicyVersionId: null,
+          archiveSourceFormulaVersion: null,
+          closurePolicyChecksum: null
+        }
+      });
+      await transaction.gateSubmissionApprover.create({
+        data: {
+          projectId: facts.project.id,
+          gateSubmissionId: submission.id,
+          userId: ids.quality,
+          membershipIdsJson: [qualityMembership.id],
+          projectRolesJson: ["QUALITY"]
+        }
+      });
+      return submission;
     });
     const legacyResubmitUrl = `http://localhost/api/projects/${facts.project.id}/gate-submissions/${rejectedLegacySubmission.id}/resubmit`;
     const legacyResubmitContext = {
