@@ -90,10 +90,15 @@ npx() {
 }
 
 npm() {
-  printf 'npm RUN_DATABASE_INTEGRATION=%s APM104_NORMAL_TRIGRAM=%s APM104_RESTRICTED_NO_EXTENSION=%s %s\n' \
+  setup_url_state=UNSET
+  if [ -n "${APM104_FIXTURE_SETUP_DATABASE_URL:-}" ]; then
+    setup_url_state=SET
+  fi
+  printf 'npm RUN_DATABASE_INTEGRATION=%s APM104_NORMAL_TRIGRAM=%s APM104_RESTRICTED_NO_EXTENSION=%s APM104_FIXTURE_SETUP_DATABASE_URL=%s %s\n' \
     "$(env | sed -n 's/^RUN_DATABASE_INTEGRATION=//p')" \
     "$(env | sed -n 's/^APM104_NORMAL_TRIGRAM=//p')" \
     "$(env | sed -n 's/^APM104_RESTRICTED_NO_EXTENSION=//p')" \
+    "$setup_url_state" \
     "$*" >>"$APM104_REPLAY_LOG"
 }
 
@@ -147,8 +152,8 @@ grep -Eq '^dropdb .*--if-exists apm104_normal_fixture-[0-9]+$' "$replay_log"
 grep -Eq '^dropdb .*--if-exists apm104_noext_fixture-[0-9]+$' "$replay_log"
 grep -E 'REVOKE "apm104_noext_fixture-[0-9]+" FROM "fixture-admin"; DROP ROLE "apm104_noext_fixture-[0-9]+"' "$replay_log"
 grep -F 'unexpected migration error' "$replay_log"
-grep -F 'npm RUN_DATABASE_INTEGRATION=1 APM104_NORMAL_TRIGRAM= APM104_RESTRICTED_NO_EXTENSION=1 run test -- src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts' "$replay_log"
-grep -F 'npm RUN_DATABASE_INTEGRATION=1 APM104_NORMAL_TRIGRAM=1 APM104_RESTRICTED_NO_EXTENSION= run test -- src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts' "$replay_log"
+grep -F 'npm RUN_DATABASE_INTEGRATION=1 APM104_NORMAL_TRIGRAM= APM104_RESTRICTED_NO_EXTENSION=1 APM104_FIXTURE_SETUP_DATABASE_URL=SET run test -- src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts' "$replay_log"
+grep -F 'npm RUN_DATABASE_INTEGRATION=1 APM104_NORMAL_TRIGRAM=1 APM104_RESTRICTED_NO_EXTENSION= APM104_FIXTURE_SETUP_DATABASE_URL=UNSET run test -- src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts' "$replay_log"
 if grep -F -- ' -t ' "$replay_log" >/dev/null; then
   echo 'search capability replay must not filter tests by a display-name selector' >&2
   exit 1
