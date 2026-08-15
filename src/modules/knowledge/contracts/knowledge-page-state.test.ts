@@ -10,7 +10,8 @@ const base: KnowledgePageServerFacts = {
   stale: false,
   canCreate: true,
   canConfirmReuse: true,
-  canCorrectReuse: true
+  canCorrectReuse: true,
+  reuseContext: { reuseId: "reuse-1", version: 2 }
 };
 
 describe("knowledge page state", () => {
@@ -19,7 +20,8 @@ describe("knowledge page state", () => {
 
     expect(state).toEqual({
       status: "NORMAL",
-      allowedActions: ["CREATE", "CONFIRM_REUSE", "CORRECT_REUSE"]
+      allowedActions: ["CREATE", "CONFIRM_REUSE", "CORRECT_REUSE"],
+      reuseContext: { reuseId: "reuse-1", version: 2 }
     });
     expect(state).not.toHaveProperty("sourceProjectId");
     expect(state).not.toHaveProperty("authorization");
@@ -28,26 +30,31 @@ describe("knowledge page state", () => {
   it("derives LOADING, EMPTY, and ERROR without exposing actions", () => {
     expect(buildKnowledgePageState({ ...base, loading: true })).toEqual({
       status: "LOADING",
-      allowedActions: []
+      allowedActions: [],
+      reuseContext: null
     });
     expect(buildKnowledgePageState({ ...base, search: { itemCount: 0 } })).toEqual({
       status: "EMPTY",
-      allowedActions: ["CREATE"]
+      allowedActions: ["CREATE"],
+      reuseContext: null
     });
     expect(buildKnowledgePageState({ ...base, error: true })).toEqual({
       status: "ERROR",
-      allowedActions: []
+      allowedActions: [],
+      reuseContext: null
     });
   });
 
   it("suppresses all actions for DENIED and STALE server states", () => {
     expect(buildKnowledgePageState({ ...base, authorization: "DENIED" })).toEqual({
       status: "DENIED",
-      allowedActions: []
+      allowedActions: [],
+      reuseContext: null
     });
     expect(buildKnowledgePageState({ ...base, stale: true })).toEqual({
       status: "STALE",
-      allowedActions: []
+      allowedActions: [],
+      reuseContext: null
     });
   });
 });

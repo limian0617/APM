@@ -40,19 +40,22 @@ describe("knowledge authorization query", () => {
     });
   });
 
-  it("confirms correction availability only for the exact target-project reuse record", async () => {
-    const findUnique = vi.fn(async () => ({ id: "reuse-1" }));
+  it("returns the minimal exact target-project reuse context for correction", async () => {
+    const findUnique = vi.fn(async () => ({ id: "reuse-1", version: 2 }));
 
     await expect(
       resolveKnowledgeReusePageContext(
         { targetProjectId: "target-project-1", reuseId: "reuse-1" },
         { knowledgeReuseRecord: { findUnique } }
       )
-    ).resolves.toEqual({ canCorrectReuse: true });
+    ).resolves.toEqual({
+      canCorrectReuse: true,
+      reuseContext: { reuseId: "reuse-1", version: 2 }
+    });
 
     expect(findUnique).toHaveBeenCalledWith({
       where: { id_targetProjectId: { id: "reuse-1", targetProjectId: "target-project-1" } },
-      select: { id: true }
+      select: { id: true, version: true }
     });
   });
 
@@ -64,6 +67,6 @@ describe("knowledge authorization query", () => {
         { targetProjectId: "target-project-1", reuseId: "reuse-from-other-project" },
         { knowledgeReuseRecord: { findUnique } }
       )
-    ).resolves.toEqual({ canCorrectReuse: false });
+    ).resolves.toEqual({ canCorrectReuse: false, reuseContext: null });
   });
 });

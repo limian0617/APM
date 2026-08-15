@@ -65,7 +65,8 @@ describe("KnowledgePageClient", () => {
           allowedActions: [],
           capability: "TRIGRAM",
           warningCode: null,
-          items: [item]
+          items: [item],
+          reuseContext: { reuseId: "reuse-1", version: 1 }
         }
       })
     );
@@ -127,7 +128,8 @@ describe("KnowledgePageClient", () => {
           allowedActions: ["CREATE", "CONFIRM_REUSE", "CORRECT_REUSE"],
           capability: "TRIGRAM",
           warningCode: null,
-          items: [item]
+          items: [item],
+          reuseContext: { reuseId: "reuse-1", version: 1 }
         }
       })
     );
@@ -202,6 +204,47 @@ describe("KnowledgePageClient", () => {
     ).toBe(false);
   });
 
+  it("recovers global knowledge state after a target-project context receives no write actions", async () => {
+    const load = (knowledgeUi as Record<string, unknown>).loadKnowledgePageState;
+    expect(load).toBeTypeOf("function");
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          pageState: { status: "NORMAL", allowedActions: [], reuseContext: null },
+          items: [item]
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          pageState: { status: "EMPTY", allowedActions: ["CREATE"], reuseContext: null },
+          items: []
+        })
+      );
+
+    await (load as (input: any) => Promise<any>)({
+      fetcher,
+      query: "复位",
+      targetProjectId: "denied-target-project",
+      reuseId: null
+    });
+    await (load as (input: any) => Promise<any>)({
+      fetcher,
+      query: "",
+      targetProjectId: null,
+      reuseId: null
+    });
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "/api/knowledge?query=%E5%A4%8D%E4%BD%8D&targetProjectId=denied-target-project",
+      { cache: "no-store" }
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(2, "/api/knowledge?view=PAGE_STATE", {
+      cache: "no-store"
+    });
+  });
+
   it("keeps server page-state actions after search and runs public-selector reuse only through the exact command endpoint", async () => {
     const execute = (knowledgeUi as Record<string, unknown>).executeKnowledgeCommand;
     expect(execute).toBeTypeOf("function");
@@ -223,6 +266,91 @@ describe("KnowledgePageClient", () => {
 
     expect(result).toMatchObject({ kind: "SUCCESS" });
     expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("uses the protected reuse response to reload the server page-state before correction", async () => {
+    const contextFromPayload = (knowledgeUi as Record<string, unknown>).knowledgeReuseReloadContext;
+    const load = (knowledgeUi as Record<string, unknown>).loadKnowledgePageState;
+    expect(contextFromPayload).toBeTypeOf("function");
+    expect(load).toBeTypeOf("function");
+
+    const context = (
+      contextFromPayload as (input: any) => {
+        targetProjectId: string;
+        reuseId: string;
+      } | null
+    )({
+      targetProjectId: "target-project-1",
+      payload: { id: "reuse-server-1", version: 1 }
+    });
+    expect(context).toEqual({ targetProjectId: "target-project-1", reuseId: "reuse-server-1" });
+
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        pageState: {
+          status: "NORMAL",
+          allowedActions: ["CORRECT_REUSE"],
+          reuseContext: { reuseId: "reuse-server-1", version: 2 }
+        },
+        items: [item]
+      })
+    );
+    const pageState = await (load as (input: any) => Promise<any>)({
+      fetcher,
+      query: "复位",
+      ...(context as { targetProjectId: string; reuseId: string })
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/knowledge?query=%E5%A4%8D%E4%BD%8D&targetProjectId=target-project-1&reuseId=reuse-server-1",
+      { cache: "no-store" }
+    );
+    expect(pageState.state.reuseContext).toEqual({ reuseId: "reuse-server-1", version: 2 });
+  });
+
+  it("derives protected authoring actions and 409 recovery from structured server facts", () => {
+    const authoringActions = (knowledgeUi as Record<string, unknown>).knowledgeAuthoringActions;
+    const recovery = (knowledgeUi as Record<string, unknown>).knowledgeCommandRecovery;
+    expect(authoringActions).toBeTypeOf("function");
+    expect(recovery).toBeTypeOf("function");
+
+    expect((authoringActions as (input: any) => unknown)({ status: "DRAFT" })).toEqual(["SUBMIT"]);
+    expect((authoringActions as (input: any) => unknown)({ status: "IN_REVIEW" })).toEqual([
+      "PUBLISH"
+    ]);
+    expect((authoringActions as (input: any) => unknown)({ status: "PUBLISHED" })).toEqual([]);
+    expect(
+      (recovery as (input: any) => unknown)({
+        operation: "knowledge-reuse",
+        result: {
+          kind: "CONFLICT",
+          code: "IDEMPOTENCY_KEY_REUSED",
+          message: "同一键已用于不同请求。",
+          preserveInput: true,
+          idempotencyKey: "old-key",
+          payload: null
+        }
+      })
+    ).toEqual({ show: true, canDiscardIdempotencyKey: true });
+  });
+
+  it("does not require a manually entered internal reuse ID or reuse version", () => {
+    const markup = renderToStaticMarkup(
+      createElement(KnowledgePageClient, {
+        initialState: {
+          status: "NORMAL",
+          allowedActions: ["CORRECT_REUSE"],
+          capability: "TRIGRAM",
+          warningCode: null,
+          items: [item],
+          reuseContext: { reuseId: "reuse-server-1", version: 2 }
+        } as any
+      })
+    );
+
+    expect(markup).toContain("提交更正");
+    expect(markup).not.toContain("已有复用记录（更正时填写）");
+    expect(markup).not.toContain("当前记录版本");
   });
 
   it.each([

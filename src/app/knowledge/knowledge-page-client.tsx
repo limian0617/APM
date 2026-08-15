@@ -16,7 +16,7 @@ export async function executeKnowledgeCommand(input: {
   endpoint: string;
   body: unknown;
   idempotencyKey: string;
-  reload: () => Promise<void>;
+  reload: (payload: unknown) => Promise<void>;
 }): Promise<CommandResult> {
   try {
     const response = await input.fetcher(input.endpoint, {
@@ -26,7 +26,7 @@ export async function executeKnowledgeCommand(input: {
     });
     const payload = await response.json().catch(() => null);
     if (response.ok) {
-      await input.reload();
+      await input.reload(payload);
       return {
         kind: "SUCCESS",
         code: null,
@@ -85,6 +85,7 @@ export type KnowledgeState = {
   capability: "TRIGRAM" | "DEGRADED" | null;
   warningCode: "SEARCH_DEGRADED" | null;
   items: KnowledgeItem[];
+  reuseContext?: { reuseId: string; version: number } | null;
 };
 
 type KnowledgeCommandRequest = { endpoint: string; body: Record<string, unknown> };
@@ -175,7 +176,8 @@ const emptyKnowledgeState: KnowledgeState = {
   allowedActions: [],
   capability: null,
   warningCode: null,
-  items: []
+  items: [],
+  reuseContext: null
 };
 
 export function shouldLoadInitialKnowledgeState(input: {
@@ -199,7 +201,25 @@ function responseKnowledgeState(body: unknown): KnowledgeState | null {
   };
   const pageState = response.pageState;
   if (!pageState || typeof pageState !== "object") return null;
-  const candidate = pageState as { status?: unknown; allowedActions?: unknown };
+  const candidate = pageState as {
+    status?: unknown;
+    allowedActions?: unknown;
+    reuseContext?: unknown;
+  };
+  const reuseContext = candidate.reuseContext;
+  const parsedReuseContext =
+    reuseContext === null || reuseContext === undefined
+      ? null
+      : reuseContext &&
+          typeof reuseContext === "object" &&
+          typeof (reuseContext as { reuseId?: unknown }).reuseId === "string" &&
+          Number.isSafeInteger((reuseContext as { version?: unknown }).version) &&
+          (reuseContext as { version: number }).version > 0
+        ? {
+            reuseId: (reuseContext as { reuseId: string }).reuseId,
+            version: (reuseContext as { version: number }).version
+          }
+        : undefined;
   if (
     !["NORMAL", "LOADING", "EMPTY", "ERROR", "DENIED", "STALE"].includes(
       String(candidate.status)
@@ -208,7 +228,8 @@ function responseKnowledgeState(body: unknown): KnowledgeState | null {
     candidate.allowedActions.some(
       (action) => action !== "CREATE" && action !== "CONFIRM_REUSE" && action !== "CORRECT_REUSE"
     ) ||
-    !Array.isArray(response.items)
+    !Array.isArray(response.items) ||
+    parsedReuseContext === undefined
   ) {
     return null;
   }
@@ -220,7 +241,8 @@ function responseKnowledgeState(body: unknown): KnowledgeState | null {
         ? response.capability
         : null,
     warningCode: response.warningCode === "SEARCH_DEGRADED" ? response.warningCode : null,
-    items: response.items as KnowledgeItem[]
+    items: response.items as KnowledgeItem[],
+    reuseContext: parsedReuseContext
   };
 }
 
@@ -269,7 +291,33 @@ type KnowledgeAuthoringContext = {
   entryId: string;
   versionId: string;
   expectedEntryVersion: number;
+  status: "DRAFT" | "IN_REVIEW" | "PUBLISHED" | "REJECTED";
 };
+
+type KnowledgeLastCommand = { operation: string; result: CommandResult };
+
+export function knowledgeAuthoringActions(input: Pick<KnowledgeAuthoringContext, "status">) {
+  return input.status === "DRAFT" ? ["SUBMIT"] : input.status === "IN_REVIEW" ? ["PUBLISH"] : [];
+}
+
+export function knowledgeCommandRecovery(input: KnowledgeLastCommand | null) {
+  const show = input?.result.kind === "CONFLICT";
+  return {
+    show,
+    canDiscardIdempotencyKey: show && input?.result.code === "IDEMPOTENCY_KEY_REUSED"
+  };
+}
+
+export function knowledgeReuseReloadContext(input: {
+  targetProjectId: string;
+  payload: unknown;
+}): { targetProjectId: string; reuseId: string } | null {
+  if (!input.payload || typeof input.payload !== "object") return null;
+  const reuseId = (input.payload as { id?: unknown }).id;
+  return typeof reuseId === "string" && reuseId.length > 0
+    ? { targetProjectId: input.targetProjectId, reuseId }
+    : null;
+}
 
 function textValue(form: FormData, name: string): string {
   return String(form.get(name) ?? "").trim();
@@ -293,11 +341,13 @@ function authoringContextFromPayload(payload: unknown): KnowledgeAuthoringContex
   return typeof record.entryId === "string" &&
     typeof record.versionId === "string" &&
     Number.isSafeInteger(record.entryVersion) &&
-    (record.entryVersion as number) > 0
+    (record.entryVersion as number) > 0 &&
+    ["DRAFT", "IN_REVIEW", "PUBLISHED", "REJECTED"].includes(String(record.status))
     ? {
         entryId: record.entryId,
         versionId: record.versionId,
-        expectedEntryVersion: record.entryVersion as number
+        expectedEntryVersion: record.entryVersion as number,
+        status: record.status as KnowledgeAuthoringContext["status"]
       }
     : null;
 }
@@ -309,7 +359,8 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
       allowedActions: [],
       capability: null,
       warningCode: null,
-      items: []
+      items: [],
+      reuseContext: null
     }
   );
   const [query, setQuery] = useState("");
@@ -318,6 +369,7 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
   const [authoring, setAuthoring] = useState<KnowledgeAuthoringContext | null>(null);
   const [idempotencyKeys, setIdempotencyKeys] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
+  const [lastCommand, setLastCommand] = useState<KnowledgeLastCommand | null>(null);
   const initialLoad = useRef(false);
   const reload = useCallback(
     async (overrides?: { targetProjectId?: string; reuseId?: string }) => {
@@ -353,7 +405,10 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
     async (
       operation: string,
       request: KnowledgeCommandRequest,
-      afterSuccess?: (payload: unknown) => void
+      input?: {
+        afterSuccess?: (payload: unknown) => void;
+        reloadContext?: (payload: unknown) => { targetProjectId?: string; reuseId?: string } | null;
+      }
     ) => {
       const idempotencyKey = idempotencyKeys[operation] ?? newIdempotencyKey(operation);
       if (!idempotencyKeys[operation]) {
@@ -364,17 +419,22 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
         endpoint: request.endpoint,
         body: request.body,
         idempotencyKey,
-        reload
+        reload: async (payload) => {
+          const context = input?.reloadContext?.(payload) ?? null;
+          await reload(context ?? undefined);
+        }
       });
       if (result.kind === "SUCCESS") {
         setIdempotencyKeys((keys) => {
           const { [operation]: _discarded, ...remaining } = keys;
           return remaining;
         });
-        afterSuccess?.(result.payload);
+        setLastCommand(null);
+        input?.afterSuccess?.(result.payload);
         setMessage("命令已由服务器确认，并已刷新当前页面状态。");
         return result;
       }
+      setLastCommand({ operation, result });
       setMessage(
         result.kind === "CONFLICT"
           ? `${result.code ?? "CONFLICT"}：${result.message ?? "服务器状态已变化。"} 输入和幂等键已保留。`
@@ -384,6 +444,16 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
     },
     [idempotencyKeys, reload]
   );
+  const recovery = knowledgeCommandRecovery(lastCommand);
+  const reuseContext = state.reuseContext;
+  const discardIdempotencyKey = useCallback(() => {
+    if (!lastCommand) return;
+    setIdempotencyKeys((keys) => {
+      const { [lastCommand.operation]: _discarded, ...remaining } = keys;
+      return remaining;
+    });
+    setMessage("旧幂等键已丢弃；保留的输入可使用新键重新提交。");
+  }, [lastCommand]);
 
   if (state.status !== "NORMAL" && state.status !== "EMPTY")
     return (
@@ -424,21 +494,14 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
           e.preventDefault();
           const form = new FormData(e.currentTarget);
           const nextTargetProjectId = textValue(form, "target-project");
-          const nextReuseId = textValue(form, "reuse-record");
           setTargetProjectId(nextTargetProjectId);
-          setReuseId(nextReuseId);
-          void reload({ targetProjectId: nextTargetProjectId, reuseId: nextReuseId }).catch(
-            () => undefined
-          );
+          setReuseId("");
+          void reload({ targetProjectId: nextTargetProjectId, reuseId: "" }).catch(() => undefined);
         }}
       >
         <label>
           目标项目上下文
           <input name="target-project" defaultValue={targetProjectId} maxLength={191} />
-        </label>
-        <label>
-          已有复用记录（更正时填写）
-          <input name="reuse-record" defaultValue={reuseId} maxLength={191} />
         </label>
         <button type="submit">验证目标项目权限</button>
       </form>
@@ -490,9 +553,11 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
                   }
                 }
               });
-              void runCommand("knowledge-create", request, (payload) => {
-                const context = authoringContextFromPayload(payload);
-                if (context) setAuthoring(context);
+              void runCommand("knowledge-create", request, {
+                afterSuccess: (payload) => {
+                  const context = authoringContextFromPayload(payload);
+                  if (context) setAuthoring(context);
+                }
               });
             }}
           >
@@ -578,42 +643,57 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
         ) : null}
         {authoring ? (
           <section aria-label="知识草稿后续操作">
-            <h2>知识草稿已由服务器创建</h2>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void runCommand(
-                  "knowledge-submit",
-                  buildKnowledgeCommandRequest({ action: "SUBMIT", ...authoring }),
-                  (payload) => {
-                    const context = authoringContextFromPayload(payload);
-                    if (context) setAuthoring(context);
-                  }
-                );
-              }}
-            >
-              <button type="submit">提交草稿审核</button>
-            </form>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                const form = new FormData(event.currentTarget);
-                void runCommand(
-                  "knowledge-publish",
-                  buildKnowledgeCommandRequest({
-                    action: "PUBLISH",
-                    ...authoring,
-                    reason: textValue(form, "publish-reason")
-                  })
-                );
-              }}
-            >
-              <label>
-                发布审核理由
-                <textarea name="publish-reason" maxLength={4096} required />
-              </label>
-              <button type="submit">审核并发布知识</button>
-            </form>
+            <h2>知识版本状态：{authoring.status}</h2>
+            {knowledgeAuthoringActions(authoring).includes("SUBMIT") ? (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void runCommand(
+                    "knowledge-submit",
+                    buildKnowledgeCommandRequest({ action: "SUBMIT", ...authoring }),
+                    {
+                      afterSuccess: (payload) => {
+                        const context = authoringContextFromPayload(payload);
+                        if (context) setAuthoring(context);
+                      }
+                    }
+                  );
+                }}
+              >
+                <button type="submit">提交草稿审核</button>
+              </form>
+            ) : null}
+            {knowledgeAuthoringActions(authoring).includes("PUBLISH") ? (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const form = new FormData(event.currentTarget);
+                  void runCommand(
+                    "knowledge-publish",
+                    buildKnowledgeCommandRequest({
+                      action: "PUBLISH",
+                      ...authoring,
+                      reason: textValue(form, "publish-reason")
+                    }),
+                    {
+                      afterSuccess: (payload) => {
+                        const context = authoringContextFromPayload(payload);
+                        if (context) setAuthoring(context);
+                      }
+                    }
+                  );
+                }}
+              >
+                <label>
+                  发布审核理由
+                  <textarea name="publish-reason" maxLength={4096} required />
+                </label>
+                <button type="submit">审核并发布知识</button>
+              </form>
+            ) : null}
+            {knowledgeAuthoringActions(authoring).length === 0 ? (
+              <p role="status">该知识版本已由服务器完成审核，当前不可再提交或发布。</p>
+            ) : null}
           </section>
         ) : null}
         {state.allowedActions.includes("CONFIRM_REUSE") ? (
@@ -632,13 +712,11 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
                   scenario: textValue(form, "reuse-scenario"),
                   evidenceSummary: textValue(form, "reuse-evidence")
                 }),
-                (payload) => {
-                  if (
-                    payload &&
-                    typeof payload === "object" &&
-                    typeof (payload as { id?: unknown }).id === "string"
-                  ) {
-                    setReuseId((payload as { id: string }).id);
+                {
+                  reloadContext: (payload) => {
+                    const context = knowledgeReuseReloadContext({ targetProjectId, payload });
+                    if (context) setReuseId(context.reuseId);
+                    return context;
                   }
                 }
               );
@@ -668,7 +746,7 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
             <button type="submit">确认采用</button>
           </form>
         ) : null}
-        {state.allowedActions.includes("CORRECT_REUSE") ? (
+        {state.allowedActions.includes("CORRECT_REUSE") && reuseContext ? (
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -678,8 +756,8 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
                 buildKnowledgeCommandRequest({
                   action: "CORRECTION",
                   targetProjectId,
-                  reuseId,
-                  expectedReuseVersion: Number(textValue(form, "expected-reuse-version")),
+                  reuseId: reuseContext.reuseId,
+                  expectedReuseVersion: reuseContext.version,
                   correctionType: textValue(form, "correction-type") as
                     "TEXT_CORRECTION" | "USAGE_WITHDRAWN" | "SCOPE_CORRECTION",
                   reason: textValue(form, "correction-reason"),
@@ -689,10 +767,7 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
             }}
           >
             <h2>更正复用记录</h2>
-            <label>
-              当前记录版本
-              <input name="expected-reuse-version" type="number" min={1} required />
-            </label>
+            <p>当前服务器记录版本：{reuseContext.version}</p>
             <label>
               更正类型
               <select name="correction-type" defaultValue="TEXT_CORRECTION">
@@ -713,9 +788,15 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
           </form>
         ) : null}
       </div>
-      {message?.includes("CONFLICT") ? (
+      {recovery.show ? (
         <button type="button" onClick={() => void reload().catch(() => undefined)}>
-          刷新服务器状态后重新提交
+          刷新服务器状态
+        </button>
+      ) : null}
+      {recovery.show ? <p>输入已保留，请在刷新后重新提交对应表单。</p> : null}
+      {recovery.canDiscardIdempotencyKey ? (
+        <button type="button" onClick={discardIdempotencyKey}>
+          丢弃旧幂等键后重新提交
         </button>
       ) : null}
     </main>

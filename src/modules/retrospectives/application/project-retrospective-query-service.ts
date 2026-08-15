@@ -315,7 +315,7 @@ async function readApprovedG9(input: {
 
 async function readG9Workflow(input: {
   client: ArchiveV2CurrentnessClient & {
-    projectGateInstance?: { findFirst(input: unknown): Promise<Record<string, unknown> | null> };
+    projectGateInstance?: { findMany(input: unknown): Promise<Array<Record<string, unknown>>> };
     gateSubmission?: {
       findFirst(input: unknown): Promise<Record<string, unknown> | null>;
     };
@@ -324,12 +324,17 @@ async function readG9Workflow(input: {
   policy: ClosurePolicyVersion | null;
 }): Promise<G9Workflow | null> {
   if (!input.policy || !input.client.projectGateInstance) return null;
-  const instance = await input.client.projectGateInstance.findFirst({
+  const instances = await input.client.projectGateInstance.findMany({
     where: {
       projectId: input.projectId,
       gateDefinitionId: input.policy.sourceGateDefinitionId,
-      scope: "PROJECT"
+      scope: "PROJECT",
+      closurePolicyVersionId: input.policy.id,
+      closurePolicyChecksum: input.policy.policyChecksum,
+      archiveSourceFormulaVersion: "V2"
     },
+    orderBy: { id: "asc" },
+    take: 2,
     select: {
       id: true,
       version: true,
@@ -345,8 +350,9 @@ async function readG9Workflow(input: {
       }
     }
   });
+  if (instances.length !== 1) return null;
+  const instance = instances[0];
   if (
-    !instance ||
     typeof instance.id !== "string" ||
     typeof instance.version !== "number" ||
     instance.gateDefinitionId !== input.policy.sourceGateDefinitionId ||
@@ -423,7 +429,7 @@ export async function getProjectRetrospective(input: {
     }
   })) as RetrospectiveAggregate | null;
   const archiveClient = client as unknown as ArchiveV2CurrentnessClient & {
-    projectGateInstance?: { findFirst(input: unknown): Promise<Record<string, unknown> | null> };
+    projectGateInstance?: { findMany(input: unknown): Promise<Array<Record<string, unknown>>> };
     gateSubmission?: {
       findMany(input: unknown): Promise<Array<Record<string, unknown>>>;
       findFirst(input: unknown): Promise<Record<string, unknown> | null>;

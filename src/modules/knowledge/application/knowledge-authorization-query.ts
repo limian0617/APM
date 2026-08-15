@@ -11,8 +11,8 @@ type KnowledgeReusePageContextClient = {
   knowledgeReuseRecord: {
     findUnique(input: {
       where: { id_targetProjectId: { id: string; targetProjectId: string } };
-      select: { id: true };
-    }): Promise<{ id: string } | null>;
+      select: { id: true; version: true };
+    }): Promise<{ id: string; version: number } | null>;
   };
 };
 
@@ -44,11 +44,16 @@ export async function resolveKnowledgeVersionSourceProject(
 export async function resolveKnowledgeReusePageContext(
   input: { targetProjectId: string; reuseId: string | undefined },
   client: KnowledgeReusePageContextClient
-): Promise<{ canCorrectReuse: boolean }> {
-  if (!input.reuseId) return { canCorrectReuse: false };
+): Promise<{
+  canCorrectReuse: boolean;
+  reuseContext: { reuseId: string; version: number } | null;
+}> {
+  if (!input.reuseId) return { canCorrectReuse: false, reuseContext: null };
   const reuse = await client.knowledgeReuseRecord.findUnique({
     where: { id_targetProjectId: { id: input.reuseId, targetProjectId: input.targetProjectId } },
-    select: { id: true }
+    select: { id: true, version: true }
   });
-  return { canCorrectReuse: reuse !== null };
+  return reuse
+    ? { canCorrectReuse: true, reuseContext: { reuseId: reuse.id, version: reuse.version } }
+    : { canCorrectReuse: false, reuseContext: null };
 }

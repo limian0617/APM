@@ -132,6 +132,25 @@ describe("RetrospectivePageClient", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  it("offers conflict recovery for every 409 without parsing an error-code display string", () => {
+    const recovery = (retrospectiveUi as Record<string, unknown>).retrospectiveCommandRecovery;
+    expect(recovery).toBeTypeOf("function");
+
+    expect(
+      (recovery as (input: any) => unknown)({
+        operation: "retrospective-submit",
+        result: {
+          kind: "CONFLICT",
+          code: "IDEMPOTENCY_KEY_REUSED",
+          message: "同一键已用于不同请求。",
+          preserveInput: true,
+          idempotencyKey: "old-key",
+          payload: null
+        }
+      })
+    ).toEqual({ show: true, canDiscardIdempotencyKey: true });
+  });
+
   it("renders only the server-ready G9 step and requires its strict command reason", () => {
     const markup = renderToStaticMarkup(
       createElement(RetrospectivePageClient, {

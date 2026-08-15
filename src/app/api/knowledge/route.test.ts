@@ -106,7 +106,7 @@ describe("GET /api/knowledge", () => {
       capability: "DEGRADED",
       warningCode: "SEARCH_DEGRADED",
       nextCursor: null,
-      pageState: { status: "NORMAL", allowedActions: ["CREATE"] },
+      pageState: { status: "NORMAL", allowedActions: ["CREATE"], reuseContext: null },
       items: [
         {
           entryCode: "KNW-001",
@@ -147,7 +147,7 @@ describe("GET /api/knowledge", () => {
       capability: "DEGRADED",
       warningCode: "SEARCH_DEGRADED",
       nextCursor: null,
-      pageState: { status: "NORMAL", allowedActions: ["CREATE"] },
+      pageState: { status: "NORMAL", allowedActions: ["CREATE"], reuseContext: null },
       items: [
         {
           entryCode: "KNW-001",
@@ -199,7 +199,7 @@ describe("GET /api/knowledge", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      pageState: { status: "EMPTY", allowedActions: ["CREATE"] },
+      pageState: { status: "EMPTY", allowedActions: ["CREATE"], reuseContext: null },
       items: []
     });
     expect(searchService.searchPublishedKnowledge).not.toHaveBeenCalled();
@@ -220,7 +220,10 @@ describe("GET /api/knowledge", () => {
       actor: { id: "reader-1" },
       project: { departmentId: "engineering" }
     });
-    pageContextQuery.resolveKnowledgeReusePageContext.mockResolvedValue({ canCorrectReuse: true });
+    pageContextQuery.resolveKnowledgeReusePageContext.mockResolvedValue({
+      canCorrectReuse: true,
+      reuseContext: { reuseId: "reuse-1", version: 1 }
+    });
     searchService.searchPublishedKnowledge.mockResolvedValue({
       capability: "TRIGRAM",
       warningCode: null,
@@ -260,12 +263,13 @@ describe("GET /api/knowledge", () => {
     await expect(response.json()).resolves.toMatchObject({
       pageState: {
         status: "NORMAL",
-        allowedActions: ["CREATE", "CONFIRM_REUSE", "CORRECT_REUSE"]
+        allowedActions: ["CREATE", "CONFIRM_REUSE", "CORRECT_REUSE"],
+        reuseContext: { reuseId: "reuse-1", version: 1 }
       }
     });
   });
 
-  it("does not query search or reuse context after target-project reuse authorization is denied", async () => {
+  it("keeps global knowledge readable after target-project reuse authorization is denied", async () => {
     systemGuard.authorizeSystemRequest.mockResolvedValue({
       authorized: true,
       actor: { id: "reader-1" }
@@ -275,16 +279,114 @@ describe("GET /api/knowledge", () => {
       response: Response.json({ error: { code: "FORBIDDEN" } }, { status: 403 })
     });
 
-    expect(
-      (
-        await GET(
-          new Request(
-            "http://localhost/api/knowledge?query=%E5%A4%8D%E4%BD%8D&targetProjectId=target-project-1"
-          )
+    searchService.searchPublishedKnowledge.mockResolvedValue({
+      capability: "TRIGRAM",
+      warningCode: null,
+      nextCursor: null,
+      items: []
+    });
+    const response = await GET(
+      new Request(
+        "http://localhost/api/knowledge?query=%E5%A4%8D%E4%BD%8D&targetProjectId=target-project-1"
+      )
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      pageState: { status: "EMPTY", allowedActions: [], reuseContext: null }
+    });
+    expect(searchService.searchPublishedKnowledge).toHaveBeenCalledOnce();
+    expect(pageContextQuery.resolveKnowledgeReusePageContext).not.toHaveBeenCalled();
+  });
+
+  it.each(["CLOSED", "CANCELED"])(
+    "removes target-project reuse actions when the shared write policy marks %s read-only",
+    async (status) => {
+      systemGuard.authorizeSystemRequest.mockResolvedValue({
+        authorized: true,
+        actor: { id: "reader-1" }
+      });
+      projectGuard.authorizeProjectRequest.mockResolvedValue({
+        authorized: true,
+        actor: { id: "reader-1" },
+        project: { departmentId: "engineering", status }
+      });
+      pageContextQuery.resolveKnowledgeReusePageContext.mockResolvedValue({
+        canCorrectReuse: true,
+        reuseContext: { reuseId: "reuse-1", version: 1 }
+      });
+      searchService.searchPublishedKnowledge.mockResolvedValue({
+        capability: "TRIGRAM",
+        warningCode: null,
+        nextCursor: null,
+        items: [
+          {
+            entryCode: "KNW-001",
+            version: 1,
+            title: "安全复位",
+            sanitizedSummary: "已移除来源敏感信息。",
+            experienceType: "LESSON_LEARNED",
+            discipline: "MECHANICAL",
+            keywords: ["复位"],
+            applicableProjectTypes: ["LINE"],
+            applicableStageCodes: ["S4"],
+            status: "PUBLISHED"
+          }
+        ]
+      });
+
+      const response = await GET(
+        new Request(
+          "http://localhost/api/knowledge?query=%E5%A4%8D%E4%BD%8D&targetProjectId=target-project-1&reuseId=reuse-1"
         )
-      ).status
-    ).toBe(403);
-    expect(searchService.searchPublishedKnowledge).not.toHaveBeenCalled();
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        pageState: { status: "NORMAL", allowedActions: [], reuseContext: null }
+      });
+      expect(pageContextQuery.resolveKnowledgeReusePageContext).not.toHaveBeenCalled();
+    }
+  );
+
+  it("keeps global knowledge readable and removes target actions when target authorization is denied", async () => {
+    systemGuard.authorizeSystemRequest.mockResolvedValue({
+      authorized: true,
+      actor: { id: "reader-1" }
+    });
+    projectGuard.authorizeProjectRequest.mockResolvedValue({
+      authorized: false,
+      response: Response.json({ error: { code: "FORBIDDEN" } }, { status: 403 })
+    });
+    searchService.searchPublishedKnowledge.mockResolvedValue({
+      capability: "TRIGRAM",
+      warningCode: null,
+      nextCursor: null,
+      items: [
+        {
+          entryCode: "KNW-001",
+          version: 1,
+          title: "安全复位",
+          sanitizedSummary: "已移除来源敏感信息。",
+          experienceType: "LESSON_LEARNED",
+          discipline: "MECHANICAL",
+          keywords: ["复位"],
+          applicableProjectTypes: ["LINE"],
+          applicableStageCodes: ["S4"],
+          status: "PUBLISHED"
+        }
+      ]
+    });
+
+    const response = await GET(
+      new Request(
+        "http://localhost/api/knowledge?query=%E5%A4%8D%E4%BD%8D&targetProjectId=other-project"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      pageState: { status: "NORMAL", allowedActions: [], reuseContext: null }
+    });
     expect(pageContextQuery.resolveKnowledgeReusePageContext).not.toHaveBeenCalled();
   });
 });

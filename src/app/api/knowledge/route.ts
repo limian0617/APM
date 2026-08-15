@@ -3,6 +3,10 @@ import { decideAuthorization } from "@/lib/auth/authorize";
 import { db } from "@/lib/db";
 import { PERMISSIONS } from "@/lib/auth/permissions";
 import { authorizeProjectRequest } from "@/lib/auth/project-guard";
+import {
+  ProjectWritePolicyError,
+  assertProjectWritable
+} from "@/modules/projects/domain/project-write-policy";
 import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { AUDIT_OBJECT_TYPES } from "@/modules/audit/domain/vocabulary";
 import { createKnowledgeEntryVersion } from "@/modules/knowledge/application/knowledge-entry-service";
@@ -58,6 +62,7 @@ function knowledgePageStateForActor(input: {
   itemCount: number;
   canConfirmReuse: boolean;
   canCorrectReuse: boolean;
+  reuseContext: { reuseId: string; version: number } | null;
 }) {
   return buildKnowledgePageState({
     authorization: "ALLOWED",
@@ -67,28 +72,44 @@ function knowledgePageStateForActor(input: {
     stale: false,
     canCreate: decideAuthorization(input.actor, PERMISSIONS.KNOWLEDGE_REVIEW).allowed,
     canConfirmReuse: input.canConfirmReuse,
-    canCorrectReuse: input.canCorrectReuse
+    canCorrectReuse: input.canCorrectReuse,
+    reuseContext: input.reuseContext
   });
 }
 
 async function resolvePageActionContext(
   request: Request,
   input: { targetProjectId?: string; reuseId?: string }
-): Promise<{ canConfirmReuse: boolean; canCorrectReuse: boolean; response?: Response }> {
-  if (!input.targetProjectId) return { canConfirmReuse: false, canCorrectReuse: false };
+): Promise<{
+  canConfirmReuse: boolean;
+  canCorrectReuse: boolean;
+  reuseContext: { reuseId: string; version: number } | null;
+}> {
+  const noActions = { canConfirmReuse: false, canCorrectReuse: false, reuseContext: null };
+  if (!input.targetProjectId) return noActions;
   const targetGuard = await authorizeProjectRequest(
     request,
     input.targetProjectId,
     PERMISSIONS.KNOWLEDGE_REUSE_CONFIRM
   );
   if (!targetGuard.authorized) {
-    return { canConfirmReuse: false, canCorrectReuse: false, response: targetGuard.response };
+    return noActions;
+  }
+  try {
+    assertProjectWritable(targetGuard.project.status);
+  } catch (error) {
+    if (error instanceof ProjectWritePolicyError) return noActions;
+    throw error;
   }
   const context = await resolveKnowledgeReusePageContext(
     { targetProjectId: input.targetProjectId, reuseId: input.reuseId },
     db
   );
-  return { canConfirmReuse: true, canCorrectReuse: context.canCorrectReuse };
+  return {
+    canConfirmReuse: true,
+    canCorrectReuse: context.canCorrectReuse,
+    reuseContext: context.reuseContext
+  };
 }
 
 async function listKnowledge(request: Request) {
@@ -103,7 +124,6 @@ async function listKnowledge(request: Request) {
     if (new URL(request.url).searchParams.get("view") === "PAGE_STATE") {
       const query = parseQuery(request, knowledgePageStateQuerySchema);
       const actions = await resolvePageActionContext(request, query);
-      if (actions.response) return actions.response;
       return Response.json({
         pageState: knowledgePageStateForActor({ actor: guard.actor, itemCount: 0, ...actions }),
         items: []
@@ -112,7 +132,6 @@ async function listKnowledge(request: Request) {
     const query = parseQuery(request, knowledgeSearchQuerySchema);
     const { targetProjectId, reuseId, ...searchQuery } = query;
     const actions = await resolvePageActionContext(request, { targetProjectId, reuseId });
-    if (actions.response) return actions.response;
     const result = await searchPublishedKnowledge(searchQuery, {
       getCapability: () => getKnowledgeSearchCapability(db),
       repository: createKnowledgeSearchRepository(db)

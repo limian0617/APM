@@ -12,6 +12,16 @@ type CommandResult = {
   payload: unknown;
 };
 
+type RetrospectiveLastCommand = { operation: string; result: CommandResult };
+
+export function retrospectiveCommandRecovery(input: RetrospectiveLastCommand | null) {
+  const show = input?.result.kind === "CONFLICT";
+  return {
+    show,
+    canDiscardIdempotencyKey: show && input?.result.code === "IDEMPOTENCY_KEY_REUSED"
+  };
+}
+
 export async function executeRetrospectiveCommand(input: {
   fetcher: typeof fetch;
   endpoint: string;
@@ -159,6 +169,7 @@ export function RetrospectivePageClient({
   );
   const [message, setMessage] = useState<string | null>(null);
   const [idempotencyKeys, setIdempotencyKeys] = useState<Record<string, string>>({});
+  const [lastCommand, setLastCommand] = useState<RetrospectiveLastCommand | null>(null);
   const [createDraft, setCreateDraft] = useState({
     deliverySummary: "",
     successfulPractices: "",
@@ -217,18 +228,31 @@ export function RetrospectivePageClient({
           const { [operation]: _completed, ...remaining } = current;
           return remaining;
         });
+        setLastCommand(null);
         setMessage("命令已由服务器接受，页面已重新读取最新状态。");
-      } else if (result.kind === "CONFLICT") {
+      } else {
+        setLastCommand({ operation, result });
+      }
+      if (result.kind === "CONFLICT") {
         setMessage(
           `${result.code ?? "CONFLICT"}：${result.message ?? "服务器状态已变化。"} 已保留输入，可刷新后重新提交。`
         );
-      } else {
+      } else if (result.kind !== "SUCCESS") {
         setMessage(`${result.code ?? result.kind}：${result.message ?? "服务器拒绝该命令。"}`);
       }
       return result;
     },
     [idempotencyKeys, reload]
   );
+  const recovery = retrospectiveCommandRecovery(lastCommand);
+  const discardIdempotencyKey = useCallback(() => {
+    if (!lastCommand) return;
+    setIdempotencyKeys((current) => {
+      const { [lastCommand.operation]: _discarded, ...remaining } = current;
+      return remaining;
+    });
+    setMessage("旧幂等键已丢弃；保留的输入可使用新键重新提交。");
+  }, [lastCommand]);
   if (state.status !== "NORMAL" && state.status !== "EMPTY" && state.status !== "STALE")
     return (
       <main className="governance-page" data-state={state.status}>
@@ -500,12 +524,17 @@ export function RetrospectivePageClient({
         ) : null}
       </section>
       {message ? <p role="alert">{message}</p> : null}
-      {state.status === "STALE" || message?.includes("CONFLICT") ? (
+      {state.status === "STALE" || recovery.show ? (
         <div className="governance-conflict-actions">
           <button type="button" onClick={() => void reload()}>
             刷新服务器状态
           </button>
           <p>输入与幂等键已保留；请核对服务器状态后重新提交。</p>
+          {recovery.canDiscardIdempotencyKey ? (
+            <button type="button" onClick={discardIdempotencyKey}>
+              丢弃旧幂等键后重新提交
+            </button>
+          ) : null}
         </div>
       ) : null}
     </main>

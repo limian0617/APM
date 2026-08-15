@@ -654,7 +654,7 @@ describe("project retrospective query service", () => {
           )
       },
       projectClosurePolicy: { findUnique: vi.fn().mockResolvedValue(policy) },
-      projectGateInstance: { findFirst: vi.fn().mockResolvedValue(submission.gateInstance) },
+      projectGateInstance: { findMany: vi.fn().mockResolvedValue([submission.gateInstance]) },
       gateSubmission: {
         findMany: vi.fn().mockResolvedValue([submission]),
         findFirst: vi.fn().mockResolvedValue({
@@ -689,6 +689,59 @@ describe("project retrospective query service", () => {
       latestCheckStatus: "PASSED",
       submission: { id: "g9-submission", version: 2, status: "APPROVED" }
     });
+    expect(baseClient.projectGateInstance.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          projectId: "project-1",
+          gateDefinitionId: "g9-v2",
+          scope: "PROJECT",
+          closurePolicyVersionId: "policy-v2",
+          closurePolicyChecksum: policy.currentVersion.policyChecksum,
+          archiveSourceFormulaVersion: "V2"
+        },
+        orderBy: { id: "asc" },
+        take: 2
+      })
+    );
+
+    const duplicateTuple = await getProjectRetrospective({
+      projectId: "project-1",
+      client: {
+        ...baseClient,
+        projectGateInstance: {
+          findMany: vi
+            .fn()
+            .mockResolvedValue([
+              submission.gateInstance,
+              { ...submission.gateInstance, id: "g9-instance-duplicate" }
+            ])
+        }
+      } as any,
+      readCurrentV2Manifest: vi.fn().mockResolvedValue({
+        manifestChecksum: archiveB.manifestChecksum,
+        sourceWatermark: archiveB.sourceWatermark
+      })
+    } as any);
+    expect(duplicateTuple.g9Workflow).toBeNull();
+
+    const mismatchedTuple = await getProjectRetrospective({
+      projectId: "project-1",
+      client: {
+        ...baseClient,
+        projectGateInstance: {
+          findMany: vi
+            .fn()
+            .mockResolvedValue([
+              { ...submission.gateInstance, closurePolicyChecksum: "stale-policy-checksum" }
+            ])
+        }
+      } as any,
+      readCurrentV2Manifest: vi.fn().mockResolvedValue({
+        manifestChecksum: archiveB.manifestChecksum,
+        sourceWatermark: archiveB.sourceWatermark
+      })
+    } as any);
+    expect(mismatchedTuple.g9Workflow).toBeNull();
 
     for (const mutation of [
       { status: "PENDING" },
