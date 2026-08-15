@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -18,11 +18,17 @@ const ids = {
 };
 
 function checksum(value: string) {
-  return value.padEnd(64, "0").slice(0, 64);
+  return createHash("sha256").update(value).digest("hex");
 }
 
 const sourceTemplateChecksum = "5".repeat(64);
 const snapshotChecksum = "6".repeat(64);
+
+describe("APM-104 knowledge persistence fixture checksum", () => {
+  it("freezes a 64-lowercase-hex retrospective input watermark", () => {
+    expect(checksum("source-retrospective-input")).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
 
 async function createReadyProjects() {
   const publishedAt = new Date("2026-08-15T00:00:00.000Z");
@@ -92,6 +98,7 @@ async function createReadyProjects() {
 
 async function createArchiveAndRetrospective(projectId: string, label: string) {
   const archive = await db.projectArchive.create({ data: { projectId } });
+  const retrospectiveInputWatermark = checksum(`${label}-retrospective-input`);
   const archiveA = await db.projectArchiveVersion.create({
     data: {
       archiveId: archive.id,
@@ -107,7 +114,7 @@ async function createArchiveAndRetrospective(projectId: string, label: string) {
       retrospectiveInputApplicability: "APPLICABLE",
       retrospectiveInputWatermarkVersion: "RETROSPECTIVE.INPUT@1",
       retrospectiveInputSnapshotJson: { label, input: true },
-      retrospectiveInputWatermark: checksum(`${label}-retrospective-input`),
+      retrospectiveInputWatermark,
       createdById: ids.user
     }
   });
@@ -126,7 +133,7 @@ async function createArchiveAndRetrospective(projectId: string, label: string) {
       retrospectiveInputApplicability: "APPLICABLE",
       retrospectiveInputWatermarkVersion: "RETROSPECTIVE.INPUT@1",
       retrospectiveInputSnapshotJson: { label, input: true },
-      retrospectiveInputWatermark: checksum(`${label}-retrospective-input`),
+      retrospectiveInputWatermark,
       createdById: ids.user,
       finalizedAt: new Date()
     }

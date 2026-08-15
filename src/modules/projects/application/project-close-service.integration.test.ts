@@ -652,10 +652,10 @@ describeDatabase("APM-104 project close PostgreSQL integration", () => {
     ).resolves.toBe(0);
   });
 
-  it("rolls back closure, audit, Outbox, and successful idempotency facts when the final close Outbox write fails", async () => {
+  it("rolls back closure, audit, Outbox, and successful idempotency facts when the final close Outbox has an idempotency conflict", async () => {
     const flow = await seedReadyCloseFlow(template, "ROLLBACK");
     const closeOutboxKey = `${flow.project.id}:closed:${flow.archiveB.id}`;
-    await db.outboxEvent.create({
+    const preexistingConflict = await db.outboxEvent.create({
       data: {
         eventType: "project.closed",
         aggregateType: "PROJECT",
@@ -677,7 +677,7 @@ describeDatabase("APM-104 project close PostgreSQL integration", () => {
         idempotencyKey,
         auditContext: auditContext(ids.reviewer, `close-rollback-${suffix}`, flow.project.id)
       })
-    ).rejects.toMatchObject({ code: "P2002" });
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
     await expect(
       db.project.findUniqueOrThrow({ where: { id: flow.project.id } })
     ).resolves.toMatchObject({
@@ -703,5 +703,23 @@ describeDatabase("APM-104 project close PostgreSQL integration", () => {
         where: { actorId: ids.reviewer, operation: "projects.close", idempotencyKey }
       })
     ).resolves.toBe(0);
+    await expect(
+      db.outboxEvent.findUniqueOrThrow({
+        where: {
+          eventType_idempotencyKey: { eventType: "project.closed", idempotencyKey: closeOutboxKey }
+        }
+      })
+    ).resolves.toMatchObject({
+      id: preexistingConflict.id,
+      aggregateType: "PROJECT",
+      aggregateId: flow.project.id,
+      payload: { projectId: flow.project.id, fixture: "preexisting-conflict" },
+      payloadHash: "f".repeat(64)
+    });
+    await expect(
+      db.outboxEvent.count({
+        where: { eventType: "project.closed", idempotencyKey: closeOutboxKey }
+      })
+    ).resolves.toBe(1);
   });
 });
