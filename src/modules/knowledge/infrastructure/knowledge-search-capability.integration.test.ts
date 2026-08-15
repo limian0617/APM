@@ -23,21 +23,27 @@ const ids = {
 };
 
 describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
-  it("server reports DEGRADED when pg_trgm is absent", async () => {
-    const extension = await db.$queryRaw<Array<{ available: boolean }>>`
+  it.skipIf(process.env.APM104_RESTRICTED_NO_EXTENSION !== "1")(
+    "server reports DEGRADED only when the restricted gate proves pg_trgm is absent",
+    async () => {
+      const extension = await db.$queryRaw<Array<{ available: boolean }>>`
       SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS available
     `;
-    if (extension[0]?.available) return;
-    await expect(getKnowledgeSearchCapability(db)).resolves.toBe("DEGRADED");
-  });
+      expect(extension[0]?.available).toBe(false);
+      await expect(getKnowledgeSearchCapability(db)).resolves.toBe("DEGRADED");
+    }
+  );
 
-  it("server reports TRIGRAM when the extension and GIN index exist", async () => {
-    const extension = await db.$queryRaw<Array<{ available: boolean }>>`
+  it.skipIf(process.env.APM104_NORMAL_TRIGRAM !== "1")(
+    "server reports TRIGRAM only when the normal gate proves the extension and GIN index exist",
+    async () => {
+      const extension = await db.$queryRaw<Array<{ available: boolean }>>`
       SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS available
     `;
-    if (!extension[0]?.available) return;
-    await expect(getKnowledgeSearchCapability(db)).resolves.toBe("TRIGRAM");
-  });
+      expect(extension[0]?.available).toBe(true);
+      await expect(getKnowledgeSearchCapability(db)).resolves.toBe("TRIGRAM");
+    }
+  );
 
   it("bounded ILIKE seeds and returns published knowledge", async () => {
     await db.user.create({

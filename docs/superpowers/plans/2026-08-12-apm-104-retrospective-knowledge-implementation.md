@@ -535,12 +535,34 @@ Executed TDD evidence: RED first observed missing `loadKnowledgePageState`, stri
 
 - [ ] Step 1: workflow inspection RED 要求 empty-db、normal pg_trgm、APM-054->104 replay、restricted-role no-extension 四个 named steps；创建 `.github/scripts/apm-104-restricted-pg-trgm-replay.test.sh`，先运行 `bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.sh` 与 `bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.test.sh` 并因文件不存在失败，再用 shell fixture wrappers 断言唯一命名、显式 host/port/admin、trap cleanup、unknown-SQLSTATE 状态捕获和 marker parser 正负例。
 - [ ] Step 2: 正常 owner 路径断言 extension、GIN index、TRIGRAM；空库完整 migrate；升级路径保存/比较 legacy fixture。
-- [ ] Step 3: 创建附录 B 的 exact script 和共享 `.github/scripts/apm-104-legacy-ddl-markers.awk`，依次运行 `bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.sh`、`bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.test.sh`、`bash .github/scripts/apm-104-restricted-pg-trgm-replay.test.sh`；restricted role 真实路径只部署 APM-104 migration，断言 migration success、业务表/约束/新增 enum 值存在、extension/index 不存在、DEGRADED、bounded ILIKE 返回数据。当前 Windows 开发机没有 Bash 时这三个 Bash gate 明确记录为 local SKIPPED，不能写成通过；GitHub CI 必须实际执行并通过，不能跳过。
+- [ ] Step 3: 创建附录 B 指向的三个 tracked replay/parser/wrapper 文件，并将它们记录为唯一可执行来源；依次运行 `bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.sh`、`bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.test.sh`、`bash .github/scripts/apm-104-restricted-pg-trgm-replay.test.sh`；restricted role 真实路径只部署 APM-104 migration，断言 migration success、业务表/约束/新增 enum 值存在、extension/index 不存在、DEGRADED、bounded ILIKE 返回数据。当前 Windows 开发机没有 Bash 时这三个 Bash gate 明确记录为 local SKIPPED，不能写成通过；GitHub CI 必须实际执行并通过，不能跳过。
 - [ ] Step 4: 单独 psql DO block raise XX000，命令必须非零，证明 unexpected SQLSTATE 不被捕获；不能把该块放入 migration。
 - [ ] Step 5: README 记录 V2 template 发布前置、fixture 用户/命令/清理、迁移 replay、search degraded 边界。
 - [ ] Step 6: 依次运行 db:generate、format:check、lint、typecheck、test、db:validate、build、npm audit --audit-level=high、git diff --check、git status -sb。
 - [ ] Step 7: PostgreSQL unavailable 时 schema validation 可记录，但 empty/upgrade/integration 明确 skipped，不能声称通过；Windows 本地无 Bash 时两个 `bash -n` 和 shell contract test 也明确记录 SKIPPED，只有 Linux CI 的实际 exit 0 才能作为 Bash gate 通过证据。
 - [ ] Step 8: 未来另获发布授权才 commit/push/create Draft PR/wait CI/update progress tracker；不 merge、不启动其他 package。
+
+#### Task 12 execution record (Step 1–7; local, 2026-08-15)
+
+- **RED → GREEN:** the APM-054 upgrade contract first failed because the workflow had no named `APM-104 empty database replay` gate; it passed after the four named replay gates and their Linux runtime commands were added. The two new knowledge publication/reuse integration paths first failed test discovery (`No test files found`), then became environment-gated real PostgreSQL tests. The README contract first failed for missing V2 closure, disposable fixture, replay, and search-capability text, then passed after the operational boundary was documented. The upgrade fixture contract first failed without a persisted fixed Archive V1 row and `APM104_UPGRADE_REPLAY=1`; it now deploys APM-054, inserts the fixed legacy source/hash fixture, deploys only the existing APM-104 migration, and rechecks byte compatibility.
+- **CI runtime design:** the four independently named gates are `APM-104 empty database replay`, `APM-104 normal pg_trgm replay`, `APM-054 to APM-104 upgrade replay`, and `APM-104 restricted role no-extension replay`. The restricted script uses explicitly supplied host/port/administrator values, uniquely named databases and role, narrow trap cleanup, the frozen AWK marker parser, `NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`, and a separate `XX000` nonzero assertion. It transfers ownership of the legacy objects touched by the migration, including `ArchiveManifestSourceType`, `AuditAction`, and `AuditObjectType`; the frozen marker allow-list remains limited to the seven legacy tables, `ArchiveManifestSourceType`, and `validate_project_archive_version_mutation`.
+- **Focused GREEN evidence:** `npm run test -- src/modules/archives/infrastructure/apm-054-to-apm-104-upgrade.integration.test.ts src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts` reported 1 file passed / 1 skipped, 3 tests passed / 4 skipped. `npm run test -- src/modules/knowledge/application/knowledge-entry-service.integration.test.ts src/modules/knowledge/application/knowledge-reuse-service.integration.test.ts` reported 2 files skipped / 3 tests skipped because `RUN_DATABASE_INTEGRATION` is not enabled locally. The skip is intentional and is not a PostgreSQL pass.
+- **Local limits:** this Windows host has no Bash, `psql`, Docker, or installed WSL distribution. Accordingly Bash syntax/shell-contract, empty-database replay, APM-054→APM-104 upgrade, normal/restricted pg_trgm, all PostgreSQL integration behavior, and the disposable four-identity browser chain remain `SKIPPED`/`BLOCKED` locally. Linux GitHub CI must execute the Bash and PostgreSQL gates; static tests and schema validation do not replace that evidence.
+- **Pause boundary:** Step 8 remains frozen. This Task 12 work is deliberately uncommitted pending the remaining local Step 6–7 gates and APM-规划 review; it must not be pushed, made into a PR, merged, or reflected in the external development tracker.
+
+#### Recovery T12-R1 (Task 12 first local review)
+
+- **Root cause and bounded scope:** the restricted no-extension role owned the legacy DDL objects and could update Prisma migration bookkeeping, but it only had SELECT, REFERENCES for ordinary tables. The same APM-104 migration seeds permissions and role_permissions, so the restricted replay would fail before its intended extension-degradation assertions. Separately, the normal/restricted search commands selected display-name strings with -t; a changed test name could make Vitest exit successfully with zero executed tests. The marker shell contract also omitted required parser failure cases and contained a non-asserting || true. This recovery changes only the Task 12 workflow, restricted replay/parser/contract, APM-054 upgrade contract test, and this plan; it does not alter the schema, migration, application services, lifecycle, or release boundary.
+- **RED → GREEN:** the focused upgrade contract first failed because the workflow lacked RUN_DATABASE_INTEGRATION=1 APM104_NORMAL_TRIGRAM=1 on the entire capability integration file. The minimal GREEN runs the entire capability file with an explicit normal or restricted gate flag, so each actual CI run executes its mode-specific capability case plus the bounded ILIKE case without a name selector. The restricted migration role receives only INSERT on public.permissions and public.role_permissions; preflight asserts both INSERT=true and UPDATE/DELETE=false, and post-deploy compares the six fixed permission IDs/codes and the complete frozen role/scope matrix by exact set equality.
+- **Shell/AWK contract:** the Bash test now creates positive, unmarked, duplicate-marker, blank-binding, comment-binding, EOF-unbound, and header-mismatch fixtures. It invokes the real parser for each failure branch, then executes the replay through command fixture wrappers that verify generated database names, explicit host/port/admin arguments, session termination/drop/revoke/drop-role cleanup, the captured nonzero XX000 probe, full-file normal/restricted capability invocations, and the replay's own PASS signal. The AWK quote normalization uses portable gsub(/"/, "", line).
+- **Legacy fixture extension:** the APM-054 persisted-row assertion additionally requires retrospective_input_watermark_version IS NULL and retrospective_input_snapshot_json IS NULL, alongside the existing V1 snapshot/hash/item checksum and metadata-only checks.
+- **Local limitation (corrected by T12-R2):** this Windows host has no Bash runtime, PostgreSQL, psql, Docker, or installed WSL distribution. The bundled Git AWK has nevertheless executed the real parser and its required positive/negative fixtures; bundled dash has checked both scripts for partial POSIX syntax only. Bash wrapper execution, empty/upgrade/restricted PostgreSQL replay, normal/restricted pg_trgm behavior, and browser acceptance remain SKIPPED/BLOCKED locally; Linux CI must execute the wrappers and all four runtime gates. Step 8 remains frozen and this recovery stays uncommitted pending review.
+
+#### Recovery T12-R2 (Task 12 documentation-contract review)
+
+- **Root cause and bounded scope:** Appendix B incorrectly labelled a stale markdown copy as the restricted replay's complete executable script. It no longer matched the tracked replay, parser, or wrapper: it lacked the APM-054-found fail-closed guard, AuditAction/AuditObjectType owner transfer and assertion, the permissions/role_permissions INSERT-only preflight and exact matrix postcondition, full-file capability execution, and the replay PASS signal. The old wrapper excerpt also omitted required negative parser branches. This recovery changes only this implementation plan; CI, runtime scripts, README, schema, migration, and application code remain untouched.
+- **RED → GREEN:** the deterministic document-contract check first failed because Appendix B claimed an obsolete inline runtime copy, differed from the tracked replay, retained a display-name selector, and omitted current R1 obligations. GREEN removes every stale inline runtime copy, names the three tracked scripts as the sole executable source of truth, and retains the complete marker, ownership, least-privilege, capability, XX000, parser, cleanup, and matrix contracts in prose.
+- **Evidence wording:** local bundled Git AWK is an actual parser pass (real migration: nine marker-bound objects; positive: exit 0; duplicate/second marker, blank, comment, EOF, and mismatch: exit 64). Bundled dash syntax exits are partial evidence only, not Bash runtime evidence. Bash, PostgreSQL, psql, Docker, WSL distribution, real replay, and four-identity browser acceptance remain SKIPPED/BLOCKED locally and must run in Linux CI/disposable PostgreSQL before release.
 
 ## 附录 A - 完整持久化契约
 
@@ -653,190 +675,58 @@ The following child-to-parent tuples are mandatory; a listed project key is part
 
 ## 附录 B - Restricted pg_trgm real replay
 
-The CI job creates isolated names and executes the following complete script as `.github/scripts/apm-104-restricted-pg-trgm-replay.sh` (Task 12 creates and tests this file). GitHub Actions invokes it with `bash -Eeuo pipefail .github/scripts/apm-104-restricted-pg-trgm-replay.sh`; all connection values come from masked `PGHOST`, `PGPORT`, `PGOWNER_USER`, and `PGOWNER_PASSWORD` secrets. `PGOWNER_USER` is an explicit CI administration role created by the PostgreSQL service bootstrap with `LOGIN CREATEDB CREATEROLE` (it may also be the service superuser), owns the two temporary databases and all APM-054 replay objects, and grants itself temporary membership in the no-extension role solely to execute `ALTER ... OWNER TO`. It is not a runner default and must satisfy the preflight assertions below. The no-extension role remains `NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`, never owns the database, and has database-level CREATE revoked. The script never uses implicit connection defaults, and its `trap` terminates sessions, drops only uniquely named databases, revokes temporary membership, and drops only the uniquely named role it created:
+### B.1 Executable source of truth
 
-```bash
-#!/usr/bin/env bash
-set -Eeuo pipefail
+The following tracked scripts are the sole executable source of truth for the restricted replay, its frozen legacy-DDL parser, and its shell contract. This plan intentionally contains no copied runtime script: a review must compare these tracked files rather than a markdown transcription.
 
-host="${PGHOST:?PGHOST is required}"
-port="${PGPORT:?PGPORT is required}"
-owner_user="${PGOWNER_USER:?PGOWNER_USER is required}"
-owner_password="${PGOWNER_PASSWORD:?PGOWNER_PASSWORD is required}"
-suffix="${GITHUB_RUN_ID:-local}-$$"
-normal_db="apm104_normal_${suffix}"
-noext_db="apm104_noext_${suffix}"
-noext_user="apm104_noext_${suffix}"
-noext_password="$(openssl rand -hex 24)"
-root="$(mktemp -d)"
-url_password="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$owner_password")"
-owner_url="postgresql://${owner_user}:${url_password}@${host}:${port}/${noext_db}"
-noext_url_password="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$noext_password")"
-noext_url="postgresql://${noext_user}:${noext_url_password}@${host}:${port}/${noext_db}"
+- `.github/scripts/apm-104-restricted-pg-trgm-replay.sh` creates the two isolated replay databases and the restricted role, runs the real APM-054 → APM-104 sequence, verifies normal and restricted search capability, and emits `APM104 restricted pg_trgm replay: PASS` only after every assertion succeeds.
+- `.github/scripts/apm-104-legacy-ddl-markers.awk` is the marker-bound parser consumed by the replay.
+- `.github/scripts/apm-104-restricted-pg-trgm-replay.test.sh` is the Bash command-fixture contract for both scripts and emits `APM104 restricted replay shell contract: PASS`.
 
-cleanup() {
-  set +e
-  PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d postgres -v ON_ERROR_STOP=1 -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ('$normal_db','$noext_db') AND pid <> pg_backend_pid()"
-  PGPASSWORD="$owner_password" dropdb -h "$host" -p "$port" -U "$owner_user" --if-exists "$normal_db"
-  PGPASSWORD="$owner_password" dropdb -h "$host" -p "$port" -U "$owner_user" --if-exists "$noext_db"
-  if PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d postgres -Atqc "SELECT 1 FROM pg_roles WHERE rolname='$noext_user'" | grep -qx 1; then
-    PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d postgres -v ON_ERROR_STOP=1 -c "REVOKE \"$noext_user\" FROM \"$owner_user\"; DROP ROLE \"$noext_user\""
-  fi
-  rm -rf "$root"
-}
-trap cleanup EXIT
+GitHub Actions invokes the replay with `bash -Eeuo pipefail .github/scripts/apm-104-restricted-pg-trgm-replay.sh`. All connections use masked `PGHOST`, `PGPORT`, `PGOWNER_USER`, and `PGOWNER_PASSWORD`; no command may fall back to an implicit host, port, or administrator. `PGOWNER_USER` is the explicit CI administration role with `LOGIN CREATEDB CREATEROLE` (or equivalent service-superuser capability), owns the temporary databases and APM-054 objects, and receives the temporary membership needed for owner transfer. The restricted role stays `NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`, does not own either database, and has database-level CREATE revoked.
 
-copy_until_apm054() {
-  mkdir -p "$root/prisma/migrations"
-  cp prisma/schema.prisma "$root/prisma/schema.prisma"
-  for migration in prisma/migrations/*; do
-    name="$(basename "$migration")"
-    cp -R "$migration" "$root/prisma/migrations/$name"
-    if [ "$name" = 20260811040000_apm_054_project_archives ]; then break; fi
-  done
-}
-copy_until_apm054
+### B.2 Replay lifecycle, cleanup, and APM-054 boundary
 
-PGPASSWORD="$owner_password" createdb -h "$host" -p "$port" -U "$owner_user" -O "$owner_user" "$normal_db"
-PGPASSWORD="$owner_password" createdb -h "$host" -p "$port" -U "$owner_user" -O "$owner_user" "$noext_db"
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d postgres -v ON_ERROR_STOP=1 -Atqc "SELECT rolcreatedb AND rolcreaterole FROM pg_roles WHERE rolname=current_user" | grep -qx t
-PGPASSWORD="$owner_password" DATABASE_URL="postgresql://${owner_user}:${url_password}@${host}:${port}/${normal_db}" npx prisma migrate deploy --schema "$root/prisma/schema.prisma"
-PGPASSWORD="$owner_password" DATABASE_URL="$owner_url" npx prisma migrate deploy --schema "$root/prisma/schema.prisma"
-cp -R prisma/migrations/20260812010000_apm_104_retrospectives_knowledge_closure_policy "$root/prisma/migrations/"
-PGPASSWORD="$owner_password" DATABASE_URL="postgresql://${owner_user}:${url_password}@${host}:${port}/${normal_db}" npx prisma migrate deploy --schema "$root/prisma/schema.prisma"
+The runtime derives uniquely named `apm104_normal_`, `apm104_noext_`, and `apm104_noext_` role identifiers from `GITHUB_RUN_ID` plus the process id. Its EXIT trap terminates sessions for only those databases, drops only those databases, revokes the temporary membership, drops only that role, and removes only its temporary directory.
 
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d "$noext_db" -v ON_ERROR_STOP=1 <<SQL
-REVOKE CREATE ON DATABASE "$noext_db" FROM PUBLIC;
-CREATE ROLE "$noext_user" LOGIN PASSWORD '$noext_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
-GRANT "$noext_user" TO "$owner_user";
-GRANT CONNECT ON DATABASE "$noext_db" TO "$noext_user";
-GRANT USAGE, CREATE ON SCHEMA public TO "$noext_user";
-REVOKE CREATE ON DATABASE "$noext_db" FROM "$noext_user";
-SQL
+`copy_until_apm054` must fail closed unless migration `20260811040000_apm_054_project_archives` is found. Both databases first deploy through APM-054; only the existing `20260812010000_apm_104_retrospectives_knowledge_closure_policy` directory is then added for APM-104 deployment. The normal database deploys APM-104 as owner. The no-extension database deploys it as the restricted role after the bounded ownership and grant preflight below. An isolated `XX000` probe must return nonzero; its status is captured while errexit is temporarily disabled, errexit is restored, and the script fails if that unexpected SQLSTATE is accepted.
 
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d postgres -v ON_ERROR_STOP=1 -Atqc "SELECT NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolinherit FROM pg_roles WHERE rolname='$noext_user'" | grep -qx t
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d postgres -v ON_ERROR_STOP=1 -Atqc "SELECT pg_has_role(current_user, '$noext_user', 'MEMBER')" | grep -qx t
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d "$noext_db" -v ON_ERROR_STOP=1 -Atqc "SELECT d.datdba=(SELECT oid FROM pg_roles WHERE rolname='$owner_user') AND NOT has_database_privilege('$noext_user',current_database(),'CREATE') FROM pg_database d WHERE d.datname=current_database()" | grep -qx t
+### B.3 Marker-bound and explicit legacy ownership
 
-# The marker equality below runs before any ownership mutation. It prevents a
-# newly added ALTER/CREATE OR REPLACE against a legacy object from bypassing the
-# exhaustive allow-list.
-expected_legacy_objects="$(printf '%s\n' 'FUNCTION validate_project_archive_version_mutation' 'TABLE gate_check_snapshots' 'TABLE gate_submissions' 'TABLE issue_histories' 'TABLE project_archive_versions' 'TABLE project_gate_definitions' 'TABLE project_gate_instances' 'TABLE project_template_snapshots' 'TYPE ArchiveManifestSourceType')"
-actual_legacy_objects="$(awk -f .github/scripts/apm-104-legacy-ddl-markers.awk prisma/migrations/20260812010000_apm_104_retrospectives_knowledge_closure_policy/migration.sql | sort -u)"
-[ "$actual_legacy_objects" = "$expected_legacy_objects" ] || { printf 'legacy DDL allow-list mismatch\nexpected:\n%s\nactual:\n%s\n' "$expected_legacy_objects" "$actual_legacy_objects" >&2; exit 1; }
+The AWK parser emits only a marker immediately bound to its matching next DDL header, ignores all unmarked statements, and fails with exit 64 for a second/duplicate marker, blank or comment interposition, kind/name/header mismatch, or an unbound marker at EOF. The replay compares the resulting exact marker-bound set before changing ownership:
 
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d "$noext_db" -v ON_ERROR_STOP=1 <<SQL
--- Exhaustive allow-list for every pre-existing object that APM-104 alters.
-ALTER TABLE public.project_template_snapshots OWNER TO "$noext_user";
-ALTER TABLE public.project_archive_versions OWNER TO "$noext_user";
-ALTER TABLE public.project_gate_definitions OWNER TO "$noext_user";
-ALTER TABLE public.project_gate_instances OWNER TO "$noext_user";
-ALTER TABLE public.gate_check_snapshots OWNER TO "$noext_user";
-ALTER TABLE public.gate_submissions OWNER TO "$noext_user";
-ALTER TABLE public.issue_histories OWNER TO "$noext_user";
-ALTER TABLE public._prisma_migrations OWNER TO "$noext_user";
-ALTER TYPE public."ArchiveManifestSourceType" OWNER TO "$noext_user";
-ALTER FUNCTION public.validate_project_archive_version_mutation() OWNER TO "$noext_user";
-GRANT SELECT, REFERENCES ON ALL TABLES IN SCHEMA public TO "$noext_user";
-GRANT INSERT, UPDATE, DELETE ON public._prisma_migrations TO "$noext_user";
-SQL
+- seven legacy business tables: `project_template_snapshots`, `project_archive_versions`, `project_gate_definitions`, `project_gate_instances`, `gate_check_snapshots`, `gate_submissions`, and `issue_histories`;
+- the existing `ArchiveManifestSourceType`;
+- `validate_project_archive_version_mutation()`.
 
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d "$noext_db" -v ON_ERROR_STOP=1 -Atqc "SELECT string_agg(c.relname, ',' ORDER BY c.relname) FROM pg_class c JOIN pg_roles r ON r.oid=c.relowner WHERE r.rolname='$noext_user' AND c.relname IN ('project_template_snapshots','project_archive_versions','project_gate_definitions','project_gate_instances','gate_check_snapshots','gate_submissions','issue_histories','_prisma_migrations')" | grep -qx '_prisma_migrations,gate_check_snapshots,gate_submissions,issue_histories,project_archive_versions,project_gate_definitions,project_gate_instances,project_template_snapshots'
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d "$noext_db" -v ON_ERROR_STOP=1 -Atqc "SELECT r.rolname FROM pg_type t JOIN pg_roles r ON r.oid=t.typowner WHERE t.typname='ArchiveManifestSourceType'" | grep -qx "$noext_user"
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d "$noext_db" -v ON_ERROR_STOP=1 -Atqc "SELECT r.rolname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner WHERE n.nspname='public' AND p.proname='validate_project_archive_version_mutation' AND pg_get_function_identity_arguments(p.oid)=''" | grep -qx "$noext_user"
+Those objects are marker-bound because the migration directly alters their legacy schema/type/function definitions. This set is deliberately distinct from explicit additional temporary transfers:
 
-PGPASSWORD="$noext_password" DATABASE_URL="$noext_url" npx prisma migrate deploy --schema "$root/prisma/schema.prisma"
+- `_prisma_migrations` is transferred and granted INSERT/UPDATE/DELETE solely so Prisma can record the restricted deployment.
+- `AuditAction` and `AuditObjectType` are transferred because the migration appends enum values to each; they are not marker-bound legacy DDL and therefore never expand the parser allow-list.
+- `permissions` and `role_permissions` are not transferred. They receive only INSERT because the migration seeds the six APM-104 permissions and their role grants. Preflight proves INSERT is true on both and UPDATE/DELETE are false on both.
 
-assert_scalar() {
-  local expected="$1"
-  local sql="$2"
-  local actual
-  actual="$(PGPASSWORD="$noext_password" psql -h "$host" -p "$port" -U "$noext_user" -d "$noext_db" -Atqc "$sql")"
-  [ "$actual" = "$expected" ] || { echo "assertion failed: expected [$expected], got [$actual]" >&2; exit 1; }
-}
-assert_scalar t "SELECT to_regclass('public.knowledge_entries') IS NOT NULL"
-assert_scalar t "SELECT EXISTS (SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname='ArchiveManifestSourceType' AND e.enumlabel='PROJECT_RETROSPECTIVE_VERSION')"
-assert_scalar t "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='knowledge_entry_reviews_version_entry_project_fkey')"
-assert_scalar t "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='knowledge_reuse_records_version_entry_fkey')"
-assert_scalar t "SELECT to_regclass('public.knowledge_entry_versions_search_trgm_idx') IS NULL"
-assert_scalar f "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='pg_trgm')"
-PGPASSWORD="$noext_password" DATABASE_URL="$noext_url" npm run test -- src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts -t "server reports DEGRADED when pg_trgm is absent"
-PGPASSWORD="$noext_password" DATABASE_URL="$noext_url" npm run test -- src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts -t "bounded ILIKE seeds and returns published knowledge"
+Before no-extension deployment, owner/type/function assertions prove every required temporary transfer; the grant assertion proves exactly the least privilege above. After deployment, an exact-set SQL assertion proves both the following Permission IDs/codes and the complete role/scope matrix, rejecting any omitted or extra row:
 
-PGPASSWORD="$owner_password" psql -h "$host" -p "$port" -U "$owner_user" -d "$normal_db" -Atqc "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='pg_trgm') AND to_regclass('public.knowledge_entry_versions_search_trgm_idx') IS NOT NULL" | grep -qx t
-PGPASSWORD="$owner_password" DATABASE_URL="postgresql://${owner_user}:${url_password}@${host}:${port}/${normal_db}" npm run test -- src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts -t "server reports TRIGRAM when extension and GIN exist"
+| Permission ID                             | Code                           | Frozen role/scope grants                                                                                                      |
+| ----------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `permission-project-retrospective-read`   | `PROJECT_RETROSPECTIVE_READ`   | project-manager/PROJECT; department-lead/DEPARTMENT; quality/PROJECT; admin/ALL                                               |
+| `permission-project-retrospective-manage` | `PROJECT_RETROSPECTIVE_MANAGE` | project-manager/PROJECT; department-lead/DEPARTMENT; admin/ALL                                                                |
+| `permission-project-retrospective-review` | `PROJECT_RETROSPECTIVE_REVIEW` | department-lead/DEPARTMENT; quality/PROJECT; admin/ALL                                                                        |
+| `permission-knowledge-read`               | `KNOWLEDGE_READ`               | project-manager, department-lead, engineer, procurement, quality, technical-asset-maintainer, executive, and admin — each ALL |
+| `permission-knowledge-review`             | `KNOWLEDGE_REVIEW`             | department-lead/ALL; quality/ALL; admin/ALL                                                                                   |
+| `permission-knowledge-reuse-confirm`      | `KNOWLEDGE_REUSE_CONFIRM`      | project-manager/PROJECT; quality/PROJECT; admin/ALL                                                                           |
 
-set +e
-PGPASSWORD="$noext_password" psql -h "$host" -p "$port" -U "$noext_user" -d "$noext_db" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN RAISE EXCEPTION 'unexpected migration error' USING ERRCODE = 'XX000'; EXCEPTION WHEN SQLSTATE '42501' OR SQLSTATE '58P01' OR SQLSTATE '0A000' THEN RAISE NOTICE 'allowed'; END \$\$;"
-unexpected_status=$?
-set -e
-[ "$unexpected_status" -ne 0 ] || { echo 'unexpected SQLSTATE was incorrectly accepted' >&2; exit 1; }
-```
+### B.4 PostgreSQL capability gates and wrapper contract
 
-The shared parser `.github/scripts/apm-104-legacy-ddl-markers.awk` is frozen to this behavior: on a line matching `^-- APM104_LEGACY_DDL (TABLE|TYPE|FUNCTION) ([A-Za-z0-9_]+)$`, remember kind/object and require the immediately following line to match the appropriate header—`ALTER TABLE [public.]"object"`、`ALTER TYPE [public.]"object"` or `CREATE OR REPLACE FUNCTION [public.]"object"(`. It emits exactly `kind object`, rejects duplicate/second markers, rejects blank/comment interposition, rejects kind/name mismatch, rejects EOF with an unbound marker, and ignores every unmarked statement. It never derives `object` with `${ddl#* }` and never scans all migration `ALTER TABLE` statements.
+The restricted database must prove the extension and target GIN index are absent before the server integration runs; the normal database must prove both exist. Each route sets `RUN_DATABASE_INTEGRATION=1` and its respective mode flag (`APM104_RESTRICTED_NO_EXTENSION=1` or `APM104_NORMAL_TRIGRAM=1`) and runs the whole `knowledge-search-capability.integration.test.ts` file. It may not select a test by its human-readable display name: the restricted run must execute the restricted and bounded-ILIKE cases, and the normal run must execute the normal and bounded-ILIKE cases. SQL object assertions never substitute for the server-side capability test.
 
-The exact AWK state machine uses a literal-token comparison rather than interpolating an unchecked identifier into a regex:
+The wrapper executes the real replay through exported command fixtures and asserts all of the following: unique names; explicit host/port/administrator; the marker positive/unmarked/duplicate/blank/comment/EOF/mismatch branches; marker equality; temporary ownership including both Audit enums; the permissions/role-permissions least grant, preflight, and complete matrix assertion; session termination/drop/revoke/drop-role cleanup; captured nonzero `XX000`; full-file normal and restricted capability invocations; absence of a display-name selector; and the replay's final PASS signal.
 
-```awk
-function fail(message) { waiting=0; print message > "/dev/stderr"; exit 64 }
-/^-- APM104_LEGACY_DDL (TABLE|TYPE|FUNCTION) [A-Za-z0-9_]+$/ {
-  if (waiting) fail("second marker before bound statement")
-  split($0, marker, " ")
-  kind=marker[3]; object=marker[4]
-  key=kind SUBSEP object
-  if (seen[key]++) fail("duplicate legacy marker")
-  waiting=1; next
-}
-waiting {
-  if ($0 == "" || $0 ~ /^--/) fail("marker must bind the immediately following statement header")
-  line=$0; gsub(/public[.]/, "", line); gsub(/\"/, "", line); gsub(/[[:space:]]+/, " ", line)
-  split(line, token, /[ (]/)
-  if (kind == "TABLE" && !(token[1] == "ALTER" && token[2] == "TABLE" && token[3] == object)) fail("TABLE marker mismatch")
-  if (kind == "TYPE" && !(token[1] == "ALTER" && token[2] == "TYPE" && token[3] == object)) fail("TYPE marker mismatch")
-  if (kind == "FUNCTION" && !(token[1] == "CREATE" && token[2] == "OR" && token[3] == "REPLACE" && token[4] == "FUNCTION" && token[5] == object)) fail("FUNCTION marker mismatch")
-  print kind " " object; waiting=0; next
-}
-END { if (waiting) fail("unbound marker at EOF") }
-```
+### B.5 Local evidence and limits
 
-The shell test writes three disposable SQL fixtures and calls the same AWK parser used by the replay script:
+On this Windows host, the bundled Git AWK at `C:\\Users\\李勉\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\git\\usr\\bin\\awk.exe` has actually parsed the real APM-104 migration with exit 0 and the expected nine marker-bound objects. Its positive fixture exited 0; duplicate-bound/second-marker, blank, comment, EOF, and mismatch fixtures each exited 64. Bundled dash also returned exit 0 for syntax-only checks of both scripts. Those are actual local parser and partial POSIX syntax evidence only: dash is not Bash.
 
-```bash
-positive_sql="$(mktemp)"
-negative_sql="$(mktemp)"
-invalid_sql="$(mktemp)"
-trap 'rm -f "$positive_sql" "$negative_sql" "$invalid_sql"' EXIT
-printf '%s\n' \
-  '-- APM104_LEGACY_DDL TABLE project_template_snapshots' 'ALTER TABLE "project_template_snapshots" ADD COLUMN "x" text;' \
-  '-- APM104_LEGACY_DDL TABLE project_archive_versions' 'ALTER TABLE "project_archive_versions" ADD COLUMN "x" text;' \
-  '-- APM104_LEGACY_DDL TABLE project_gate_definitions' 'ALTER TABLE "project_gate_definitions" ADD COLUMN "x" text;' \
-  '-- APM104_LEGACY_DDL TABLE project_gate_instances' 'ALTER TABLE "project_gate_instances" ADD COLUMN "x" text;' \
-  '-- APM104_LEGACY_DDL TABLE gate_check_snapshots' 'ALTER TABLE "gate_check_snapshots" ADD COLUMN "x" text;' \
-  '-- APM104_LEGACY_DDL TABLE gate_submissions' 'ALTER TABLE "gate_submissions" ADD COLUMN "x" text;' \
-  '-- APM104_LEGACY_DDL TABLE issue_histories' 'ALTER TABLE "issue_histories" ADD CONSTRAINT "x" CHECK (true);' \
-  '-- APM104_LEGACY_DDL TYPE ArchiveManifestSourceType' 'ALTER TYPE "ArchiveManifestSourceType" ADD VALUE IF NOT EXISTS '\''PROJECT_RETROSPECTIVE_VERSION'\'';' \
-  '-- APM104_LEGACY_DDL FUNCTION validate_project_archive_version_mutation' 'CREATE OR REPLACE FUNCTION "validate_project_archive_version_mutation"()' 'RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql;' >"$positive_sql"
-expected="$(printf '%s\n' 'FUNCTION validate_project_archive_version_mutation' 'TABLE gate_check_snapshots' 'TABLE gate_submissions' 'TABLE issue_histories' 'TABLE project_archive_versions' 'TABLE project_gate_definitions' 'TABLE project_gate_instances' 'TABLE project_template_snapshots' 'TYPE ArchiveManifestSourceType')"
-actual="$(awk -f .github/scripts/apm-104-legacy-ddl-markers.awk "$positive_sql" | sort -u)"
-[ "$actual" = "$expected" ]
-
-printf '%s\n' 'CREATE TABLE "knowledge_entries" ("id" text PRIMARY KEY);' 'ALTER TABLE "knowledge_entries" ADD CONSTRAINT "knowledge_entries_code_key" UNIQUE ("id");' >"$negative_sql"
-[ -z "$(awk -f .github/scripts/apm-104-legacy-ddl-markers.awk "$negative_sql")" ]
-
-printf '%s\n' '-- APM104_LEGACY_DDL FUNCTION validate_project_archive_version_mutation' 'ALTER TABLE "validate_project_archive_version_mutation" ADD COLUMN "x" text;' >"$invalid_sql"
-if awk -f .github/scripts/apm-104-legacy-ddl-markers.awk "$invalid_sql"; then
-  echo 'function marker mismatch was incorrectly accepted' >&2
-  exit 1
-fi
-```
-
-The positive fixture proves all seven legacy tables, the enum, and the `CREATE OR REPLACE FUNCTION` marker; the negative fixture proves a new APM-104 table's unmarked `ALTER TABLE` is excluded; the invalid fixture proves a FUNCTION marker cannot bind an ALTER TABLE statement. The test also greps the replay script for both `GRANT "$noext_user" TO "$owner_user"` and its cleanup REVOKE and asserts its database preflight/ownership queries exist.
-
-The normal database replays APM-054 and then the same APM-104 migration as owner; the restricted database first replays the real APM-054 migration, then only the APM-104 directory after the exhaustive ownership transfer. The allow-list is exact and machine-checked against only marker-bound DDL statements: seven altered legacy business tables, the modified `ArchiveManifestSourceType`, and the one replaced `validate_project_archive_version_mutation()` function, plus schema CREATE/USAGE and `_prisma_migrations` ownership/privileges. Every other existing table remains owner-controlled and is exposed only through SELECT/REFERENCES. The admin preflight proves CREATEDB/CREATEROLE, the membership assertion proves it may transfer owner to the temporary role, and the table/type/function owner queries prove every required transfer succeeded before deployment. The `ALTER TYPE ... ADD VALUE` therefore succeeds while `CREATE EXTENSION` reaches exactly one of the caught `42501`, `58P01`, or `0A000` states. Prisma's successful exit is enforced directly by `set -e`; a marker binding, membership, ownership, missing object, enum, constraint, extension/index, capability, or bounded-search mismatch fails a shell assertion or named integration test. The `set +e` block is intentional: under GitHub Actions `bash -e`, the unknown-SQLSTATE command is inside a disabled-errexit region, its status is captured, `set -e` is restored, and the explicit `[ "$unexpected_status" -ne 0 ]` assertion still runs.
-
-Exact Bash verification is `bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.sh`, `bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.test.sh`, then `bash .github/scripts/apm-104-restricted-pg-trgm-replay.test.sh`; expected signal is exit 0 and `APM104 restricted replay shell contract: PASS`. On a Windows workstation without Bash these are recorded as local SKIPPED, not PASS; GitHub Actions must run all three commands and cannot mark the job successful if any is skipped or non-zero.
-
-The two named capability integration tests are executable server-side probes, not adapter mocks. `server reports DEGRADED when pg_trgm is absent` queries `pg_extension` and `pg_indexes` through the server capability adapter and requires response metadata `{ searchCapability: "DEGRADED" }`. `bounded ILIKE seeds and returns published knowledge` inserts a closed source project, the precise Archive A and Archive B versions plus an approved retrospective, publishes one sanitized knowledge version with `normalizedKeywordsText='伺服 抖动 调参'`, invokes the real query service with `query='伺服'`, `page=1`, `pageSize=20`, asserts that exact version is returned with DEGRADED metadata, and deletes only its test transaction data on rollback. The normal named test requires `{ searchCapability: "TRIGRAM" }`. None of these application tests substitutes for the preceding real migration exit and database-object assertions.
+Bash runtime, the wrapper execution, PostgreSQL/psql/Docker, an installed WSL distribution, all four real replay gates, pg_trgm behavior, and the disposable four-identity browser chain remain `SKIPPED`/ `BLOCKED` locally. Linux GitHub CI must run the Bash wrapper and all named PostgreSQL gates; schema validation, dash syntax, or static assertions cannot replace their runtime evidence.
 
 ## 附录 C - Browser fixture/auth
 
