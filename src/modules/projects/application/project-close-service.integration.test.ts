@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -42,7 +42,7 @@ function auditContext(
   return {
     actorId,
     requestId: `request-${operationId}`,
-    traceId: `trace-${operationId}`,
+    traceId: createHash("sha256").update(operationId).digest("hex").slice(0, 32),
     source: "API",
     sourceIp: null,
     userAgent: "Vitest",
@@ -267,7 +267,11 @@ async function createArchiveB(input: {
   return version;
 }
 
-async function addNonClosureGateSubmission(input: { projectId: string; actorId: string }) {
+async function addNonClosureGateSubmission(input: {
+  projectId: string;
+  actorId: string;
+  approverId: string;
+}) {
   const source = await db.projectGateDefinition.findFirstOrThrow({
     where: { projectId: input.projectId, code: "G9" },
     select: { sourceSnapshotComponentId: true, projectStageId: true }
@@ -313,19 +317,41 @@ async function addNonClosureGateSubmission(input: { projectId: string; actorId: 
       checkedById: input.actorId
     }
   });
-  return db.gateSubmission.create({
-    data: {
-      projectId: input.projectId,
-      gateInstanceId: instance.id,
-      gateCheckSnapshotId: snapshot.id,
-      sequence: 1,
-      status: "APPROVED",
-      approvalMode: "ALL",
-      approverRolesJson: ["QUALITY"],
-      submittedReason: "写入非 G9 归档来源",
-      submittedById: input.actorId,
-      decidedAt: new Date()
-    }
+  return db.$transaction(async (tx) => {
+    const approverMembership = await tx.projectMember.findFirstOrThrow({
+      where: {
+        projectId: input.projectId,
+        userId: input.approverId,
+        projectRole: "QUALITY",
+        leftAt: null,
+        user: { status: "ACTIVE" }
+      },
+      select: { id: true }
+    });
+    const submission = await tx.gateSubmission.create({
+      data: {
+        projectId: input.projectId,
+        gateInstanceId: instance.id,
+        gateCheckSnapshotId: snapshot.id,
+        sequence: 1,
+        status: "APPROVED",
+        approvalMode: "ALL",
+        approverRolesJson: ["QUALITY"],
+        submittedReason: "写入非 G9 归档来源",
+        submittedById: input.actorId,
+        decidedAt: new Date()
+      }
+    });
+    await tx.gateSubmissionApprover.create({
+      data: {
+        projectId: input.projectId,
+        gateSubmissionId: submission.id,
+        userId: input.approverId,
+        membershipIdsJson: [approverMembership.id],
+        projectRolesJson: ["QUALITY"]
+      }
+    });
+    return submission;
   });
 }
 
@@ -585,7 +611,11 @@ describeDatabase("APM-104 project close PostgreSQL integration", () => {
         idempotencyKey: `close-cross-project-${suffix}`
       })
     ).rejects.toMatchObject({ code: "CLOSURE_SUBMISSION_PROJECT_MISMATCH", status: 409 });
-    await addNonClosureGateSubmission({ projectId: local.project.id, actorId: ids.manager });
+    await addNonClosureGateSubmission({
+      projectId: local.project.id,
+      actorId: ids.manager,
+      approverId: ids.reviewer
+    });
     const formula = getArchiveSourceFormulaAdapter("ARCHIVE.SOURCE@2");
     const currentAfterNonG9Change = formula.buildManifest(
       await formula.read({ client: db as never, projectId: local.project.id })

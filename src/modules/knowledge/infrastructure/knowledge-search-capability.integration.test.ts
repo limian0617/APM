@@ -55,7 +55,10 @@ describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
         code: `KNOW.SEARCH.${suffix}`.toUpperCase(),
         name: "Knowledge search source",
         status: "CLOSED",
+        initializationStatus: "READY",
         projectType: "CUSTOMER_DELIVERY",
+        equipmentShape: "SINGLE_MACHINE",
+        structureStatus: "READY",
         createdById: ids.user
       }
     });

@@ -130,7 +130,10 @@ describeDatabase("APM-104 PostgreSQL knowledge publish and revoke", () => {
         code: `KNOWLEDGE.ENTRY.${suffix}`.toUpperCase(),
         name: "Knowledge entry source project",
         status: "CLOSED",
+        initializationStatus: "READY",
         projectType: "CUSTOMER_DELIVERY",
+        equipmentShape: "SINGLE_MACHINE",
+        structureStatus: "READY",
         createdById: ids.author
       }
     });

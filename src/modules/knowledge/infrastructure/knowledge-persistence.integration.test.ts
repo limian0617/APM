@@ -144,7 +144,10 @@ describeDatabase("APM-104 PostgreSQL knowledge composite foreign keys", () => {
           code: `KNOWLEDGE.SOURCE.${suffix}`.toUpperCase(),
           name: "Knowledge source project",
           status: "CLOSED",
+          initializationStatus: "READY",
           projectType: "CUSTOMER_DELIVERY",
+          equipmentShape: "SINGLE_MACHINE",
+          structureStatus: "READY",
           createdById: ids.user
         },
         {
@@ -152,7 +155,10 @@ describeDatabase("APM-104 PostgreSQL knowledge composite foreign keys", () => {
           code: `KNOWLEDGE.OTHER.${suffix}`.toUpperCase(),
           name: "Knowledge other project",
           status: "IN_PROGRESS",
+          initializationStatus: "READY",
           projectType: "CUSTOMER_DELIVERY",
+          equipmentShape: "SINGLE_MACHINE",
+          structureStatus: "READY",
           createdById: ids.user
         }
       ]

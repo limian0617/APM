@@ -65,7 +65,6 @@ describeDatabase("APM-104 retrospective PostgreSQL workflow", () => {
         versions: {
           create: {
             id: ids.archiveVersion,
-            projectId: ids.project,
             version: 1,
             status: "READY",
             manifestChecksum: "a".repeat(64),

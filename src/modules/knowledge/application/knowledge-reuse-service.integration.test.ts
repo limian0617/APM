@@ -46,7 +46,10 @@ describeDatabase("APM-104 PostgreSQL knowledge reuse and correction", () => {
           code: `KNOWLEDGE.REUSE.SOURCE.${suffix}`.toUpperCase(),
           name: "Knowledge reuse source project",
           status: "CLOSED",
+          initializationStatus: "READY",
           projectType: "CUSTOMER_DELIVERY",
+          equipmentShape: "SINGLE_MACHINE",
+          structureStatus: "READY",
           createdById: ids.actor
         },
         {
@@ -54,7 +57,10 @@ describeDatabase("APM-104 PostgreSQL knowledge reuse and correction", () => {
           code: `KNOWLEDGE.REUSE.TARGET.${suffix}`.toUpperCase(),
           name: "Knowledge reuse target project",
           status: "IN_PROGRESS",
+          initializationStatus: "READY",
           projectType: "CUSTOMER_DELIVERY",
+          equipmentShape: "SINGLE_MACHINE",
+          structureStatus: "READY",
           createdById: ids.actor
         }
       ]
