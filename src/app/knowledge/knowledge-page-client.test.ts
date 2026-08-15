@@ -334,6 +334,47 @@ describe("KnowledgePageClient", () => {
     ).toEqual({ show: true, canDiscardIdempotencyKey: true });
   });
 
+  it.each(["PUBLISHED", "REJECTED"] as const)(
+    "uses the real protected review response for %s as a terminal read-only authoring state",
+    (status) => {
+      const applyAuthoringResponse = (knowledgeUi as Record<string, unknown>)
+        .applyKnowledgeAuthoringResponse;
+      const contextFromPayload = (knowledgeUi as Record<string, unknown>)
+        .knowledgeAuthoringContextFromPayload;
+      const authoringActions = (knowledgeUi as Record<string, unknown>).knowledgeAuthoringActions;
+      const reviewResponse = {
+        entryId: "author-entry-1",
+        versionId: "author-version-1",
+        entryVersion: 6,
+        status,
+        reviewId: "review-1",
+        auditId: "audit-1",
+        outboxEventId: "outbox-1"
+      };
+
+      expect(applyAuthoringResponse).toBeTypeOf("function");
+      expect(contextFromPayload).toBeTypeOf("function");
+      const context = (
+        applyAuthoringResponse as (input: { current: unknown; payload: unknown }) => unknown
+      )({
+        current: {
+          entryId: "author-entry-1",
+          versionId: "author-version-1",
+          expectedEntryVersion: 5,
+          status: "IN_REVIEW"
+        },
+        payload: reviewResponse
+      });
+      expect(context).toEqual({
+        entryId: "author-entry-1",
+        versionId: "author-version-1",
+        expectedEntryVersion: 6,
+        status
+      });
+      expect((authoringActions as (input: unknown) => unknown)(context)).toEqual([]);
+    }
+  );
+
   it("does not require a manually entered internal reuse ID or reuse version", () => {
     const markup = renderToStaticMarkup(
       createElement(KnowledgePageClient, {

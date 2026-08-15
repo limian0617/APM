@@ -335,7 +335,9 @@ function newIdempotencyKey(operation: string): string {
   return `apm104-${operation}-${nonce}`;
 }
 
-function authoringContextFromPayload(payload: unknown): KnowledgeAuthoringContext | null {
+export function knowledgeAuthoringContextFromPayload(
+  payload: unknown
+): KnowledgeAuthoringContext | null {
   if (!payload || typeof payload !== "object") return null;
   const record = payload as Record<string, unknown>;
   return typeof record.entryId === "string" &&
@@ -350,6 +352,13 @@ function authoringContextFromPayload(payload: unknown): KnowledgeAuthoringContex
         status: record.status as KnowledgeAuthoringContext["status"]
       }
     : null;
+}
+
+export function applyKnowledgeAuthoringResponse(input: {
+  current: KnowledgeAuthoringContext | null;
+  payload: unknown;
+}): KnowledgeAuthoringContext | null {
+  return knowledgeAuthoringContextFromPayload(input.payload) ?? input.current;
 }
 
 export function KnowledgePageClient({ initialState }: { initialState?: KnowledgeState }) {
@@ -555,8 +564,7 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
               });
               void runCommand("knowledge-create", request, {
                 afterSuccess: (payload) => {
-                  const context = authoringContextFromPayload(payload);
-                  if (context) setAuthoring(context);
+                  setAuthoring((current) => applyKnowledgeAuthoringResponse({ current, payload }));
                 }
               });
             }}
@@ -653,8 +661,9 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
                     buildKnowledgeCommandRequest({ action: "SUBMIT", ...authoring }),
                     {
                       afterSuccess: (payload) => {
-                        const context = authoringContextFromPayload(payload);
-                        if (context) setAuthoring(context);
+                        setAuthoring((current) =>
+                          applyKnowledgeAuthoringResponse({ current, payload })
+                        );
                       }
                     }
                   );
@@ -677,8 +686,9 @@ export function KnowledgePageClient({ initialState }: { initialState?: Knowledge
                     }),
                     {
                       afterSuccess: (payload) => {
-                        const context = authoringContextFromPayload(payload);
-                        if (context) setAuthoring(context);
+                        setAuthoring((current) =>
+                          applyKnowledgeAuthoringResponse({ current, payload })
+                        );
                       }
                     }
                   );

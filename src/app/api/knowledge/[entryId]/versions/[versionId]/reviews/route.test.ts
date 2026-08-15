@@ -150,13 +150,24 @@ describe("POST /api/knowledge/[entryId]/versions/[versionId]/reviews", () => {
       sourceProjectId: "actual-source"
     });
     projectGuard.authorizeProjectRequest.mockResolvedValue(allowed);
-    reviewService.reviewKnowledgeEntryVersion.mockResolvedValue({ status: "PUBLISHED" });
+    const reviewResult = {
+      entryId: "entry-1",
+      versionId: "version-1",
+      entryVersion: 3,
+      status: "PUBLISHED",
+      reviewId: "review-1",
+      auditId: "audit-1",
+      outboxEventId: "outbox-1"
+    };
+    reviewService.reviewKnowledgeEntryVersion.mockResolvedValue(reviewResult);
     command.idempotentCommandResponse.mockImplementation(async (input) => {
       const result = await input.execute({} as never);
       return Response.json(result.body, { status: result.status });
     });
 
-    expect((await POST(request(body), context)).status).toBe(200);
+    const response = await POST(request(body), context);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(reviewResult);
     expect(reviewService.reviewKnowledgeEntryVersion).toHaveBeenCalledWith(
       expect.objectContaining({
         sourceRead: { knowledgePermissionAllowed: true, sourceProjectReadAllowed: true },

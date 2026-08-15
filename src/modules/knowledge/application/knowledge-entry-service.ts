@@ -911,6 +911,7 @@ export async function reviewKnowledgeEntryVersion(
     return {
       entryId,
       versionId: version.id,
+      entryVersion: input.expectedEntryVersion + 1,
       status,
       reviewId: review.id,
       auditId: audit.id,

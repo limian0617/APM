@@ -792,7 +792,11 @@ describe("knowledge entry service", () => {
       client
     );
 
-    expect(result).toMatchObject({ status: "PUBLISHED", entryId: "knowledge-entry-1" });
+    expect(result).toMatchObject({
+      status: "PUBLISHED",
+      entryId: "knowledge-entry-1",
+      entryVersion: 6
+    });
     expect(client.knowledgeEntryReview.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ ipConfirmed: true, sanitizationConfirmed: true })
