@@ -401,7 +401,7 @@ describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
     if (capability === "DEGRADED") {
       expect(result.warningCode).toBe("SEARCH_DEGRADED");
     } else {
-      expect(result.warningCode).toBeUndefined();
+      expect(result.warningCode).toBeNull();
     }
     expect(result.items).toContainEqual(
       expect.objectContaining({ entryCode: `KNOW.SEARCH.${suffix}`.toUpperCase() })
