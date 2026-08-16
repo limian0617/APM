@@ -52,6 +52,7 @@ function errorText(value: string, maximum: number): string {
 }
 
 async function databaseNow(transaction: Prisma.TransactionClient): Promise<Date> {
+  await transaction.$executeRawUnsafe("SET LOCAL TIME ZONE 'UTC'");
   const [clock] = await transaction.$queryRaw<DatabaseClock[]>`
     SELECT CURRENT_TIMESTAMP AS "now"
   `;
