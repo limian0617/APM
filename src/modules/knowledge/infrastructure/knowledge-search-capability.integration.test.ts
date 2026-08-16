@@ -26,6 +26,72 @@ const ids = {
 const sourceTemplateChecksum = "7".repeat(64);
 const snapshotChecksum = "8".repeat(64);
 
+type SearchStructureFacts = {
+  extensionAvailable: boolean;
+  indexOnTargetTable: boolean;
+  indexUsesGin: boolean;
+  indexUsesTrigram: boolean;
+  indexValid: boolean;
+  indexReady: boolean;
+  indexDefinitionCorrect: boolean;
+};
+
+async function readSearchStructureFacts(): Promise<SearchStructureFacts | undefined> {
+  const [facts] = await db.$queryRaw<SearchStructureFacts[]>`
+    WITH named_index AS (
+      SELECT
+        indexed_table_namespace.nspname AS indexed_table_schema,
+        indexed_table.relname AS indexed_table_name,
+        access_method.amname AS access_method_name,
+        opclass.opcname AS opclass_name,
+        index_meta.indisvalid,
+        index_meta.indisready,
+        index_meta.indnkeyatts,
+        pg_get_indexdef(index_class.oid, 1, true) AS first_key_definition
+      FROM pg_class index_class
+      INNER JOIN pg_namespace index_namespace
+        ON index_namespace.oid = index_class.relnamespace
+      INNER JOIN pg_index index_meta ON index_meta.indexrelid = index_class.oid
+      INNER JOIN pg_class indexed_table ON indexed_table.oid = index_meta.indrelid
+      INNER JOIN pg_namespace indexed_table_namespace
+        ON indexed_table_namespace.oid = indexed_table.relnamespace
+      INNER JOIN pg_am access_method ON access_method.oid = index_class.relam
+      LEFT JOIN pg_opclass opclass ON opclass.oid = index_meta.indclass[0]
+      WHERE index_namespace.nspname = 'public'
+        AND index_class.relname = 'knowledge_entry_versions_search_trgm_idx'
+    )
+    SELECT
+      EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS "extensionAvailable",
+      EXISTS (
+        SELECT 1 FROM named_index
+        WHERE indexed_table_schema = 'public'
+          AND indexed_table_name = 'knowledge_entry_versions'
+      ) AS "indexOnTargetTable",
+      EXISTS (SELECT 1 FROM named_index WHERE access_method_name = 'gin') AS "indexUsesGin",
+      EXISTS (SELECT 1 FROM named_index WHERE opclass_name = 'gin_trgm_ops') AS "indexUsesTrigram",
+      EXISTS (SELECT 1 FROM named_index WHERE indisvalid) AS "indexValid",
+      EXISTS (SELECT 1 FROM named_index WHERE indisready) AS "indexReady",
+      EXISTS (
+        SELECT 1 FROM named_index
+        WHERE indnkeyatts = 1
+          AND first_key_definition = 'normalized_keywords_text'
+      ) AS "indexDefinitionCorrect"
+  `;
+  return facts;
+}
+
+function hasUsableSearchStructure(facts: SearchStructureFacts | undefined): boolean {
+  return Boolean(
+    facts?.extensionAvailable &&
+    facts.indexOnTargetTable &&
+    facts.indexUsesGin &&
+    facts.indexUsesTrigram &&
+    facts.indexValid &&
+    facts.indexReady &&
+    facts.indexDefinitionCorrect
+  );
+}
+
 function connectionTarget(connectionUrl: string, variableName: string): string {
   let connection: URL;
   try {
@@ -366,6 +432,21 @@ async function seedPublishedKnowledge() {
 }
 
 describeDatabase("APM-104 PostgreSQL knowledge search capability", () => {
+  it("reports capability from the representative Chinese pg_trgm semantic probe after structural validation", async () => {
+    const facts = await readSearchStructureFacts();
+    const capability = await getKnowledgeSearchCapability(db);
+    if (!hasUsableSearchStructure(facts)) {
+      expect(capability).toBe("DEGRADED");
+      return;
+    }
+
+    const [probe] = await db.$queryRaw<Array<{ trigramUsable: boolean }>>`
+      SELECT '伺服 抖动 调参' OPERATOR(public.%) '伺服' AS "trigramUsable"
+    `;
+    expect(typeof probe?.trigramUsable).toBe("boolean");
+    expect(capability).toBe(probe?.trigramUsable ? "TRIGRAM" : "DEGRADED");
+  });
+
   it.skipIf(process.env.APM104_RESTRICTED_NO_EXTENSION !== "1")(
     "server reports DEGRADED only when the restricted gate proves pg_trgm is absent",
     async () => {

@@ -15,13 +15,33 @@ function capability(overrides: Record<string, boolean> = {}) {
   };
 }
 
+function semanticProbe(trigramUsable: boolean) {
+  return [{ trigramUsable }];
+}
+
 describe("knowledge search capability", () => {
-  it("reports TRIGRAM only when the extension and a usable target GIN trigram index are confirmed", async () => {
+  it("reports TRIGRAM only when structural facts and the representative Chinese semantic probe are confirmed", async () => {
     const client = {
-      $queryRaw: vi.fn(async () => [capability()])
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([capability()])
+        .mockResolvedValueOnce(semanticProbe(true))
     };
 
     await expect(getKnowledgeSearchCapability(client)).resolves.toEqual("TRIGRAM");
+    expect(client.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports DEGRADED when all structural facts exist but Chinese trigram semantics are unavailable", async () => {
+    const client = {
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([capability()])
+        .mockResolvedValueOnce(semanticProbe(false))
+    };
+
+    await expect(getKnowledgeSearchCapability(client)).resolves.toEqual("DEGRADED");
+    expect(client.$queryRaw).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -41,6 +61,7 @@ describe("knowledge search capability", () => {
     const client = { $queryRaw: vi.fn(async () => [capability(facts)]) };
 
     await expect(getKnowledgeSearchCapability(client)).resolves.toEqual("DEGRADED");
+    expect(client.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed instead of falsely advertising degraded search when the server probe fails", async () => {
@@ -52,5 +73,24 @@ describe("knowledge search capability", () => {
       code: "KNOWLEDGE_SEARCH_CAPABILITY_UNAVAILABLE",
       status: 503
     });
+  });
+
+  it.each([
+    ["fails", () => Promise.reject(new Error("semantic query failed"))],
+    ["returns no row", () => Promise.resolve([])],
+    ["returns a non-boolean value", () => Promise.resolve([{ trigramUsable: "true" }])]
+  ])("fails closed when the Chinese semantic probe %s", async (_label, semanticResponse) => {
+    const client = {
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([capability()])
+        .mockImplementationOnce(semanticResponse)
+    };
+
+    await expect(getKnowledgeSearchCapability(client)).rejects.toMatchObject({
+      code: "KNOWLEDGE_SEARCH_CAPABILITY_UNAVAILABLE",
+      status: 503
+    });
+    expect(client.$queryRaw).toHaveBeenCalledTimes(2);
   });
 });

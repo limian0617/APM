@@ -27,6 +27,10 @@ type CapabilityRow = {
   indexDefinitionCorrect: boolean;
 };
 
+type SemanticProbeRow = {
+  trigramUsable: boolean;
+};
+
 export async function getKnowledgeSearchCapability(
   client: CapabilityClient
 ): Promise<KnowledgeSearchCapability> {
@@ -84,15 +88,24 @@ export async function getKnowledgeSearchCapability(
     ) {
       throw new Error("knowledge search capability response is invalid");
     }
-    return capability.extensionAvailable &&
+    const structurallyUsable =
+      capability.extensionAvailable &&
       capability.indexOnTargetTable &&
       capability.indexUsesGin &&
       capability.indexUsesTrigram &&
       capability.indexValid &&
       capability.indexReady &&
-      capability.indexDefinitionCorrect
-      ? "TRIGRAM"
-      : "DEGRADED";
+      capability.indexDefinitionCorrect;
+    if (!structurallyUsable) return "DEGRADED";
+
+    const semanticRows = (await client.$queryRaw(Prisma.sql`
+      SELECT '伺服 抖动 调参' OPERATOR(public.%) '伺服' AS "trigramUsable"
+    `)) as SemanticProbeRow[];
+    const semanticProbe = semanticRows[0];
+    if (!semanticProbe || typeof semanticProbe.trigramUsable !== "boolean") {
+      throw new Error("knowledge search semantic capability response is invalid");
+    }
+    return semanticProbe.trigramUsable ? "TRIGRAM" : "DEGRADED";
   } catch {
     throw new KnowledgeSearchCapabilityError(
       "KNOWLEDGE_SEARCH_CAPABILITY_UNAVAILABLE",
