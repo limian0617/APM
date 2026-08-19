@@ -30,7 +30,7 @@ export async function executeRetrospectiveCommand(input: {
   reload: () => Promise<void>;
 }): Promise<CommandResult> {
   try {
-    const response = await input.fetcher(input.endpoint, {
+    const response = await input.fetcher.call(globalThis, input.endpoint, {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": input.idempotencyKey },
       body: JSON.stringify(input.body)

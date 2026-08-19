@@ -104,6 +104,36 @@ describe("RetrospectivePageClient", () => {
     expect(reload).toHaveBeenCalledOnce();
   });
 
+  it("executeRetrospectiveCommand invokes a receiver-sensitive fetcher with globalThis", async () => {
+    const execute = (retrospectiveUi as Record<string, unknown>).executeRetrospectiveCommand;
+    expect(execute).toBeTypeOf("function");
+
+    let observedThis: unknown;
+    let reloadCount = 0;
+    async function receiverSensitiveFetcher(
+      this: unknown,
+      _input: RequestInfo | URL,
+      _init?: RequestInit
+    ) {
+      observedThis = this;
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      return Response.json({ id: "job-receiver-1" }, { status: 202 });
+    }
+    const result = await (execute as (input: any) => Promise<any>)({
+      fetcher: receiverSensitiveFetcher,
+      endpoint: "/api/projects/project-1/retrospectives",
+      body: { archiveVersionId: "archive-a" },
+      idempotencyKey: "retrospective-create-1",
+      reload: async () => {
+        reloadCount += 1;
+      }
+    });
+
+    expect(result.kind).toBe("SUCCESS");
+    expect(observedThis).toBe(globalThis);
+    expect(reloadCount).toBe(1);
+  });
+
   it("keeps command input and idempotency context on a 409 while exposing refresh and resubmit choices", async () => {
     const execute = (retrospectiveUi as Record<string, unknown>).executeRetrospectiveCommand;
     expect(execute).toBeTypeOf("function");
