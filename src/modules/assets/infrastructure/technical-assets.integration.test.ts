@@ -246,7 +246,7 @@ describeDatabase("APM-061 PostgreSQL technical asset masters", () => {
     );
     await expect(
       db.$executeRawUnsafe(
-        `TRUNCATE TABLE "asset_component_snapshots", "asset_release_versions", "asset_releases", "technical_asset_validations", "technical_asset_events", "technical_assets", "rnd_project_events", "rnd_projects"`
+        `TRUNCATE TABLE "project_asset_derivations", "project_asset_usages", "project_asset_references", "asset_component_snapshots", "asset_release_versions", "asset_releases", "technical_asset_validations", "technical_asset_events", "technical_assets", "rnd_project_events", "rnd_projects"`
       )
     ).rejects.toThrow(/cannot be truncated/u);
   });

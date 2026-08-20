@@ -80,6 +80,7 @@ export type AcceptanceReportSnapshot = {
     dueDate?: string | null;
   }>;
   gate: { status: string; warnings: string[]; residualItemIds: string[] };
+  assetUsage?: { frozenAt: string; usageSnapshotChecksum: string; snapshot: unknown };
   retestOfBatchId: string | null;
   frozenAt: string;
   rendererVersion: string;
@@ -166,6 +167,7 @@ export function buildAcceptanceReportSnapshot(input: SnapshotInput): AcceptanceR
       warnings: [...input.gate.warnings].sort(),
       residualItemIds: [...input.gate.residualItemIds].sort()
     },
+    ...(input.assetUsage ? { assetUsage: input.assetUsage } : {}),
     retestOfBatchId: input.retestOfBatchId ?? null,
     frozenAt: input.frozenAt,
     rendererVersion: input.rendererVersion
@@ -193,10 +195,30 @@ export function matchesExistingAcceptanceReportSnapshot(input: {
       ? (input.existingSnapshot as { frozenAt?: unknown }).frozenAt
       : null;
   if (typeof frozenAt !== "string" || Number.isNaN(new Date(frozenAt).getTime())) return false;
-  return (
-    calculateSnapshotChecksum({ ...input.currentSnapshot, frozenAt }) ===
-    input.existingSnapshotChecksum
-  );
+  const assetUsage = input.currentSnapshot.assetUsage;
+  const usageSnapshot =
+    assetUsage?.snapshot &&
+    typeof assetUsage.snapshot === "object" &&
+    !Array.isArray(assetUsage.snapshot)
+      ? { ...assetUsage.snapshot, frozenAt }
+      : assetUsage?.snapshot;
+  const checksum = calculateSnapshotChecksum({
+    ...input.currentSnapshot,
+    frozenAt,
+    ...(assetUsage
+      ? {
+          assetUsage: {
+            ...assetUsage,
+            frozenAt,
+            snapshot: usageSnapshot,
+            usageSnapshotChecksum: createHash("sha256")
+              .update(canonicalJson(usageSnapshot), "utf8")
+              .digest("hex")
+          }
+        }
+      : {})
+  });
+  return checksum === input.existingSnapshotChecksum;
 }
 
 export function calculateConfirmationChecksum(input: {

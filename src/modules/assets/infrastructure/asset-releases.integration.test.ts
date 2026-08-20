@@ -358,7 +358,7 @@ describeDatabase("APM-062 PostgreSQL asset Releases", () => {
     );
     await expect(
       db.$executeRawUnsafe(
-        `TRUNCATE TABLE "asset_component_snapshots", "asset_release_versions", "asset_releases"`
+        `TRUNCATE TABLE "project_asset_derivations", "project_asset_usages", "project_asset_references", "asset_component_snapshots", "asset_release_versions", "asset_releases"`
       )
     ).rejects.toThrow(/cannot be truncated/u);
   });

@@ -4,6 +4,18 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
+import {
+  publishAssetReleaseVersion,
+  createAssetRelease
+} from "@/modules/assets/application/asset-release-service";
+import {
+  createProjectAssetReference,
+  createProjectAssetUsage,
+  getAssetUsageSnapshotForAcceptance,
+  retireProjectAssetUsage
+} from "@/modules/assets/application/project-asset-usage-service";
+import { AUDIT_ACTIONS, AUDIT_OBJECT_TYPES } from "@/modules/audit/domain/vocabulary";
+import { publishControlledDocumentVersion } from "@/modules/documents/application/controlled-document-service";
 import { MemoryObjectStorage } from "@/modules/documents/infrastructure/memory-object-storage";
 import { sha256Bytes } from "@/modules/acceptance/infrastructure/acceptance-report-renderer";
 
@@ -28,6 +40,14 @@ const actorId = `acceptance-report-actor-${suffix}`;
 const projectId = `acceptance-report-project-${suffix}`;
 const otherProjectId = `acceptance-report-other-${suffix}`;
 const storage = new MemoryObjectStorage();
+const assetAuthorizationActor = {
+  id: actorId,
+  name: "验收报告集成测试人",
+  status: "ACTIVE" as const,
+  departmentId: "quality",
+  systemRoles: [],
+  grants: []
+};
 
 class TamperedReportStorage extends MemoryObjectStorage {
   override async readObject(input: { area: "CONTROLLED" | "QUARANTINE"; objectKey: string }) {
@@ -132,6 +152,148 @@ async function lockedBatch() {
   return { batch: locked.batch, result: result.revision };
 }
 
+async function recordPublishedProjectAssetUsage() {
+  const assetSuffix = randomUUID().slice(0, 8);
+  const checksum = createHash("sha256").update(`asset-usage-${assetSuffix}`).digest("hex");
+  const sourceFileId = `acceptance-report-source-file-${assetSuffix}`;
+  const sourceDocumentId = `acceptance-report-source-document-${assetSuffix}`;
+  const rndProjectId = `acceptance-report-rnd-${assetSuffix}`;
+  const technicalAssetId = `acceptance-report-asset-${assetSuffix}`;
+
+  await db.fileObject.create({
+    data: {
+      id: sourceFileId,
+      projectId,
+      uploadedById: actorId,
+      originalName: `asset-usage-${assetSuffix}.zip`,
+      declaredMimeType: "application/zip",
+      verifiedMimeType: "application/zip",
+      declaredSize: 1024n,
+      verifiedSize: 1024n,
+      sha256: checksum,
+      objectKey: randomUUID(),
+      storageArea: "CONTROLLED",
+      status: "AVAILABLE",
+      sensitivity: "INTERNAL",
+      scannedAt: new Date()
+    }
+  });
+  await db.controlledDocument.create({
+    data: {
+      id: sourceDocumentId,
+      projectId,
+      code: `AST-USAGE-${assetSuffix}`.toUpperCase(),
+      title: "项目资产使用来源",
+      createdById: actorId,
+      versions: {
+        create: {
+          version: 1,
+          sourceFileId,
+          sourceFileSha256: checksum,
+          sourceMimeType: "application/zip",
+          sourceFileSize: 1024n,
+          createdById: actorId
+        }
+      }
+    }
+  });
+  const sourceVersion = await db.controlledDocumentVersion.findFirstOrThrow({
+    where: { documentId: sourceDocumentId, projectId }
+  });
+  await publishControlledDocumentVersion({
+    projectId,
+    documentId: sourceDocumentId,
+    documentVersionId: sourceVersion.id,
+    version: 1,
+    reason: "发布项目资产使用来源",
+    actorId,
+    auditContext: auditContext(`asset-usage-source-${assetSuffix}`)
+  });
+  await db.rndProject.create({
+    data: {
+      id: rndProjectId,
+      code: `RND.ASSET.USAGE.${assetSuffix}`.toUpperCase(),
+      name: "项目资产使用研发项目",
+      ownerId: actorId,
+      createdById: actorId,
+      status: "IN_DEVELOPMENT"
+    }
+  });
+  await db.technicalAsset.create({
+    data: {
+      id: technicalAssetId,
+      rndProjectId,
+      assetNumber: `AST.USAGE.${assetSuffix}`.toUpperCase(),
+      assetType: "SOFTWARE",
+      name: "项目资产使用测试资产",
+      ownerId: actorId,
+      createdById: actorId,
+      status: "VALIDATED"
+    }
+  });
+  const createdRelease = await createAssetRelease({
+    technicalAssetId,
+    releaseCode: `rel-${assetSuffix}`,
+    releaseNotes: "项目资产使用精确 Release",
+    components: [
+      {
+        position: 1,
+        componentType: "SOFTWARE",
+        sourceProjectId: projectId,
+        sourceDocumentVersionId: sourceVersion.id,
+        sourceVersion: 1,
+        sourceStatus: "PUBLISHED",
+        sourceChecksum: checksum,
+        files: [
+          { fileId: sourceFileId, sha256: checksum, mimeType: "application/zip", size: 1024 }
+        ],
+        metadata: { packageChecksum: checksum }
+      }
+    ],
+    actorId,
+    auditContext: auditContext(`asset-usage-release-${assetSuffix}`)
+  });
+  const publishedRelease = await publishAssetReleaseVersion({
+    technicalAssetId,
+    releaseId: createdRelease.release.id,
+    releaseVersionId: createdRelease.releaseVersion.id,
+    version: createdRelease.resourceVersion,
+    releaseVersion: createdRelease.releaseVersion.revision,
+    actorId,
+    reason: "发布项目资产使用精确 Release",
+    auditContext: auditContext(`asset-usage-publish-${assetSuffix}`)
+  });
+  const component = publishedRelease.releaseVersion.components[0];
+  if (!component) throw new Error("published asset Release component missing");
+  const project = await db.project.findUniqueOrThrow({ where: { id: projectId } });
+  const reference = await createProjectAssetReference({
+    projectId,
+    assetReleaseId: createdRelease.release.id,
+    assetReleaseVersionId: publishedRelease.releaseVersion.id,
+    projectVersion: project.version,
+    actorId,
+    reason: "记录验收报告后发生的精确项目资产引用",
+    auditContext: auditContext(`asset-usage-reference-${assetSuffix}`),
+    authorizationActor: assetAuthorizationActor
+  });
+  const usage = await createProjectAssetUsage({
+    projectId,
+    referenceId: reference.reference.id,
+    referenceVersion: reference.resourceVersion,
+    usageKey: `asset-usage-${assetSuffix}`,
+    componentSnapshotId: component.id,
+    quantity: "1.000000",
+    configuration: { purpose: "FAT 验收使用", parameters: {}, notes: null },
+    scopeType: "PROJECT",
+    scopeId: projectId,
+    actorId,
+    reason: "记录验收报告后发生的实际使用",
+    auditContext: auditContext(`asset-usage-record-${assetSuffix}`),
+    authorizationActor: assetAuthorizationActor
+  });
+  return { usage, authorizationActor: assetAuthorizationActor };
+}
+
 describeDatabase("APM-102 controlled acceptance reports", () => {
   beforeAll(async () => {
     await db.user.create({
@@ -164,23 +326,25 @@ describeDatabase("APM-102 controlled acceptance reports", () => {
 
   it("freezes a LOCKED batch once, stores a controlled PDF, and keeps list reads non-sensitive", async () => {
     const { batch } = await lockedBatch();
+    const firstOperationId = `report-${randomUUID()}`;
     const generated = await generateAcceptanceReport({
       projectId,
       batchId: batch.id,
       version: batch.version,
       actorId,
       storage,
-      auditContext: auditContext(`report-${randomUUID()}`)
+      auditContext: auditContext(firstOperationId)
     });
     expect(generated).toMatchObject({ repeated: false, report: { status: "READY", projectId } });
     const reportId = (generated.report as unknown as { id: string }).id;
+    const replayOperationId = `report-repeat-${randomUUID()}`;
     const repeated = await generateAcceptanceReport({
       projectId,
       batchId: batch.id,
       version: batch.version,
       actorId,
       storage,
-      auditContext: auditContext(`report-repeat-${randomUUID()}`)
+      auditContext: auditContext(replayOperationId)
     });
     expect(repeated).toMatchObject({ repeated: true, report: { id: reportId } });
     const persisted = await db.acceptanceReport.findUniqueOrThrow({
@@ -226,6 +390,101 @@ describeDatabase("APM-102 controlled acceptance reports", () => {
         where: { aggregateId: reportId, eventType: "acceptance.report.generated" }
       })
     ).resolves.toBe(1);
+    await expect(
+      db.auditLog.count({
+        where: {
+          actorId,
+          action: AUDIT_ACTIONS.PROJECT_ASSET_USAGE_SNAPSHOT_READ,
+          objectType: AUDIT_OBJECT_TYPES.PROJECT_ASSET_USAGE_SNAPSHOT,
+          objectId: projectId,
+          operationId: `${replayOperationId}:historical-replay`
+        }
+      })
+    ).resolves.toBe(1);
+  });
+
+  it("reuses an immutable report when an active usage is retired after its frozenAt", async () => {
+    const { usage, authorizationActor } = await recordPublishedProjectAssetUsage();
+    const { batch } = await lockedBatch();
+    const first = await generateAcceptanceReport({
+      projectId,
+      batchId: batch.id,
+      version: batch.version,
+      actorId,
+      storage,
+      auditContext: auditContext(`report-asset-history-old-${randomUUID()}`)
+    });
+    const firstReport = first.report as unknown as { id: string };
+    const persistedFirst = await db.acceptanceReport.findUniqueOrThrow({
+      where: { id_projectId: { id: firstReport.id, projectId } }
+    });
+    const oldSnapshot = persistedFirst.snapshotJson as {
+      frozenAt: string;
+      assetUsage: { frozenAt: string; usageSnapshotChecksum: string };
+    };
+
+    await retireProjectAssetUsage({
+      projectId,
+      usageId: usage.usage.id,
+      version: usage.resourceVersion,
+      actorId,
+      reason: "旧报告冻结后退役实际使用",
+      auditContext: auditContext(`asset-usage-retire-${randomUUID()}`),
+      authorizationActor
+    });
+
+    const operationId = `report-asset-history-replay-${randomUUID()}`;
+    const repeated = await generateAcceptanceReport({
+      projectId,
+      batchId: batch.id,
+      version: batch.version,
+      actorId,
+      storage,
+      auditContext: auditContext(operationId)
+    });
+    expect(repeated).toMatchObject({ repeated: true, report: { id: firstReport.id } });
+    const current = await db.acceptanceReport.findUniqueOrThrow({
+      where: { id_projectId: { id: firstReport.id, projectId } }
+    });
+    expect(current).toMatchObject({
+      status: "READY",
+      snapshotChecksum: persistedFirst.snapshotChecksum
+    });
+
+    const reads = await db.auditLog.findMany({
+      where: {
+        actorId,
+        action: AUDIT_ACTIONS.PROJECT_ASSET_USAGE_SNAPSHOT_READ,
+        objectType: AUDIT_OBJECT_TYPES.PROJECT_ASSET_USAGE_SNAPSHOT,
+        objectId: projectId,
+        operationId: `${operationId}:historical-replay`
+      },
+      orderBy: { operationId: "asc" }
+    });
+    expect(reads).toHaveLength(1);
+    const historicalSnapshot = await getAssetUsageSnapshotForAcceptance({
+      projectId,
+      acceptanceType: "FAT",
+      scopeType: "PROJECT",
+      scopeId: projectId,
+      frozenAt: new Date(oldSnapshot.frozenAt)
+    });
+    const historicalEntries = (
+      historicalSnapshot.snapshot as {
+        entries: Array<{ version: number; usageVersion: number }>;
+      }
+    ).entries;
+    expect(historicalEntries).toEqual([expect.objectContaining({ version: 1, usageVersion: 1 })]);
+    expect(reads[0]?.afterJson).toMatchObject({
+      frozenAt: oldSnapshot.frozenAt,
+      usageSnapshotChecksum: historicalSnapshot.usageSnapshotChecksum
+    });
+    expect(historicalSnapshot.usageSnapshotChecksum).toBe(
+      oldSnapshot.assetUsage.usageSnapshotChecksum
+    );
+    await expect(
+      db.acceptanceReport.count({ where: { projectId, sourceBatchId: batch.id } })
+    ).resolves.toBe(1);
   });
 
   it("rejects publication when stored PDF bytes no longer match report and FileObject metadata", async () => {
@@ -249,6 +508,7 @@ describeDatabase("APM-102 controlled acceptance reports", () => {
 
   it("creates a new immutable report and document version without overwriting its superseded predecessor", async () => {
     const { batch } = await lockedBatch();
+    const secondOperationId = `report-second-version-${randomUUID()}`;
     const first = await generateAcceptanceReport({
       projectId,
       batchId: batch.id,
@@ -265,7 +525,7 @@ describeDatabase("APM-102 controlled acceptance reports", () => {
       supersedesReportId: firstReport.id,
       actorId,
       storage,
-      auditContext: auditContext(`report-second-version-${randomUUID()}`)
+      auditContext: auditContext(secondOperationId)
     });
     const secondReport = second.report as unknown as { id: string; supersedesReportId: string };
     const [persistedFirst, persistedSecond] = await Promise.all([
@@ -286,6 +546,17 @@ describeDatabase("APM-102 controlled acceptance reports", () => {
     expect(persistedSecond.controlledDocumentVersionId).not.toBe(
       persistedFirst.controlledDocumentVersionId
     );
+    await expect(
+      db.auditLog.count({
+        where: {
+          actorId,
+          action: AUDIT_ACTIONS.PROJECT_ASSET_USAGE_SNAPSHOT_READ,
+          objectType: AUDIT_OBJECT_TYPES.PROJECT_ASSET_USAGE_SNAPSHOT,
+          objectId: projectId,
+          operationId: `${secondOperationId}:current-authoritative`
+        }
+      })
+    ).resolves.toBe(1);
   });
 
   it("accepts only a precise ready report with scanned restricted evidence and appends corrections", async () => {

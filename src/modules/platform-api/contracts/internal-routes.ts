@@ -1275,6 +1275,51 @@ export const projectPublicLibraryReferenceQuerySchema = z.strictObject({
     .pipe(z.number().int().min(1).max(100))
 });
 
+export const projectAssetReferencePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  referenceId: identifierSchema
+});
+export const createProjectAssetReferenceBodySchema = z.strictObject({
+  assetReleaseId: identifierSchema,
+  assetReleaseVersionId: identifierSchema,
+  projectVersion: positiveVersionSchema,
+  reason: reasonSchema
+});
+export const projectAssetUsagePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  usageId: identifierSchema
+});
+export const projectAssetReferenceQuerySchema = z.strictObject({
+  status: z.enum(["ACTIVE", "RETIRED"]).optional(),
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
+export const projectAssetUsageQuerySchema = z.strictObject({
+  status: z.enum(["ACTIVE", "RETIRED"]).optional(),
+  cursor: identifierSchema.optional(),
+  limit: z
+    .string()
+    .regex(/^\d{1,3}$/u)
+    .optional()
+    .transform((value) => (value === undefined ? 50 : Number(value)))
+    .pipe(z.number().int().min(1).max(100))
+});
+export const projectAssetUsageSnapshotQuerySchema = z.strictObject({
+  acceptanceType: z.enum(["FAT", "SAT"]),
+  scopeType: z.enum(["PROJECT", "DELIVERY_UNIT", "MACHINE", "MODULE"]),
+  scopeId: identifierSchema,
+  frozenAt: z
+    .string()
+    .datetime({ offset: true })
+    .transform((value) => new Date(value))
+    .refine((value) => value.getTime() <= Date.now(), "frozenAt 不能位于未来。")
+});
+
 const rndProjectCodeSchema = z
   .string()
   .trim()
