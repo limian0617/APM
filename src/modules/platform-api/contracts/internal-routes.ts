@@ -1351,6 +1351,59 @@ export const technicalAssetValidationBodySchema = z.strictObject({
   reason: reasonSchema
 });
 
+const assetReleaseCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z][A-Z0-9_.-]{2,100}$/u);
+const assetReleaseComponentTypeSchema = z.enum([
+  "MECHANICAL_DRAWING",
+  "SOFTWARE",
+  "VALIDATION_REPORT"
+]);
+const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/iu);
+const assetReleaseFileSnapshotSchema = z.strictObject({
+  fileId: identifierSchema,
+  sha256: sha256Schema,
+  mimeType: z.string().trim().min(1).max(200),
+  size: z.number().int().nonnegative()
+});
+const assetReleaseComponentSnapshotSchema = z.strictObject({
+  position: z.number().int().min(1),
+  componentType: assetReleaseComponentTypeSchema,
+  sourceProjectId: identifierSchema,
+  sourceDrawingId: identifierSchema.nullable().optional(),
+  sourceDocumentVersionId: identifierSchema,
+  sourceVersion: positiveVersionSchema,
+  sourceStatus: z.literal("PUBLISHED"),
+  sourceChecksum: sha256Schema,
+  files: z.array(assetReleaseFileSnapshotSchema).min(1).max(100),
+  metadata: z.record(z.string(), z.unknown())
+});
+export const assetReleasePathSchema = z.strictObject({
+  technicalAssetId: identifierSchema,
+  releaseId: identifierSchema
+});
+export const assetReleaseCollectionPathSchema = z.strictObject({
+  technicalAssetId: identifierSchema
+});
+export const assetReleaseVersionPathSchema = z.strictObject({
+  technicalAssetId: identifierSchema,
+  releaseId: identifierSchema,
+  version: z.string().regex(/^\d+$/u).transform(Number).pipe(positiveVersionSchema)
+});
+export const createAssetReleaseBodySchema = z.strictObject({
+  releaseCode: assetReleaseCodeSchema,
+  releaseNotes: z.string().trim().max(4000).nullable().optional(),
+  components: z.array(assetReleaseComponentSnapshotSchema).min(1).max(1000),
+  reason: reasonSchema
+});
+export const publishAssetReleaseVersionBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  releaseVersion: positiveVersionSchema,
+  reason: reasonSchema
+});
+
 const drawingNumberSchema = z
   .string()
   .trim()

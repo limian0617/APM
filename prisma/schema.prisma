@@ -314,6 +314,7 @@ model FileObject {
   acceptanceReportPdfFiles         AcceptanceReport[]                     @relation("AcceptanceReportPdfFile")
   acceptanceConfirmationEvidence   AcceptanceConfirmationEvidence[]
   archiveManifestItems             ProjectArchiveManifestItem[]
+  assetComponentSnapshots          AssetComponentSnapshot[]          @relation("AssetComponentSourceFile")
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -1029,6 +1030,18 @@ enum TechnicalAssetValidationDecision {
   FAILED
 }
 
+enum AssetReleaseVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+}
+
+enum AssetComponentType {
+  MECHANICAL_DRAWING
+  SOFTWARE
+  VALIDATION_REPORT
+}
+
 enum ProjectInitializationStatus {
   LEGACY
   READY
@@ -1542,6 +1555,11 @@ enum AuditAction {
   TECHNICAL_ASSET_CREATED
   TECHNICAL_ASSET_STATUS_CHANGED
   TECHNICAL_ASSET_VALIDATED
+  ASSET_RELEASE_CREATED
+  ASSET_RELEASE_VERSION_DRAFTED
+  ASSET_RELEASE_VERSION_PUBLISHED
+  ASSET_RELEASE_VERSION_SUPERSEDED
+  ASSET_RELEASE_READ
   ISSUE_CREATED
   ISSUE_UPDATED
   ISSUE_STATUS_CHANGED
@@ -1646,6 +1664,9 @@ enum AuditObjectType {
   TECHNICAL_ASSET
   TECHNICAL_ASSET_EVENT
   TECHNICAL_ASSET_VALIDATION
+  ASSET_RELEASE
+  ASSET_RELEASE_VERSION
+  ASSET_COMPONENT_SNAPSHOT
   ISSUE
   ISSUE_RELATION
   COCKPIT_PROJECTION
@@ -1794,6 +1815,9 @@ model User {
   technicalAssetsCreated                  TechnicalAsset[]                       @relation("TechnicalAssetCreatedBy")
   technicalAssetEventsActed               TechnicalAssetEvent[]                  @relation("TechnicalAssetEventActor")
   technicalAssetValidationsActed          TechnicalAssetValidation[]             @relation("TechnicalAssetValidationValidator")
+  assetReleasesCreated                    AssetRelease[]                         @relation("AssetReleaseCreatedBy")
+  assetReleaseVersionsCreated             AssetReleaseVersion[]                  @relation("AssetReleaseVersionCreatedBy")
+  assetReleaseVersionsPublished           AssetReleaseVersion[]                  @relation("AssetReleaseVersionPublishedBy")
   issuesCreated                           Issue[]                                @relation("IssueCreatedBy")
   issuesUpdated                           Issue[]                                @relation("IssueUpdatedBy")
   issuesClosed                            Issue[]                                @relation("IssueClosedBy")
@@ -1998,6 +2022,7 @@ model Project {
   issueHistories                     IssueHistory[]
   issueRelations                     IssueRelation[]
   mechanicalDrawingProcessTags       MechanicalDrawingProcessTag[]
+  assetComponentSnapshots            AssetComponentSnapshot[]                   @relation("AssetComponentSourceProject")
   archive                            ProjectArchive?                            @relation("ProjectArchiveAggregate")
   archiveVersions                    ProjectArchiveVersion[]                    @relation("ProjectArchiveVersions")
   archiveManifestItems               ProjectArchiveManifestItem[]
@@ -2635,6 +2660,9 @@ model TechnicalAsset {
   createdBy    User                       @relation("TechnicalAssetCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   events       TechnicalAssetEvent[]
   validations  TechnicalAssetValidation[]
+  releases     AssetRelease[]
+  releaseVersions AssetReleaseVersion[]
+  componentSnapshots AssetComponentSnapshot[]
 
   @@unique([id, rndProjectId])
   @@index([rndProjectId, status, assetNumber])
@@ -2680,6 +2708,87 @@ model TechnicalAssetValidation {
   @@index([rndProjectId, validatedAt])
   @@index([validatorId, validatedAt])
   @@map("technical_asset_validations")
+}
+
+model AssetRelease {
+  id                String                @id @default(cuid())
+  technicalAssetId  String                @map("technical_asset_id")
+  releaseCode       String                @map("release_code")
+  currentVersionId  String?               @map("current_version_id")
+  version           Int                   @default(1)
+  createdById       String                @map("created_by_id")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+  technicalAsset    TechnicalAsset        @relation(fields: [technicalAssetId], references: [id], onDelete: Restrict)
+  currentVersion    AssetReleaseVersion?  @relation("AssetReleaseCurrentVersion", fields: [currentVersionId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  createdBy         User                  @relation("AssetReleaseCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  versions          AssetReleaseVersion[] @relation("AssetReleaseVersions")
+
+  @@unique([technicalAssetId, releaseCode])
+  @@unique([id, technicalAssetId])
+  @@unique([currentVersionId, technicalAssetId])
+  @@index([technicalAssetId, createdAt])
+  @@map("asset_releases")
+}
+
+model AssetReleaseVersion {
+  id                String                    @id @default(cuid())
+  releaseId         String                    @map("release_id")
+  technicalAssetId  String                    @map("technical_asset_id")
+  revision          Int
+  status            AssetReleaseVersionStatus @default(DRAFT)
+  releaseNotes      String?                   @map("release_notes")
+  snapshotChecksum  String                    @map("snapshot_checksum")
+  sourceWatermark   String                    @map("source_watermark")
+  createdById       String                    @map("created_by_id")
+  publishedById     String?                   @map("published_by_id")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  publishedAt       DateTime?                 @map("published_at")
+  supersededAt      DateTime?                 @map("superseded_at")
+  release           AssetRelease              @relation("AssetReleaseVersions", fields: [releaseId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  technicalAsset    TechnicalAsset            @relation(fields: [technicalAssetId], references: [id], onDelete: Restrict)
+  createdBy         User                      @relation("AssetReleaseVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy       User?                     @relation("AssetReleaseVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  currentForRelease AssetRelease?             @relation("AssetReleaseCurrentVersion")
+  components        AssetComponentSnapshot[]
+
+  @@unique([id, technicalAssetId])
+  @@unique([releaseId, revision])
+  @@index([technicalAssetId, status, createdAt])
+  @@index([publishedById, publishedAt])
+  @@map("asset_release_versions")
+}
+
+model AssetComponentSnapshot {
+  id                      String                          @id @default(cuid())
+  releaseVersionId        String                          @map("release_version_id")
+  technicalAssetId        String                          @map("technical_asset_id")
+  position                Int
+  componentType           AssetComponentType              @map("component_type")
+  sourceProjectId         String                          @map("source_project_id")
+  sourceDrawingId         String?                         @map("source_drawing_id")
+  sourceDocumentVersionId String                          @map("source_document_version_id")
+  sourceFileId            String                          @map("source_file_id")
+  sourceVersion           Int                             @map("source_version")
+  sourceStatus            ControlledDocumentVersionStatus @map("source_status")
+  sourceChecksum          String                          @map("source_checksum")
+  sourceFileSha256        String                          @map("source_file_sha256")
+  sourceFileMimeType      String                          @map("source_file_mime_type")
+  sourceFileSize          BigInt                          @map("source_file_size")
+  snapshotJson            Json                            @map("snapshot_json")
+  createdAt               DateTime                        @default(now()) @map("created_at")
+  releaseVersion          AssetReleaseVersion             @relation(fields: [releaseVersionId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  technicalAsset          TechnicalAsset                  @relation(fields: [technicalAssetId], references: [id], onDelete: Restrict)
+  sourceProject           Project                         @relation("AssetComponentSourceProject", fields: [sourceProjectId], references: [id], onDelete: Restrict)
+  sourceDrawing           MechanicalDrawing?              @relation("AssetComponentSourceDrawing", fields: [sourceDrawingId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
+  sourceDocumentVersion   ControlledDocumentVersion       @relation("AssetComponentSourceDocumentVersion", fields: [sourceDocumentVersionId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
+  sourceFile              FileObject                      @relation("AssetComponentSourceFile", fields: [sourceFileId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([releaseVersionId, position])
+  @@unique([id, technicalAssetId])
+  @@index([sourceProjectId, sourceDocumentVersionId])
+  @@index([sourceProjectId, sourceFileId])
+  @@map("asset_component_snapshots")
 }
 
 model ControlledDocument {
@@ -2744,6 +2853,7 @@ model ControlledDocumentVersion {
   materialRequirementRevisions  ProjectMaterialRequirementRevision[]
   acceptanceReports             AcceptanceReport[]
   acceptanceConfirmations       AcceptanceConfirmation[]
+  assetComponentSnapshots       AssetComponentSnapshot[]             @relation("AssetComponentSourceDocumentVersion")
 
   @@unique([documentId, version])
   @@unique([id, projectId])
@@ -2772,6 +2882,7 @@ model MechanicalDrawing {
   drawingSelectionItems        DrawingSelectionItem[]
   importItems                  MechanicalDrawingImportItem[]        @relation("ConfirmedMechanicalDrawing")
   materialRequirementRevisions ProjectMaterialRequirementRevision[] @relation("RequirementDrawing")
+  assetComponentSnapshots      AssetComponentSnapshot[]             @relation("AssetComponentSourceDrawing")
 
   @@unique([id, projectId])
   @@unique([documentId, projectId])
