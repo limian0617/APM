@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/lib/db";
+import { createArchiveIntegrityHandler } from "@/modules/archives/application/archive-integrity-handler";
+import { AUDIT_ACTIONS } from "@/modules/audit/domain/vocabulary";
+import { MemoryObjectStorage } from "@/modules/documents/infrastructure/memory-object-storage";
+import type { JobExecution } from "@/modules/governance/contracts/jobs";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
@@ -49,6 +53,8 @@ describeDatabase("APM-054 archive persistence", () => {
             snapshotJson: { sourceCount: 1 },
             externalPublicationApplicability: "NOT_APPLICABLE",
             externalPublicationReason: "外部供应商包未在本工作包实现。",
+            archiveSourceFormulaVersion: "V1",
+            retrospectiveInputApplicability: "NOT_APPLICABLE",
             createdById: ids.user,
             manifestItems: {
               create: {
@@ -132,6 +138,153 @@ describeDatabase("APM-054 archive persistence", () => {
         where: { id: ids.result },
         data: { failureMessage: "changed" }
       })
+    ).rejects.toBeTruthy();
+  });
+
+  it("persists one terminal append-only integrity result and leaves a replay as a no-op", async () => {
+    const handlerVersionId = `archive-handler-version-${suffix}`;
+    const handlerItemId = `archive-handler-item-${suffix}`;
+    const handlerJobId = `archive-handler-job-${suffix}`;
+    const handler = createArchiveIntegrityHandler({
+      storage: new MemoryObjectStorage(),
+      client: db
+    });
+
+    await db.projectArchiveVersion.create({
+      data: {
+        id: handlerVersionId,
+        archiveId: ids.archive,
+        projectId: ids.project,
+        version: 2,
+        status: "READY",
+        manifestChecksum: "1".repeat(64),
+        sourceWatermark: "2".repeat(64),
+        snapshotJson: { sourceCount: 1 },
+        externalPublicationApplicability: "NOT_APPLICABLE",
+        externalPublicationReason: "外部供应商包未在本工作包实现。",
+        archiveSourceFormulaVersion: "V1",
+        retrospectiveInputApplicability: "NOT_APPLICABLE",
+        createdById: ids.user,
+        manifestItems: {
+          create: {
+            id: handlerItemId,
+            position: 0,
+            sourceType: "ACCEPTANCE_BATCH",
+            sourceId: `handler-batch-${suffix}`,
+            sourceVersion: "LOCKED:1",
+            sourceChecksum: "3".repeat(64),
+            snapshotJson: { acceptanceType: "SAT" }
+          }
+        }
+      }
+    });
+    const persistentJob = await db.persistentJob.create({
+      data: {
+        id: handlerJobId,
+        jobType: "archive.integrity.check",
+        payload: { projectId: ids.project, archiveVersionId: handlerVersionId },
+        payloadHash: "4".repeat(64),
+        idempotencyKey: `archive-handler-check-${suffix}`,
+        maxAttempts: 3
+      }
+    });
+    const job: JobExecution = {
+      id: persistentJob.id,
+      jobType: persistentJob.jobType,
+      payload: { projectId: ids.project, archiveVersionId: handlerVersionId },
+      payloadHash: persistentJob.payloadHash,
+      idempotencyKey: persistentJob.idempotencyKey,
+      traceId: "1".repeat(32),
+      attemptId: `archive-handler-attempt-${suffix}`,
+      attemptNumber: 1,
+      maxAttempts: persistentJob.maxAttempts,
+      isReplay: false,
+      workerId: `archive-handler-worker-${suffix}`
+    };
+
+    await handler(job);
+
+    const checks = await db.projectArchiveIntegrityCheck.findMany({
+      where: { jobId: persistentJob.id },
+      include: { results: { orderBy: { manifestItemId: "asc" } } }
+    });
+    expect(checks).toHaveLength(1);
+    const [check] = checks;
+    expect(check).toBeDefined();
+    expect(check?.status).toBe("PASSED");
+    expect(check?.resultChecksum).toMatch(/^[0-9a-f]{64}$/);
+    expect(check?.resultChecksum).not.toBe("0".repeat(64));
+    expect(check?.results).toEqual([
+      expect.objectContaining({ manifestItemId: handlerItemId, status: "NOT_APPLICABLE" })
+    ]);
+
+    const completedVersion = await db.projectArchiveVersion.findUniqueOrThrow({
+      where: { id: handlerVersionId }
+    });
+    expect(completedVersion.status).toBe("READY");
+    expect(
+      await db.auditLog.count({
+        where: {
+          action: AUDIT_ACTIONS.PROJECT_ARCHIVE_INTEGRITY_CHECKED,
+          objectId: check?.id
+        }
+      })
+    ).toBe(1);
+    expect(
+      await db.outboxEvent.count({
+        where: { eventType: "archive.integrity.checked", idempotencyKey: `${check?.id}:completed` }
+      })
+    ).toBe(1);
+
+    const beforeReplay = {
+      checks: await db.projectArchiveIntegrityCheck.count({ where: { jobId: persistentJob.id } }),
+      results: await db.projectArchiveIntegrityItemResult.count({
+        where: { integrityCheckId: check?.id }
+      }),
+      audits: await db.auditLog.count({
+        where: {
+          action: AUDIT_ACTIONS.PROJECT_ARCHIVE_INTEGRITY_CHECKED,
+          objectId: check?.id
+        }
+      }),
+      outbox: await db.outboxEvent.count({
+        where: { eventType: "archive.integrity.checked", idempotencyKey: `${check?.id}:completed` }
+      })
+    };
+    await handler(job);
+    expect({
+      checks: await db.projectArchiveIntegrityCheck.count({ where: { jobId: persistentJob.id } }),
+      results: await db.projectArchiveIntegrityItemResult.count({
+        where: { integrityCheckId: check?.id }
+      }),
+      audits: await db.auditLog.count({
+        where: {
+          action: AUDIT_ACTIONS.PROJECT_ARCHIVE_INTEGRITY_CHECKED,
+          objectId: check?.id
+        }
+      }),
+      outbox: await db.outboxEvent.count({
+        where: { eventType: "archive.integrity.checked", idempotencyKey: `${check?.id}:completed` }
+      })
+    }).toEqual(beforeReplay);
+
+    await expect(
+      db.projectArchiveIntegrityCheck.update({
+        where: { id: check?.id },
+        data: { status: "FAILED" }
+      })
+    ).rejects.toBeTruthy();
+    await expect(
+      db.projectArchiveIntegrityCheck.delete({ where: { id: check?.id } })
+    ).rejects.toBeTruthy();
+    await expect(
+      db.projectArchiveIntegrityItemResult.update({
+        where: { id: check?.results[0]?.id },
+        data: { failureMessage: "changed" }
+      })
+    ).rejects.toBeTruthy();
+    await expect(
+      db.projectArchiveIntegrityItemResult.delete({ where: { id: check?.results[0]?.id } })
     ).rejects.toBeTruthy();
   });
 });

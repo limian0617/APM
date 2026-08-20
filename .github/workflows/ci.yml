@@ -36,7 +36,12 @@ jobs:
       - run: npm run lint
       - run: npm run db:generate
       - run: npm run db:validate
-      - run: npm run db:migrate:deploy
+      - name: APM-104 empty database replay
+        run: |
+          npm run db:migrate:deploy
+          npm run test -- src/modules/archives/infrastructure/apm-054-to-apm-104-upgrade.integration.test.ts src/modules/archives/infrastructure/project-archive.integration.test.ts src/modules/projects/application/project-close-service.integration.test.ts src/modules/retrospectives/application/project-retrospective-service.integration.test.ts src/modules/knowledge/infrastructure/knowledge-persistence.integration.test.ts src/modules/knowledge/infrastructure/knowledge-entry-version-mutation.integration.test.ts src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts src/modules/knowledge/application/knowledge-entry-service.integration.test.ts src/modules/knowledge/application/knowledge-reuse-service.integration.test.ts
+      - name: APM-104 normal pg_trgm replay
+        run: RUN_DATABASE_INTEGRATION=1 APM104_NORMAL_TRIGRAM=1 npm run test -- src/modules/knowledge/infrastructure/knowledge-search-capability.integration.test.ts
       - name: Validate APM-004 to UI baseline upgrade migration
         shell: bash
         run: |
@@ -294,6 +299,74 @@ jobs:
             npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
           DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm054?schema=public" \
             npm run db:migrate:deploy
+      - name: APM-054 to APM-104 upgrade replay
+        shell: bash
+        run: |
+          export PGPASSWORD=apm
+          createdb -h localhost -U apm apm_upgrade_apm104
+          upgrade_root="$RUNNER_TEMP/apm-upgrade-apm104-$GITHUB_RUN_ID"
+          mkdir -p "$upgrade_root/prisma/migrations"
+          cp prisma/schema.prisma "$upgrade_root/prisma/schema.prisma"
+          for migration in prisma/migrations/*; do
+            cp -R "$migration" "$upgrade_root/prisma/migrations/"
+            if [[ "$(basename "$migration")" == "20260811040000_apm_054_project_archives" ]]; then
+              break
+            fi
+          done
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm104?schema=public" \
+            npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
+          psql -h localhost -U apm -d apm_upgrade_apm104 -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO "users" ("id", "employee_no", "name", "updated_at")
+          VALUES ('apm104-upgrade-user', 'APM104-UPGRADE-USER', 'APM-054 upgrade fixture', CURRENT_TIMESTAMP);
+          INSERT INTO "projects" ("id", "code", "name", "status", "created_by_id", "updated_at")
+          VALUES ('apm104-upgrade-project', 'APM104-UPGRADE-PROJECT', 'APM-054 upgrade fixture project', 'DRAFT', 'apm104-upgrade-user', CURRENT_TIMESTAMP);
+          INSERT INTO "project_archives" ("id", "project_id")
+          VALUES ('apm104-upgrade-archive', 'apm104-upgrade-project');
+          INSERT INTO "project_archive_versions" (
+            "id", "archive_id", "project_id", "version", "status", "manifest_checksum", "source_watermark",
+            "snapshot_json", "external_publication_applicability", "external_publication_reason", "created_by_id"
+          ) VALUES (
+            'apm104-upgrade-archive-v1', 'apm104-upgrade-archive', 'apm104-upgrade-project', 1, 'READY',
+            '8318fcc9f74d07e7294f50c8f804f35ed90d7a17791faf9c5dc9bdb0018c3796',
+            '409c8d330a9d12ed3ca1cfefa6f48329984382f304a7937b1c37608736e635e6',
+            $json${"externalPublication":{"applicability":"NOT_APPLICABLE","reason":"外部供应商包能力尚未实现。"},"items":[{"fileMimeType":null,"fileObjectId":null,"fileSha256":null,"fileSize":null,"position":0,"snapshotJson":{"documentCode":"DOC-001","status":"PUBLISHED"},"sourceChecksum":"c09953d01f6858cb49cd562a28be25f551cbf9bd10d41fe13c4b1380e07bb3cd","sourceId":"document-version-1","sourceType":"CONTROLLED_DOCUMENT_VERSION","sourceVersion":"3"},{"fileMimeType":null,"fileObjectId":null,"fileSha256":null,"fileSize":null,"position":1,"snapshotJson":{"gateInstanceId":"legacy-g9","status":"APPROVED"},"sourceChecksum":"0b6f36e85a9508f283e4cbc64aa38cbef96f241ccafbd2c3296ff6d69b8951eb","sourceId":"legacy-g9-submission","sourceType":"GATE_SUBMISSION","sourceVersion":"1"}],"projectId":"archive-project-v1-fixture"}$json$::jsonb,
+            'NOT_APPLICABLE', 'APM-054 upgrade fixture', 'apm104-upgrade-user'
+          );
+          INSERT INTO "project_archive_manifest_items" (
+            "id", "project_id", "archive_version_id", "position", "source_type", "source_id", "source_version", "source_checksum", "snapshot_json"
+          ) VALUES
+            ('apm104-upgrade-item-0', 'apm104-upgrade-project', 'apm104-upgrade-archive-v1', 0, 'CONTROLLED_DOCUMENT_VERSION', 'document-version-1', '3', 'c09953d01f6858cb49cd562a28be25f551cbf9bd10d41fe13c4b1380e07bb3cd', '{"documentCode":"DOC-001","status":"PUBLISHED"}'::jsonb),
+            ('apm104-upgrade-item-1', 'apm104-upgrade-project', 'apm104-upgrade-archive-v1', 1, 'GATE_SUBMISSION', 'legacy-g9-submission', '1', '0b6f36e85a9508f283e4cbc64aa38cbef96f241ccafbd2c3296ff6d69b8951eb', '{"gateInstanceId":"legacy-g9","status":"APPROVED"}'::jsonb);
+          SQL
+          cp -R prisma/migrations/20260812010000_apm_104_retrospectives_knowledge_closure_policy "$upgrade_root/prisma/migrations/"
+          DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm104?schema=public" \
+            npx prisma migrate deploy --schema "$upgrade_root/prisma/schema.prisma"
+          APM104_UPGRADE_REPLAY=1 DATABASE_URL="postgresql://apm:apm@localhost:5432/apm_upgrade_apm104?schema=public" \
+            npm run test -- src/modules/archives/infrastructure/apm-054-to-apm-104-upgrade.integration.test.ts
+      - name: APM-104 restricted role no-extension replay
+        shell: bash
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGOWNER_USER: apm104_ci_owner
+          PGOWNER_PASSWORD: apm104_ci_owner
+        run: |
+          export PGPASSWORD=apm
+          psql -h localhost -U apm -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'apm104_ci_owner') THEN
+              CREATE ROLE apm104_ci_owner LOGIN PASSWORD 'apm104_ci_owner' CREATEDB CREATEROLE;
+            ELSE
+              ALTER ROLE apm104_ci_owner LOGIN PASSWORD 'apm104_ci_owner' CREATEDB CREATEROLE NOSUPERUSER;
+            END IF;
+          END
+          $$;
+          SQL
+          bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.sh
+          bash -n .github/scripts/apm-104-restricted-pg-trgm-replay.test.sh
+          bash .github/scripts/apm-104-restricted-pg-trgm-replay.test.sh
+          bash -Eeuo pipefail .github/scripts/apm-104-restricted-pg-trgm-replay.sh
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build

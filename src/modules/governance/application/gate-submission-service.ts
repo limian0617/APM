@@ -12,6 +12,7 @@ import {
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { createGateSubmissionDocumentReferences } from "@/modules/documents/application/controlled-document-service";
 import { DocumentReviewError } from "@/modules/documents/domain/document-review";
+import { assertExecutableGateDefinition } from "./gate-service";
 
 import {
   evaluateGateSubmissionDecision,
@@ -40,7 +41,9 @@ export type GateApprovalConfiguration = {
 const submissionInclude = {
   approvers: true,
   approvals: true,
-  documentReferences: { orderBy: [{ documentCode: "asc" }, { documentVersion: "asc" }] }
+  documentReferences: { orderBy: [{ documentCode: "asc" }, { documentVersion: "asc" }] },
+  gateInstance: { include: { gateDefinition: true } },
+  gateCheckSnapshot: true
 } satisfies Prisma.GateSubmissionInclude;
 
 type SubmissionWithFacts = Prisma.GateSubmissionGetPayload<{ include: typeof submissionInclude }>;
@@ -130,6 +133,10 @@ function submissionSnapshot(submission: SubmissionWithFacts) {
     gateSubmissionId: submission.id,
     gateInstanceId: submission.gateInstanceId,
     gateCheckSnapshotId: submission.gateCheckSnapshotId,
+    closurePolicyVersionId: submission.closurePolicyVersionId,
+    archiveSourceFormulaVersion:
+      submission.archiveSourceFormulaVersion === "V2" ? "ARCHIVE.SOURCE@2" : null,
+    closurePolicyChecksum: submission.closurePolicyChecksum,
     previousSubmissionId: submission.previousSubmissionId,
     sequence: submission.sequence,
     status: submission.status,
@@ -293,11 +300,28 @@ async function createSubmission(
       "必须先完成当前 Gate 检查才能提交申请。"
     );
   }
+  const authority = await assertExecutableGateDefinition(client, {
+    projectId: input.projectId,
+    definitionId: gateInstance.gateDefinitionId,
+    instanceId: gateInstance.id
+  });
   const checkSnapshot = await client.gateCheckSnapshot.findFirst({
     where: { gateInstanceId: gateInstance.id, sequence: gateInstance.checkRunSequence }
   });
   if (!checkSnapshot) {
     throw new GateSubmissionServiceError("GATE_CHECK_REQUIRED", "当前 Gate 检查结果不存在。");
+  }
+  if (
+    checkSnapshot.closurePolicyVersionId !== authority.closurePolicyVersionId ||
+    checkSnapshot.closurePolicyChecksum !== authority.closurePolicyChecksum ||
+    (checkSnapshot.archiveSourceFormulaVersion === "V2" ? "ARCHIVE.SOURCE@2" : null) !==
+      authority.archiveSourceFormulaVersion
+  ) {
+    throw new GateSubmissionServiceError(
+      "CLOSURE_POLICY_BINDING_MISMATCH",
+      "Gate 检查快照的关项策略绑定不一致。",
+      409
+    );
   }
   if (checkSnapshot.status === "HARD_FAILED") {
     throw new GateSubmissionServiceError(
@@ -348,7 +372,11 @@ async function createSubmission(
       approverRolesJson: approval.projectRoles as Prisma.InputJsonValue,
       submittedReason: input.reason,
       submittedById: input.actorId,
-      submittedAt: now
+      submittedAt: now,
+      closurePolicyVersionId: authority.closurePolicyVersionId,
+      archiveSourceFormulaVersion:
+        authority.archiveSourceFormulaVersion === "ARCHIVE.SOURCE@2" ? "V2" : null,
+      closurePolicyChecksum: authority.closurePolicyChecksum
     }
   });
   await client.gateSubmissionApprover.createMany({
@@ -462,6 +490,11 @@ export async function resubmitGateSubmission(
         "仅被驳回或撤回的申请可以重提。"
       );
     }
+    await assertExecutableGateDefinition(client, {
+      projectId: input.projectId,
+      definitionId: previous.gateInstance.gateDefinitionId,
+      instanceId: previous.gateInstanceId
+    });
     return createSubmission(client, {
       projectId: input.projectId,
       gateInstanceId: previous.gateInstanceId,
@@ -594,6 +627,28 @@ export async function decideGateSubmission(
       throw new GateSubmissionServiceError(
         "GATE_SUBMISSION_VERSION_CONFLICT",
         "Gate 申请已变化，请刷新后重试。"
+      );
+    }
+    const authority = await assertExecutableGateDefinition(client, {
+      projectId: input.projectId,
+      definitionId: current.gateInstance.gateDefinitionId,
+      instanceId: current.gateInstanceId
+    });
+    if (
+      current.closurePolicyVersionId !== authority.closurePolicyVersionId ||
+      current.closurePolicyChecksum !== authority.closurePolicyChecksum ||
+      (current.archiveSourceFormulaVersion === "V2" ? "ARCHIVE.SOURCE@2" : null) !==
+        authority.archiveSourceFormulaVersion ||
+      current.gateCheckSnapshot.closurePolicyVersionId !== authority.closurePolicyVersionId ||
+      current.gateCheckSnapshot.closurePolicyChecksum !== authority.closurePolicyChecksum ||
+      (current.gateCheckSnapshot.archiveSourceFormulaVersion === "V2"
+        ? "ARCHIVE.SOURCE@2"
+        : null) !== authority.archiveSourceFormulaVersion
+    ) {
+      throw new GateSubmissionServiceError(
+        "CLOSURE_POLICY_BINDING_MISMATCH",
+        "Gate 申请的关项策略绑定不一致。",
+        409
       );
     }
     const approver = current.approvers.find(({ userId }) => userId === input.actorId);

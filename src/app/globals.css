@@ -799,6 +799,139 @@ a {
   }
 }
 
+.governance-page,
+.knowledge-page {
+  width: min(100%, 960px);
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+}
+
+.governance-page h1,
+.knowledge-page h1 {
+  margin: 0;
+  color: #182230;
+  font-size: 26px;
+}
+
+.governance-page .eyebrow {
+  margin: 0 0 6px;
+  color: #1d5c8d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.governance-facts,
+.knowledge-page form,
+.knowledge-page li {
+  min-width: 0;
+  margin-top: 20px;
+  border-top: 2px solid #c8d4de;
+  padding-top: 14px;
+}
+
+.governance-facts h2,
+.knowledge-page h2 {
+  margin: 0;
+  color: #27394a;
+  font-size: 18px;
+}
+
+.governance-facts dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 12px 0 0;
+  background: #cfd9e2;
+}
+
+.governance-facts dl > div {
+  min-width: 0;
+  padding: 12px;
+  background: #fff;
+}
+
+.governance-facts dt {
+  color: #667788;
+  font-size: 12px;
+}
+
+.governance-facts dd {
+  margin: 5px 0 0;
+  color: #27394a;
+  overflow-wrap: anywhere;
+}
+
+.governance-actions,
+.knowledge-actions,
+.knowledge-page form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.governance-actions button,
+.knowledge-actions button,
+.knowledge-page button {
+  min-height: 42px;
+  border: 1px solid #1d5c8d;
+  border-radius: 4px;
+  padding: 8px 12px;
+  background: #1d5c8d;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+}
+
+.governance-actions button:focus-visible,
+.knowledge-actions button:focus-visible,
+.knowledge-page button:focus-visible,
+.knowledge-page input:focus-visible {
+  outline: 3px solid #16718d;
+  outline-offset: 2px;
+}
+
+.knowledge-page label {
+  display: grid;
+  min-width: min(100%, 260px);
+  gap: 5px;
+  color: #526476;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.knowledge-page input {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid #aebdca;
+  border-radius: 4px;
+  padding: 7px 9px;
+  font: inherit;
+}
+
+.knowledge-page ul {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (max-width: 760px) {
+  .governance-page,
+  .knowledge-page {
+    padding: 20px 16px 36px;
+  }
+  .governance-facts dl {
+    grid-template-columns: 1fr;
+  }
+  .governance-actions,
+  .knowledge-actions,
+  .knowledge-page form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 .archive-page {
   width: min(100%, 1120px);
   margin: 0 auto;

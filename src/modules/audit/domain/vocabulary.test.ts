@@ -265,6 +265,62 @@ describe("Gate audit vocabulary", () => {
   });
 });
 
+describe("APM-104 retrospective and knowledge audit vocabulary", () => {
+  it("declares append-only retrospective, closure and knowledge facts", () => {
+    expect(AUDIT_ACTIONS).toMatchObject({
+      PROJECT_RETROSPECTIVE_DRAFT_CREATED: "PROJECT_RETROSPECTIVE_DRAFT_CREATED",
+      PROJECT_RETROSPECTIVE_SUBMITTED: "PROJECT_RETROSPECTIVE_SUBMITTED",
+      PROJECT_RETROSPECTIVE_REVIEWED: "PROJECT_RETROSPECTIVE_REVIEWED",
+      PROJECT_CLOSURE_POLICY_UPGRADED: "PROJECT_CLOSURE_POLICY_UPGRADED",
+      PROJECT_CLOSURE_RECORD_CREATED: "PROJECT_CLOSURE_RECORD_CREATED",
+      KNOWLEDGE_ENTRY_VERSION_CREATED: "KNOWLEDGE_ENTRY_VERSION_CREATED",
+      KNOWLEDGE_ENTRY_REVIEWED: "KNOWLEDGE_ENTRY_REVIEWED",
+      KNOWLEDGE_ENTRY_PUBLISHED: "KNOWLEDGE_ENTRY_PUBLISHED",
+      KNOWLEDGE_REUSE_CONFIRMED: "KNOWLEDGE_REUSE_CONFIRMED",
+      KNOWLEDGE_REUSE_CORRECTED: "KNOWLEDGE_REUSE_CORRECTED"
+    });
+    expect(AUDIT_OBJECT_TYPES).toMatchObject({
+      PROJECT_RETROSPECTIVE: "PROJECT_RETROSPECTIVE",
+      PROJECT_RETROSPECTIVE_VERSION: "PROJECT_RETROSPECTIVE_VERSION",
+      PROJECT_CLOSURE_POLICY_VERSION: "PROJECT_CLOSURE_POLICY_VERSION",
+      PROJECT_CLOSURE_RECORD: "PROJECT_CLOSURE_RECORD",
+      KNOWLEDGE_ENTRY: "KNOWLEDGE_ENTRY",
+      KNOWLEDGE_ENTRY_VERSION: "KNOWLEDGE_ENTRY_VERSION",
+      KNOWLEDGE_REUSE_RECORD: "KNOWLEDGE_REUSE_RECORD"
+    });
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260812010000_apm_104_retrospectives_knowledge_closure_policy/migration.sql"
+      ),
+      "utf8"
+    );
+    for (const value of [
+      "PROJECT_RETROSPECTIVE_DRAFT_CREATED",
+      "PROJECT_RETROSPECTIVE_SUBMITTED",
+      "PROJECT_RETROSPECTIVE_REVIEWED",
+      "PROJECT_CLOSURE_POLICY_UPGRADED",
+      "PROJECT_CLOSURE_RECORD_CREATED",
+      "KNOWLEDGE_ENTRY_VERSION_CREATED",
+      "KNOWLEDGE_ENTRY_REVIEWED",
+      "KNOWLEDGE_ENTRY_PUBLISHED",
+      "KNOWLEDGE_REUSE_CONFIRMED",
+      "KNOWLEDGE_REUSE_CORRECTED",
+      "PROJECT_RETROSPECTIVE",
+      "PROJECT_RETROSPECTIVE_VERSION",
+      "PROJECT_CLOSURE_POLICY_VERSION",
+      "PROJECT_CLOSURE_RECORD",
+      "KNOWLEDGE_ENTRY",
+      "KNOWLEDGE_ENTRY_VERSION",
+      "KNOWLEDGE_REUSE_RECORD"
+    ]) {
+      expect(schema).toContain(value);
+      expect(migration).toContain(`ADD VALUE IF NOT EXISTS '${value}'`);
+    }
+  });
+});
+
 describe("procurement audit vocabulary", () => {
   it("exposes the APM-090A procurement facts without sensitive ERP finance fields", () => {
     expect(AUDIT_ACTIONS).toMatchObject({

@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
+import { getArchiveSourceFormulaAdapter } from "@/modules/archives/application/archive-source-formula-registry";
 import {
   publishProjectTemplate,
   publishTemplateComponent,
@@ -25,7 +26,7 @@ import {
   voidDocumentVersionRelation
 } from "@/modules/documents/application/controlled-document-service";
 
-import { createGateInstance, runGateChecks } from "../application/gate-service";
+import { createGateInstance, listProjectGates, runGateChecks } from "../application/gate-service";
 import {
   decideGateSubmission,
   resubmitGateSubmission,
@@ -38,11 +39,13 @@ import {
   submitResidualItemVerification,
   verifyResidualItem
 } from "../application/gate-conditional-release-service";
+import { buildClosurePolicyVersionFacts } from "../domain/project-closure-policy";
 import { GET as listProjectGatesRoute } from "../../../app/api/projects/[projectId]/gates/route";
 import { POST as createGateInstanceRoute } from "../../../app/api/projects/[projectId]/gate-instances/route";
 import { POST as runGateChecksRoute } from "../../../app/api/projects/[projectId]/gate-instances/[instanceId]/checks/route";
 import { POST as submitGateSubmissionRoute } from "../../../app/api/projects/[projectId]/gate-instances/[instanceId]/submissions/route";
 import { POST as approveGateSubmissionRoute } from "../../../app/api/projects/[projectId]/gate-submissions/[submissionId]/approve/route";
+import { POST as resubmitGateSubmissionRoute } from "../../../app/api/projects/[projectId]/gate-submissions/[submissionId]/resubmit/route";
 import { POST as conditionalReleaseRoute } from "../../../app/api/projects/[projectId]/gate-submissions/[submissionId]/conditional-release/route";
 import { POST as startResidualItemRoute } from "../../../app/api/projects/[projectId]/residual-items/[residualItemId]/start/route";
 import { POST as submitResidualItemVerificationRoute } from "../../../app/api/projects/[projectId]/residual-items/[residualItemId]/submit-verification/route";
@@ -768,16 +771,582 @@ describeDatabase("APM-031 PostgreSQL Gate instances and check snapshots", () => 
     expect(forbidden.status).toBe(403);
     expect(authorized.status).toBe(200);
     await expect(authorized.json()).resolves.toMatchObject({
-      definitions: expect.arrayContaining([
+      activeDefinitions: expect.arrayContaining([
         expect.objectContaining({ projectId: local.project.id, code: "G.PROJECT" })
-      ])
+      ]),
+      legacyDefinitions: []
     });
     const listResponse = await listProjectGatesRoute(readRequest(url, ids.admin), context);
-    const body = (await listResponse.json()) as { definitions: Array<{ projectId: string }> };
-    expect(body.definitions).toHaveLength(5);
-    expect(body.definitions).toEqual(
+    const body = (await listResponse.json()) as {
+      activeDefinitions: Array<{ projectId: string; executionState: string }>;
+      legacyDefinitions: Array<{ projectId: string }>;
+    };
+    expect(body.activeDefinitions).toHaveLength(5);
+    expect(body.legacyDefinitions).toEqual([]);
+    expect(body.activeDefinitions).toEqual(
       expect.not.arrayContaining([expect.objectContaining({ projectId: foreign.project.id })])
     );
+  });
+
+  it("keeps legacy G9 read-only and freezes one V2 closure policy tuple across its instance, check, and submission", async () => {
+    const facts = await seedProject("CLOSURE-V2-LIFECYCLE");
+    const sourceDefinition = await db.projectGateDefinition.findFirstOrThrow({
+      where: { projectId: facts.project.id, code: "G.PROJECT" }
+    });
+    const [legacyDefinition, v2Definition] = await db.$transaction(async (transaction) => {
+      const legacy = await transaction.projectGateDefinition.create({
+        data: {
+          projectId: facts.project.id,
+          sourceSnapshotComponentId: sourceDefinition.sourceSnapshotComponentId,
+          projectStageId: facts.stage.id,
+          revision: 1,
+          code: "G9",
+          name: "历史结项 Gate",
+          scope: "PROJECT",
+          definitionJson: { approval: { mode: "ALL", projectRoles: ["QUALITY"] } },
+          checkerBindingsJson: [{ code: "CLOSURE.ARCHIVE.G9", version: 1 }],
+          definitionChecksum: "1".repeat(64),
+          materializedById: ids.admin
+        }
+      });
+      const v2 = await transaction.projectGateDefinition.create({
+        data: {
+          projectId: facts.project.id,
+          sourceSnapshotComponentId: sourceDefinition.sourceSnapshotComponentId,
+          projectStageId: facts.stage.id,
+          revision: 2,
+          code: "G9",
+          name: "V2 结项 Gate",
+          scope: "PROJECT",
+          definitionJson: { approval: { mode: "ALL", projectRoles: ["QUALITY"] } },
+          checkerBindingsJson: [
+            { code: "CLOSURE.ARCHIVE.G9", version: 2 },
+            { code: "CLOSURE.RETROSPECTIVE.G9", version: 1 }
+          ],
+          definitionChecksum: "2".repeat(64),
+          materializedById: ids.admin
+        }
+      });
+      return [legacy, v2] as const;
+    });
+    const [legacyInstance, v2Instance] = await db.$transaction(async (transaction) => {
+      const legacy = await transaction.projectGateInstance.create({
+        data: {
+          projectId: facts.project.id,
+          gateDefinitionId: legacyDefinition.id,
+          projectStageId: facts.stage.id,
+          scope: "PROJECT",
+          createdById: ids.admin,
+          updatedById: ids.admin
+        }
+      });
+      const v2 = await transaction.projectGateInstance.create({
+        data: {
+          projectId: facts.project.id,
+          gateDefinitionId: v2Definition.id,
+          projectStageId: facts.stage.id,
+          scope: "PROJECT",
+          createdById: ids.admin,
+          updatedById: ids.admin
+        }
+      });
+      return [legacy, v2] as const;
+    });
+    const policyFacts = buildClosurePolicyVersionFacts({
+      projectId: facts.project.id,
+      sourceTemplateSnapshotId: (
+        await db.projectTemplateSnapshot.findUniqueOrThrow({
+          where: { projectId: facts.project.id }
+        })
+      ).id,
+      sourceGateDefinitionId: v2Definition.id,
+      checkerBindings: [
+        { code: "CLOSURE.ARCHIVE.G9", version: 2 },
+        { code: "CLOSURE.RETROSPECTIVE.G9", version: 1 }
+      ]
+    });
+    const policy = await db.projectClosurePolicy.create({
+      data: {
+        projectId: facts.project.id,
+        status: "ACTIVE",
+        createdById: ids.admin,
+        updatedById: ids.admin
+      }
+    });
+    const policyVersion = await db.projectClosurePolicyVersion.create({
+      data: {
+        projectId: facts.project.id,
+        policyId: policy.id,
+        versionNo: 1,
+        status: "ACTIVE",
+        sourceTemplateSnapshotId: policyFacts.sourceTemplateSnapshotId,
+        sourceGateDefinitionId: v2Definition.id,
+        archiveCheckerCode: policyFacts.archiveCheckerCode,
+        archiveCheckerVersion: policyFacts.archiveCheckerVersion,
+        retrospectiveCheckerCode: policyFacts.retrospectiveCheckerCode,
+        retrospectiveCheckerVersion: policyFacts.retrospectiveCheckerVersion,
+        archiveSourceFormulaVersion: "V2",
+        selfReferenceExclusionVersion: policyFacts.selfReferenceExclusionVersion,
+        bindingChecksum: policyFacts.bindingChecksum,
+        policyChecksum: policyFacts.policyChecksum,
+        effectiveAt: new Date(),
+        createdById: ids.admin
+      }
+    });
+    await db.$transaction(async (transaction) => {
+      await transaction.projectClosurePolicy.update({
+        where: { id: policy.id },
+        data: { currentVersionId: policyVersion.id, version: { increment: 1 } }
+      });
+      await transaction.projectGateInstance.update({
+        where: { id: v2Instance.id },
+        data: {
+          closurePolicyVersionId: policyVersion.id,
+          archiveSourceFormulaVersion: "V2",
+          closurePolicyChecksum: policyFacts.policyChecksum,
+          updatedById: ids.admin,
+          version: { increment: 1 }
+        }
+      });
+      await transaction.projectStage.update({
+        where: { id: facts.stage.id },
+        data: { status: "AWAITING_GATE", updatedById: ids.admin, version: { increment: 1 } }
+      });
+    });
+    const qualityMembership = await db.projectMember.create({
+      data: {
+        projectId: facts.project.id,
+        userId: ids.quality,
+        projectRole: "QUALITY",
+        departmentId: "engineering",
+        assignedById: ids.admin
+      }
+    });
+
+    await expect(
+      runGateChecks({
+        projectId: facts.project.id,
+        gateInstanceId: legacyInstance.id,
+        version: legacyInstance.version,
+        reason: "旧 G9 不可执行",
+        actorId: ids.projectManager,
+        auditContext: auditContext("closure-legacy-reject", facts.project.id)
+      })
+    ).rejects.toMatchObject({ code: "CLOSURE_POLICY_STALE", status: 409 });
+
+    const legacyCheckUrl = `http://localhost/api/projects/${facts.project.id}/gate-instances/${legacyInstance.id}/checks`;
+    const legacyCheckContext = {
+      params: Promise.resolve({ projectId: facts.project.id, instanceId: legacyInstance.id })
+    };
+    const legacyCheckResponse = await runGateChecksRoute(
+      commandRequest(
+        legacyCheckUrl,
+        { version: legacyInstance.version, reason: "旧 G9 HTTP 检查必须拒绝" },
+        "closure-legacy-http-check",
+        ids.projectManager
+      ),
+      legacyCheckContext
+    );
+    expect(legacyCheckResponse.status).toBe(409);
+    await expect(legacyCheckResponse.json()).resolves.toMatchObject({
+      error: { code: "CLOSURE_POLICY_STALE" }
+    });
+
+    const legacySnapshot = await db.gateCheckSnapshot.create({
+      data: {
+        projectId: facts.project.id,
+        gateInstanceId: legacyInstance.id,
+        sequence: 1,
+        status: "PASSED",
+        definitionSnapshot: { code: "G9", revision: 1 },
+        scopeSnapshot: { scope: "PROJECT" },
+        checkerBindingsJson: [{ code: "CLOSURE.ARCHIVE.G9", version: 1 }],
+        reason: "旧 G9 HTTP 命令拒绝夹具",
+        inputChecksum: "a".repeat(64),
+        resultChecksum: "b".repeat(64),
+        checkedById: ids.projectManager,
+        closurePolicyVersionId: null,
+        archiveSourceFormulaVersion: null,
+        closurePolicyChecksum: null
+      }
+    });
+    await db.projectGateInstance.update({
+      where: { id: legacyInstance.id },
+      data: { checkRunSequence: 1, version: { increment: 1 }, updatedById: ids.admin }
+    });
+    const legacyCurrentInstance = await db.projectGateInstance.findUniqueOrThrow({
+      where: { id: legacyInstance.id }
+    });
+    const legacySubmission = await db.$transaction(async (transaction) => {
+      const submission = await transaction.gateSubmission.create({
+        data: {
+          projectId: facts.project.id,
+          gateInstanceId: legacyInstance.id,
+          gateCheckSnapshotId: legacySnapshot.id,
+          sequence: 1,
+          status: "PENDING",
+          approvalMode: "ALL",
+          approverRolesJson: ["QUALITY"],
+          submittedReason: "旧 G9 HTTP 审批拒绝夹具",
+          submittedById: ids.projectManager,
+          closurePolicyVersionId: null,
+          archiveSourceFormulaVersion: null,
+          closurePolicyChecksum: null
+        }
+      });
+      await transaction.gateSubmissionApprover.create({
+        data: {
+          projectId: facts.project.id,
+          gateSubmissionId: submission.id,
+          userId: ids.quality,
+          membershipIdsJson: [qualityMembership.id],
+          projectRolesJson: ["QUALITY"]
+        }
+      });
+      return submission;
+    });
+    const legacySubmissionUrl = `http://localhost/api/projects/${facts.project.id}/gate-instances/${legacyInstance.id}/submissions`;
+    const legacySubmissionContext = {
+      params: Promise.resolve({ projectId: facts.project.id, instanceId: legacyInstance.id })
+    };
+    const legacySubmitResponse = await submitGateSubmissionRoute(
+      commandRequest(
+        legacySubmissionUrl,
+        { version: legacyCurrentInstance.version, reason: "旧 G9 HTTP 提交必须拒绝" },
+        "closure-legacy-http-submit",
+        ids.projectManager
+      ),
+      legacySubmissionContext
+    );
+    expect(legacySubmitResponse.status).toBe(409);
+    await expect(legacySubmitResponse.json()).resolves.toMatchObject({
+      error: { code: "CLOSURE_POLICY_STALE" }
+    });
+
+    const legacyApprovalUrl = `http://localhost/api/projects/${facts.project.id}/gate-submissions/${legacySubmission.id}/approve`;
+    const legacyApprovalContext = {
+      params: Promise.resolve({ projectId: facts.project.id, submissionId: legacySubmission.id })
+    };
+    const legacyApproveResponse = await approveGateSubmissionRoute(
+      commandRequest(
+        legacyApprovalUrl,
+        { version: legacySubmission.version, reason: "旧 G9 HTTP 审批必须拒绝" },
+        "closure-legacy-http-approve",
+        ids.quality
+      ),
+      legacyApprovalContext
+    );
+    expect(legacyApproveResponse.status).toBe(409);
+    await expect(legacyApproveResponse.json()).resolves.toMatchObject({
+      error: { code: "CLOSURE_POLICY_STALE" }
+    });
+
+    const rejectedLegacySubmission = await db.$transaction(async (transaction) => {
+      const submission = await transaction.gateSubmission.create({
+        data: {
+          projectId: facts.project.id,
+          gateInstanceId: legacyInstance.id,
+          gateCheckSnapshotId: legacySnapshot.id,
+          sequence: 2,
+          status: "REJECTED",
+          approvalMode: "ALL",
+          approverRolesJson: ["QUALITY"],
+          submittedReason: "旧 G9 HTTP 重提拒绝夹具",
+          submittedById: ids.projectManager,
+          decidedAt: new Date(),
+          closurePolicyVersionId: null,
+          archiveSourceFormulaVersion: null,
+          closurePolicyChecksum: null
+        }
+      });
+      await transaction.gateSubmissionApprover.create({
+        data: {
+          projectId: facts.project.id,
+          gateSubmissionId: submission.id,
+          userId: ids.quality,
+          membershipIdsJson: [qualityMembership.id],
+          projectRolesJson: ["QUALITY"]
+        }
+      });
+      return submission;
+    });
+    const legacyResubmitUrl = `http://localhost/api/projects/${facts.project.id}/gate-submissions/${rejectedLegacySubmission.id}/resubmit`;
+    const legacyResubmitContext = {
+      params: Promise.resolve({
+        projectId: facts.project.id,
+        submissionId: rejectedLegacySubmission.id
+      })
+    };
+    const legacyResubmitResponse = await resubmitGateSubmissionRoute(
+      commandRequest(
+        legacyResubmitUrl,
+        { version: rejectedLegacySubmission.version, reason: "旧 G9 HTTP 重提必须拒绝" },
+        "closure-legacy-http-resubmit",
+        ids.projectManager
+      ),
+      legacyResubmitContext
+    );
+    expect(legacyResubmitResponse.status).toBe(409);
+    await expect(legacyResubmitResponse.json()).resolves.toMatchObject({
+      error: { code: "CLOSURE_POLICY_STALE" }
+    });
+
+    const projectManagerMembership = await db.projectMember.findFirstOrThrow({
+      where: { projectId: facts.project.id, userId: ids.projectManager, leftAt: null }
+    });
+    const archive = await db.projectArchive.create({ data: { projectId: facts.project.id } });
+    const archiveA = await db.projectArchiveVersion.create({
+      data: {
+        archiveId: archive.id,
+        projectId: facts.project.id,
+        version: 1,
+        status: "READY",
+        manifestChecksum: "c".repeat(64),
+        sourceWatermark: "d".repeat(64),
+        snapshotJson: { phase: "A" },
+        externalPublicationApplicability: "NOT_APPLICABLE",
+        externalPublicationReason: "外部供应商包能力尚未实现。",
+        archiveSourceFormulaVersion: "V2",
+        retrospectiveInputApplicability: "APPLICABLE",
+        retrospectiveInputWatermarkVersion: "RETROSPECTIVE.INPUT@1",
+        retrospectiveInputSnapshotJson: { formulaVersion: "RETROSPECTIVE.INPUT@1" },
+        retrospectiveInputWatermark: "e".repeat(64),
+        createdById: ids.admin
+      }
+    });
+    const retrospective = await db.projectRetrospective.create({
+      data: {
+        projectId: facts.project.id,
+        version: 1,
+        createdById: ids.projectManager,
+        updatedById: ids.projectManager
+      }
+    });
+    const retrospectiveVersion = await db.projectRetrospectiveVersion.create({
+      data: {
+        projectId: facts.project.id,
+        retrospectiveId: retrospective.id,
+        versionNo: 1,
+        status: "APPROVED",
+        retrospectiveInputArchiveVersionId: archiveA.id,
+        retrospectiveInputManifestChecksum: archiveA.manifestChecksum,
+        retrospectiveInputSourceWatermark: archiveA.sourceWatermark,
+        retrospectiveInputWatermarkVersion: "RETROSPECTIVE.INPUT@1",
+        retrospectiveInputWatermark: "e".repeat(64),
+        projectSnapshotJson: { id: facts.project.id },
+        deliverySummaryJson: { summary: "已完成" },
+        successfulPracticesJson: { practices: ["冻结策略"] },
+        shortcomingsJson: { items: ["无"] },
+        improvementsJson: { actions: ["持续复核"] },
+        knowledgeDispositionJson: { disposition: "NONE" },
+        ipDeclarationJson: { sanitized: true },
+        contentChecksum: "f".repeat(64),
+        submittedById: ids.projectManager,
+        submittedAt: new Date(),
+        createdById: ids.projectManager,
+        contributions: {
+          create: {
+            scopeType: "PROJECT",
+            discipline: "QUALITY",
+            contributorMembershipId: projectManagerMembership.id,
+            factText: "复盘事实已冻结。",
+            impactText: "关项输入可验证。",
+            reusable: false,
+            required: true
+          }
+        },
+        reviews: {
+          create: {
+            retrospectiveId: retrospective.id,
+            decision: "APPROVED",
+            reason: "独立质量复核通过。",
+            reviewerId: ids.quality,
+            reviewedAt: new Date()
+          }
+        }
+      }
+    });
+    await db.projectRetrospective.update({
+      where: { id: retrospective.id },
+      data: {
+        currentVersionId: retrospectiveVersion.id,
+        latestApprovedVersionId: retrospectiveVersion.id,
+        version: { increment: 1 },
+        updatedById: ids.quality
+      }
+    });
+    const archiveFormula = getArchiveSourceFormulaAdapter("ARCHIVE.SOURCE@2");
+    const archiveBManifest = archiveFormula.buildManifest(
+      await archiveFormula.read({ client: db as never, projectId: facts.project.id })
+    );
+    const archiveB = await db.projectArchiveVersion.create({
+      data: {
+        archiveId: archive.id,
+        projectId: facts.project.id,
+        version: 2,
+        status: "READY",
+        manifestChecksum: archiveBManifest.manifestChecksum,
+        sourceWatermark: archiveBManifest.sourceWatermark,
+        snapshotJson: archiveBManifest.snapshotJson as never,
+        externalPublicationApplicability: "NOT_APPLICABLE",
+        externalPublicationReason: archiveBManifest.externalPublication.reason,
+        archiveSourceFormulaVersion: "V2",
+        retrospectiveInputApplicability: "APPLICABLE",
+        retrospectiveInputWatermarkVersion: "RETROSPECTIVE.INPUT@1",
+        retrospectiveInputSnapshotJson: { formulaVersion: "RETROSPECTIVE.INPUT@1" },
+        retrospectiveInputWatermark: archiveA.retrospectiveInputWatermark,
+        createdById: ids.admin,
+        manifestItems: {
+          create: archiveBManifest.items.map((item) => ({
+            position: item.position,
+            sourceType: item.sourceType as never,
+            sourceId: item.sourceId,
+            sourceVersion: item.sourceVersion,
+            sourceChecksum: item.sourceChecksum,
+            fileObjectId: item.fileObjectId,
+            fileSha256: item.fileSha256,
+            fileMimeType: item.fileMimeType,
+            fileSize: item.fileSize,
+            snapshotJson: item.snapshotJson as never
+          }))
+        }
+      }
+    });
+    const integrityJob = await db.persistentJob.create({
+      data: {
+        jobType: "archive.integrity.check",
+        payload: { projectId: facts.project.id, archiveVersionId: archiveB.id },
+        payloadHash: "0".repeat(64),
+        idempotencyKey: `closure-v2-integrity-${suffix}`,
+        maxAttempts: 3
+      }
+    });
+    await db.projectArchiveIntegrityCheck.create({
+      data: {
+        projectId: facts.project.id,
+        archiveVersionId: archiveB.id,
+        sequence: 1,
+        jobId: integrityJob.id,
+        status: "PASSED",
+        inputChecksum: archiveB.manifestChecksum,
+        resultChecksum: "1".repeat(64),
+        checkedAt: new Date()
+      }
+    });
+
+    const listing = await listProjectGates(facts.project.id);
+    expect(listing.activeDefinitions.filter((definition) => definition.code === "G9")).toEqual([
+      expect.objectContaining({
+        id: v2Definition.id,
+        executionState: "ACTIVE",
+        allowedActions: ["RUN_CHECKS", "SUBMIT", "RESUBMIT", "APPROVE"]
+      })
+    ]);
+    expect(listing.legacyDefinitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: legacyDefinition.id,
+          executionState: "LEGACY_HISTORY",
+          allowedActions: []
+        })
+      ])
+    );
+
+    const currentV2Instance = await db.projectGateInstance.findUniqueOrThrow({
+      where: { id: v2Instance.id }
+    });
+    expect(currentV2Instance).toMatchObject({
+      closurePolicyVersionId: policyVersion.id,
+      archiveSourceFormulaVersion: "V2",
+      closurePolicyChecksum: policyFacts.policyChecksum
+    });
+    const v2CheckUrl = `http://localhost/api/projects/${facts.project.id}/gate-instances/${v2Instance.id}/checks`;
+    const v2CheckContext = {
+      params: Promise.resolve({ projectId: facts.project.id, instanceId: v2Instance.id })
+    };
+    const v2CheckResponse = await runGateChecksRoute(
+      commandRequest(
+        v2CheckUrl,
+        { version: currentV2Instance.version, reason: "V2 G9 HTTP 检查" },
+        "closure-v2-http-check",
+        ids.projectManager
+      ),
+      v2CheckContext
+    );
+    expect(v2CheckResponse.status).toBe(200);
+    const v2CheckSnapshot = await db.gateCheckSnapshot.findUniqueOrThrow({
+      where: {
+        gateInstanceId_sequence: { gateInstanceId: v2Instance.id, sequence: 1 }
+      }
+    });
+    expect(v2CheckSnapshot).toMatchObject({
+      status: "PASSED",
+      closurePolicyVersionId: policyVersion.id,
+      archiveSourceFormulaVersion: "V2",
+      closurePolicyChecksum: policyFacts.policyChecksum
+    });
+    const readyInstance = await db.projectGateInstance.findUniqueOrThrow({
+      where: { id: v2Instance.id }
+    });
+    const v2SubmissionUrl = `http://localhost/api/projects/${facts.project.id}/gate-instances/${v2Instance.id}/submissions`;
+    const v2SubmissionResponse = await submitGateSubmissionRoute(
+      commandRequest(
+        v2SubmissionUrl,
+        { version: readyInstance.version, reason: "提交 V2 G9" },
+        "closure-v2-http-submit",
+        ids.projectManager
+      ),
+      { params: Promise.resolve({ projectId: facts.project.id, instanceId: v2Instance.id }) }
+    );
+    expect(v2SubmissionResponse.status).toBe(201);
+    const v2SubmissionBody = (await v2SubmissionResponse.json()) as {
+      submission: {
+        gateSubmissionId: string;
+        gateCheckSnapshotId: string;
+        closurePolicyVersionId: string;
+        archiveSourceFormulaVersion: string | null;
+        closurePolicyChecksum: string | null;
+        version: number;
+      };
+    };
+    expect(v2SubmissionBody.submission).toMatchObject({
+      gateCheckSnapshotId: v2CheckSnapshot.id,
+      closurePolicyVersionId: policyVersion.id,
+      archiveSourceFormulaVersion: "ARCHIVE.SOURCE@2",
+      closurePolicyChecksum: policyFacts.policyChecksum
+    });
+    expect(v2SubmissionBody.submission).toMatchObject({
+      closurePolicyVersionId: v2CheckSnapshot.closurePolicyVersionId,
+      closurePolicyChecksum: v2CheckSnapshot.closurePolicyChecksum
+    });
+    const v2ApprovalResponse = await approveGateSubmissionRoute(
+      commandRequest(
+        `http://localhost/api/projects/${facts.project.id}/gate-submissions/${v2SubmissionBody.submission.gateSubmissionId}/approve`,
+        {
+          version: v2SubmissionBody.submission.version,
+          reason: "V2 G9 HTTP 审批"
+        },
+        "closure-v2-http-approve",
+        ids.quality
+      ),
+      {
+        params: Promise.resolve({
+          projectId: facts.project.id,
+          submissionId: v2SubmissionBody.submission.gateSubmissionId
+        })
+      }
+    );
+    expect(v2ApprovalResponse.status).toBe(200);
+    await expect(
+      db.gateSubmission.findUniqueOrThrow({
+        where: { id: v2SubmissionBody.submission.gateSubmissionId }
+      })
+    ).resolves.toMatchObject({
+      status: "APPROVED",
+      closurePolicyVersionId: policyVersion.id,
+      archiveSourceFormulaVersion: "V2",
+      closurePolicyChecksum: policyFacts.policyChecksum
+    });
   });
 
   it("enforces internal Gate API authorization, hidden relations, conflicts, and replay", async () => {

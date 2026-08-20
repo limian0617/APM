@@ -15,7 +15,8 @@ export const archiveRecheckBodySchema = z.strictObject({
 export const archiveCloseBodySchema = z.strictObject({
   archiveVersionId: identifierSchema,
   g9SubmissionId: identifierSchema,
-  version: positiveVersionSchema
+  expectedProjectVersion: positiveVersionSchema,
+  operationId: identifierSchema
 });
 
 export const archiveVersionPathSchema = z.strictObject({

@@ -51,6 +51,13 @@ export type ProjectArchiveManifest = {
   snapshotJson: JsonValue;
 };
 
+export type ArchiveManifestBuild = ProjectArchiveManifest;
+
+export type ArchiveSourceFacts = {
+  projectId: string;
+  items: readonly ArchiveManifestSourceInput[];
+};
+
 export class ArchiveManifestError extends Error {
   constructor(
     readonly code:
@@ -189,6 +196,39 @@ export function createProjectArchiveManifest(input: {
     manifestChecksum: payloadHash(snapshotJson).hash,
     sourceWatermark,
     snapshotJson
+  };
+}
+
+export function createProjectArchiveManifestV2(input: {
+  projectId: string;
+  items: readonly ArchiveManifestSourceInput[];
+}): ProjectArchiveManifest {
+  const legacy = createProjectArchiveManifest(input);
+  const archiveSourceFormulaVersion = "ARCHIVE.SOURCE@2" as const;
+  const sourceWatermark = payloadHash({
+    archiveSourceFormulaVersion,
+    projectId: legacy.projectId,
+    sources: legacy.items.map((item) => ({
+      sourceType: item.sourceType,
+      sourceId: item.sourceId,
+      sourceVersion: item.sourceVersion,
+      sourceChecksum: item.sourceChecksum
+    }))
+  }).hash;
+  const snapshotJson = payloadHash({
+    archiveSourceFormulaVersion,
+    projectId: legacy.projectId,
+    externalPublication: legacy.externalPublication,
+    items: legacy.items.map((item) => ({
+      ...item,
+      fileSize: item.fileSize === null ? null : item.fileSize.toString()
+    }))
+  }).value;
+  return {
+    ...legacy,
+    sourceWatermark,
+    snapshotJson,
+    manifestChecksum: payloadHash(snapshotJson).hash
   };
 }
 

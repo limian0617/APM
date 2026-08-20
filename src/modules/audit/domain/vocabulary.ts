@@ -155,6 +155,16 @@ export const AUDIT_ACTIONS = {
   PROJECT_ARCHIVE_INTEGRITY_CHECK_REQUESTED: "PROJECT_ARCHIVE_INTEGRITY_CHECK_REQUESTED",
   PROJECT_ARCHIVE_INTEGRITY_CHECKED: "PROJECT_ARCHIVE_INTEGRITY_CHECKED",
   PROJECT_CLOSED: "PROJECT_CLOSED",
+  PROJECT_RETROSPECTIVE_DRAFT_CREATED: "PROJECT_RETROSPECTIVE_DRAFT_CREATED",
+  PROJECT_RETROSPECTIVE_SUBMITTED: "PROJECT_RETROSPECTIVE_SUBMITTED",
+  PROJECT_RETROSPECTIVE_REVIEWED: "PROJECT_RETROSPECTIVE_REVIEWED",
+  PROJECT_CLOSURE_POLICY_UPGRADED: "PROJECT_CLOSURE_POLICY_UPGRADED",
+  PROJECT_CLOSURE_RECORD_CREATED: "PROJECT_CLOSURE_RECORD_CREATED",
+  KNOWLEDGE_ENTRY_VERSION_CREATED: "KNOWLEDGE_ENTRY_VERSION_CREATED",
+  KNOWLEDGE_ENTRY_REVIEWED: "KNOWLEDGE_ENTRY_REVIEWED",
+  KNOWLEDGE_ENTRY_PUBLISHED: "KNOWLEDGE_ENTRY_PUBLISHED",
+  KNOWLEDGE_REUSE_CONFIRMED: "KNOWLEDGE_REUSE_CONFIRMED",
+  KNOWLEDGE_REUSE_CORRECTED: "KNOWLEDGE_REUSE_CORRECTED",
   RND_PROJECT_CREATED: "RND_PROJECT_CREATED",
   RND_PROJECT_STATUS_CHANGED: "RND_PROJECT_STATUS_CHANGED",
   TECHNICAL_ASSET_CREATED: "TECHNICAL_ASSET_CREATED",
@@ -257,6 +267,13 @@ export const AUDIT_OBJECT_TYPES = {
   PROJECT_ARCHIVE: "PROJECT_ARCHIVE",
   PROJECT_ARCHIVE_VERSION: "PROJECT_ARCHIVE_VERSION",
   PROJECT_ARCHIVE_INTEGRITY_CHECK: "PROJECT_ARCHIVE_INTEGRITY_CHECK",
+  PROJECT_RETROSPECTIVE: "PROJECT_RETROSPECTIVE",
+  PROJECT_RETROSPECTIVE_VERSION: "PROJECT_RETROSPECTIVE_VERSION",
+  PROJECT_CLOSURE_POLICY_VERSION: "PROJECT_CLOSURE_POLICY_VERSION",
+  PROJECT_CLOSURE_RECORD: "PROJECT_CLOSURE_RECORD",
+  KNOWLEDGE_ENTRY: "KNOWLEDGE_ENTRY",
+  KNOWLEDGE_ENTRY_VERSION: "KNOWLEDGE_ENTRY_VERSION",
+  KNOWLEDGE_REUSE_RECORD: "KNOWLEDGE_REUSE_RECORD",
   RND_PROJECT: "RND_PROJECT",
   RND_PROJECT_EVENT: "RND_PROJECT_EVENT",
   TECHNICAL_ASSET: "TECHNICAL_ASSET",
@@ -673,6 +690,63 @@ export const ACCEPTANCE_CONFIRMATION_AUDIT_FIELDS = [
   "reason"
 ] as const;
 
+export const PROJECT_RETROSPECTIVE_AUDIT_FIELDS = [
+  "projectId",
+  "retrospectiveId",
+  "retrospectiveVersionId",
+  "archiveVersionId",
+  "versionNo",
+  "status",
+  "contentChecksum",
+  "retrospectiveInputWatermark",
+  "decision",
+  "reviewerId",
+  "reason",
+  "version"
+] as const;
+
+export const KNOWLEDGE_ENTRY_AUDIT_FIELDS = [
+  "knowledgeEntryId",
+  "knowledgeVersionId",
+  "sourceProjectId",
+  "finalArchiveVersionId",
+  "retrospectiveInputArchiveVersionId",
+  "retrospectiveVersionId",
+  "contentChecksum",
+  "status",
+  "decision",
+  "reason"
+] as const;
+
+export const KNOWLEDGE_REUSE_AUDIT_FIELDS = [
+  "reuseRecordId",
+  "targetProjectId",
+  "knowledgeEntryId",
+  "knowledgeVersionId",
+  "correctionId",
+  "correctionType",
+  "reason"
+] as const;
+
+export const PROJECT_CLOSURE_POLICY_AUDIT_FIELDS = [
+  "projectId",
+  "closurePolicyId",
+  "closurePolicyVersionId",
+  "sourceTemplateSnapshotId",
+  "sourceGateDefinitionId",
+  "gateInstanceId",
+  "archiveCheckerCode",
+  "archiveCheckerVersion",
+  "retrospectiveCheckerCode",
+  "retrospectiveCheckerVersion",
+  "archiveSourceFormulaVersion",
+  "selfReferenceExclusionVersion",
+  "bindingChecksum",
+  "policyChecksum",
+  "version",
+  "reason"
+] as const;
+
 export const ISSUE_AUDIT_FIELDS = [
   "projectId",
   "issueId",
@@ -1020,7 +1094,9 @@ export const PROJECT_GATE_DEFINITION_AUDIT_FIELDS = [
   "sourceSnapshotComponentId",
   "projectStageId",
   "code",
+  "revision",
   "scope",
+  "checkerBindings",
   "definitionChecksum"
 ] as const;
 

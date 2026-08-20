@@ -94,6 +94,19 @@ describe("APM-031 Gate HTTP contracts", () => {
     });
   });
 
+  it.each([
+    "CLOSURE_POLICY_VERSION_REQUIRED",
+    "CLOSURE_POLICY_STALE",
+    "CLOSURE_POLICY_BINDING_MISMATCH"
+  ])("keeps %s as a typed 409 conflict", async (code) => {
+    const response = gateServiceErrorResponse(new GateServiceError(code, "冻结策略不一致", 409));
+
+    expect(response?.status).toBe(409);
+    await expect(response?.json()).resolves.toMatchObject({
+      error: { code, message: "冻结策略不一致" }
+    });
+  });
+
   it("requires every conditional release residual fact and rejects unknown fields", () => {
     expect(
       parseConditionalReleasePayload({

@@ -194,3 +194,64 @@ APM-007 establishes structured logs, trace propagation, operational metrics, saf
 and separate liveness/readiness checks.
 APM-009 establishes strict DTO parsing, correlated error contracts, transactional command
 idempotency, and the reserved external v1 API boundary.
+
+## APM-104 retrospective, closure, and reusable knowledge operations
+
+APM-104 makes the project retrospective, Archive A/B, G9 closure, and reusable-knowledge facts
+immutable and server-authoritative. A closure-capable project template may be published only when
+its PROJECT-scoped G9 definition is frozen with the exact checker bindings
+`CLOSURE.ARCHIVE.G9@2` and `CLOSURE.RETROSPECTIVE.G9@1`. The publication also binds the V2 archive
+source formula `ARCHIVE.SOURCE@2`; a missing, legacy, reordered, or checksum-mismatched binding is
+rejected with `CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID`. Existing templates remain read-only, and
+new projects materialize their own template snapshot, G9 definition revision, and exact closure
+policy version.
+
+### Development-only browser fixture
+
+The fixture endpoint `POST /api/dev/apm-104/browser-fixture` exists only to drive disposable,
+four-identity browser acceptance. It is unavailable in production, writes nothing unless
+`APM104_BROWSER_FIXTURE_ENABLED=true`, and queries `current_database()` before every provisioning
+attempt. The actual database name must match `apm104_fixture_…`; the connection string alone is not
+trusted. Cleanup is permitted only for that explicit disposable database prefix (and its dedicated
+test volume), never a general PostgreSQL instance.
+
+The returned one-time tokens are exchanged through `POST /api/dev/apm-104/identity`; each exchange
+sets an HttpOnly, `SameSite=Lax`, `Path=/` development cookie and consumes its token. The four
+identities are deliberately distinct:
+
+- `sourceManager` — project-manager role for the source project.
+- `retrospectiveReviewer` — quality role for independent retrospective review.
+- `knowledgeReviewer` — department-lead role for global knowledge review plus source-read checks.
+- `targetManager` — project-manager role for a target project reuse confirmation.
+
+The fixture starts with an open source project and a valid Archive A. It never pre-closes a project
+or pre-creates a knowledge entry. The required browser chain is: create retrospective, submit,
+independent review, generate Archive B, follow the existing multi-step G9 flow, close the project,
+create/publish knowledge, confirm target-project reuse, and append a correction. A production
+fixture or identity response must be HTTP 404.
+
+### PostgreSQL replay and knowledge-search gates
+
+GitHub Actions runs four distinct APM-104 database gates against PostgreSQL:
+
+1. `APM-104 empty database replay` deploys all migrations to an empty database and runs the
+   Archive, retrospective, close, knowledge publication/revocation/reuse/correction, and search
+   integration suites.
+2. `APM-104 normal pg_trgm replay` requires both `pg_trgm` and the valid GIN trigram index, then
+   proves the advertised capability is `TRIGRAM`.
+3. `APM-054 to APM-104 upgrade replay` deploys the APM-054 baseline first, then the sole APM-104
+   migration, preserving the frozen APM-054 reader and hash payload compatibility.
+4. `APM-104 restricted role no-extension replay` uses a unique non-superuser role with no
+   extension privilege. It runs the frozen legacy-DDL AWK marker contract, executes the migration,
+   proves unknown SQLSTATE is non-zero, and verifies no extension or trigram index is present.
+
+Search is `TRIGRAM` only when the extension and the ready, valid target-table GIN
+`gin_trgm_ops` index both exist. A confirmed absence is `DEGRADED`: requests still use `bounded ILIKE`
+(`query` at most 64 Unicode characters, page size at most 20, scan window at most 100) with
+stable `publishedAt`/ID ordering and `SEARCH_DEGRADED`. A failed or malformed capability probe is
+not degraded success; it is default-deny.
+
+On a developer machine, enable database integration only after applying migrations to a dedicated
+disposable PostgreSQL database with `RUN_DATABASE_INTEGRATION=1`. Windows without Bash or a local
+PostgreSQL service must record the replay, restricted-role, and full browser-chain gates as
+`SKIPPED`/`BLOCKED`; schema validation or static tests are not evidence of those runtime gates.

@@ -5,8 +5,8 @@ import {
   ProjectCloseError
 } from "@/modules/projects/application/project-close-service";
 import { archiveCloseBodySchema } from "@/modules/archives/contracts/archive-http";
+import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
-import { idempotentCommandResponse } from "@/modules/platform-api/application/idempotent-command";
 import {
   parseIdempotencyHeaders,
   parseJsonBody,
@@ -28,23 +28,25 @@ async function close(request: Request, context: RouteContext) {
     const path = parsePath(projectPathSchema, { projectId });
     const body = await parseJsonBody(request, archiveCloseBodySchema);
     const { idempotencyKey } = parseIdempotencyHeaders(request);
-    return await idempotentCommandResponse({
+    const result = await closeProject({
+      projectId: path.projectId,
+      archiveVersionId: body.archiveVersionId,
+      g9SubmissionId: body.g9SubmissionId,
+      expectedProjectVersion: body.expectedProjectVersion,
       actorId: guard.actor.id,
-      operation: "projects.close",
+      operationId: body.operationId,
       idempotencyKey,
-      request: { path, body },
-      execute: async (transaction) => ({
-        status: 200,
-        body: await closeProject({
-          projectId: path.projectId,
-          archiveVersionId: body.archiveVersionId,
-          g9SubmissionId: body.g9SubmissionId,
-          expectedProjectVersion: body.version,
-          actorId: guard.actor.id,
-          operationId: request.headers.get("x-request-id") ?? crypto.randomUUID(),
-          client: transaction
-        })
+      auditContext: auditContextFromRequest(request, {
+        actorId: guard.actor.id,
+        projectId: path.projectId,
+        departmentId: guard.project.departmentId,
+        operationId: body.operationId,
+        reason: "关闭项目"
       })
+    });
+    return Response.json(result, {
+      status: 200,
+      headers: { "idempotency-replayed": result.idempotent ? "true" : "false" }
     });
   } catch (error) {
     if (error instanceof ProjectCloseError)

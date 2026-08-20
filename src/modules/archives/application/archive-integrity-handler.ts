@@ -155,42 +155,32 @@ export function createArchiveIntegrityHandler(input: {
     });
     if (!version) throw new Error("归档版本不存在或不属于当前项目。");
     if (version.status === "FINALIZED") throw new Error("已固定归档版本不能重新检查。");
-    const existing = await client.projectArchiveIntegrityCheck.findUnique({
-      where: { jobId: job.id }
-    });
-    if (existing) return;
-
-    const check = await client.$transaction(async (transaction) => {
+    const shouldVerify = await client.$transaction(async (transaction) => {
+      await transaction.$queryRaw`
+        SELECT "id"
+        FROM "project_archive_versions"
+        WHERE "id" = ${payload.archiveVersionId} AND "project_id" = ${payload.projectId}
+        FOR UPDATE
+      `;
       const locked = await transaction.projectArchiveVersion.findFirst({
         where: { id: version.id, projectId: payload.projectId },
-        select: { id: true, status: true, manifestChecksum: true }
+        select: { id: true, status: true }
       });
       if (!locked || locked.status === "FINALIZED") throw new Error("归档版本不能执行完整性检查。");
+      const existing = await transaction.projectArchiveIntegrityCheck.findUnique({
+        where: { jobId: job.id },
+        select: { id: true }
+      });
+      if (existing) return false;
       if (locked.status !== "VERIFYING") {
         await transaction.projectArchiveVersion.update({
           where: { id: locked.id },
           data: { status: "VERIFYING" }
         });
       }
-      const last = await transaction.projectArchiveIntegrityCheck.findFirst({
-        where: { archiveVersionId: locked.id, projectId: payload.projectId },
-        orderBy: { sequence: "desc" },
-        select: { sequence: true }
-      });
-      return transaction.projectArchiveIntegrityCheck.create({
-        data: {
-          projectId: payload.projectId,
-          archiveVersionId: locked.id,
-          sequence: (last?.sequence ?? 0) + 1,
-          jobId: job.id,
-          status: "FAILED",
-          inputChecksum: locked.manifestChecksum,
-          resultChecksum: "0".repeat(64),
-          checkedAt: await databaseNow(transaction)
-        },
-        select: { id: true, sequence: true }
-      });
+      return true;
     });
+    if (!shouldVerify) return;
 
     const results = await verifyArchiveManifestItems({
       storage: input.storage,
@@ -213,29 +203,64 @@ export function createArchiveIntegrityHandler(input: {
     ).hash;
     const failed = results.some((result) => result.status === "FAILED");
     await client.$transaction(async (transaction) => {
-      await transaction.projectArchiveIntegrityItemResult.createMany({
-        data: results.map((result) => ({
-          projectId: payload.projectId,
-          integrityCheckId: check.id,
-          manifestItemId: result.itemId,
-          status: result.status,
-          actualSha256: result.actualSha256,
-          actualSize: result.actualSize,
-          failureCode: "failureCode" in result ? result.failureCode : null,
-          failureMessage: "failureMessage" in result ? result.failureMessage : null,
-          checkedAt: new Date()
-        }))
+      await transaction.$queryRaw`
+        SELECT "id"
+        FROM "project_archive_versions"
+        WHERE "id" = ${payload.archiveVersionId} AND "project_id" = ${payload.projectId}
+        FOR UPDATE
+      `;
+      const locked = await transaction.projectArchiveVersion.findFirst({
+        where: { id: payload.archiveVersionId, projectId: payload.projectId },
+        select: { id: true, status: true, manifestChecksum: true }
       });
-      await transaction.projectArchiveIntegrityCheck.update({
-        where: { id: check.id },
+      if (!locked || locked.status === "FINALIZED") throw new Error("归档版本不能执行完整性检查。");
+      const existing = await transaction.projectArchiveIntegrityCheck.findUnique({
+        where: { jobId: job.id },
+        select: { id: true }
+      });
+      if (existing) return;
+      if (locked.status !== "VERIFYING") {
+        await transaction.projectArchiveVersion.update({
+          where: { id: locked.id },
+          data: { status: "VERIFYING" }
+        });
+      }
+      const last = await transaction.projectArchiveIntegrityCheck.findFirst({
+        where: { archiveVersionId: locked.id, projectId: payload.projectId },
+        orderBy: { sequence: "desc" },
+        select: { sequence: true }
+      });
+      const checkedAt = await databaseNow(transaction);
+      const check = await transaction.projectArchiveIntegrityCheck.create({
         data: {
+          projectId: payload.projectId,
+          archiveVersionId: locked.id,
+          sequence: (last?.sequence ?? 0) + 1,
+          jobId: job.id,
           status: failed ? "FAILED" : "PASSED",
+          inputChecksum: locked.manifestChecksum,
           resultChecksum,
-          checkedAt: await databaseNow(transaction)
-        }
+          checkedAt
+        },
+        select: { id: true }
       });
+      if (results.length > 0) {
+        await transaction.projectArchiveIntegrityItemResult.createMany({
+          data: results.map((result) => ({
+            projectId: payload.projectId,
+            integrityCheckId: check.id,
+            manifestItemId: result.itemId,
+            status: result.status,
+            actualSha256: result.actualSha256,
+            actualSize: result.actualSize,
+            failureCode: "failureCode" in result ? result.failureCode : null,
+            failureMessage: "failureMessage" in result ? result.failureMessage : null,
+            checkedAt
+          }))
+        });
+      }
       await transaction.projectArchiveVersion.update({
-        where: { id: payload.archiveVersionId },
+        where: { id: locked.id },
         data: { status: failed ? "FAILED" : "READY" }
       });
       await writeAudit(transaction, {

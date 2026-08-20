@@ -49,6 +49,7 @@
     "vitest": "4.1.10"
   },
   "overrides": {
+    "deepmerge-ts": "8.0.1",
     "postcss": "8.5.25",
     "sharp": "0.35.3"
   }
