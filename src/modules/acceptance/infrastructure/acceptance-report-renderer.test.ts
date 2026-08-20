@@ -24,6 +24,36 @@ function pdfContainsEncodedText(pdf: Uint8Array, text: string): boolean {
 }
 
 describe("APM-102 controlled report renderer", () => {
+  it("binds the immutable asset-usage checksum when the frozen report snapshot contains one", () => {
+    const assetUsageChecksum = "b".repeat(64);
+    const snapshot = buildAcceptanceReportSnapshot({
+      project: { id: "project-1", name: "验收项目", code: "APM-001" },
+      batch: { id: "batch-1", acceptanceType: "FAT", scopeType: "PROJECT", scopeId: "project-1" },
+      template: { id: "template-1", version: 1, checksum: "a".repeat(64) },
+      items: [],
+      issues: [],
+      gate: { status: "PASSED", warnings: [], residualItemIds: [] },
+      assetUsage: {
+        frozenAt: "2026-08-09T10:00:00.000Z",
+        usageSnapshotChecksum: assetUsageChecksum,
+        snapshot: { entries: [{ usageId: "usage-1" }] }
+      },
+      retestOfBatchId: null,
+      frozenAt: "2026-08-09T10:00:00.000Z",
+      rendererVersion: ACCEPTANCE_REPORT_RENDERER_VERSION
+    });
+
+    const pdf = renderAcceptanceReportPdf({
+      snapshot,
+      reportNumber: "APM-FAT-batch-1",
+      reportVersion: 1,
+      snapshotChecksum: calculateSnapshotChecksum(snapshot),
+      controlledDocumentVersion: { code: "ACCEPTANCE-FAT-batch-1", version: 1 }
+    });
+
+    expect(pdfContainsEncodedText(pdf, `ASSET_USAGE_SHA256 ${assetUsageChecksum}`)).toBe(true);
+  });
+
   it("renders a deterministic controlled PDF with separate snapshot and document-version facts", () => {
     const snapshot = buildAcceptanceReportSnapshot({
       project: { id: "project-1", name: "验收项目", code: "APM-001" },

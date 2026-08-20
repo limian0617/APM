@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -130,6 +132,54 @@ describe("APM-102 acceptance report policy", () => {
         }
       })
     ).toThrowError(expect.objectContaining({ code: "CONFIRMATION_EVIDENCE_PROJECT_MISMATCH" }));
+  });
+
+  it("normalizes nested asset-usage frozen facts before reusing a report", () => {
+    const frozenAt = "2026-08-09T00:00:00.000Z";
+    const assetUsageSnapshot = {
+      acceptanceType: "FAT",
+      entries: [],
+      frozenAt,
+      projectId: "p-1",
+      scopeId: "p-1",
+      scopeType: "PROJECT"
+    };
+    const usageSnapshotChecksum = createHash("sha256")
+      .update(JSON.stringify(assetUsageSnapshot), "utf8")
+      .digest("hex");
+    const first = buildAcceptanceReportSnapshot({
+      project: { id: "p-1", name: "示例", code: "P-001" },
+      batch: { id: "b-1", acceptanceType: "FAT", scopeType: "PROJECT", scopeId: "p-1" },
+      template: { id: "tv-1", version: 2, checksum: "template-hash" },
+      items: [],
+      issues: [],
+      gate: { status: "NOT_RUN", warnings: [], residualItemIds: [] },
+      assetUsage: { frozenAt, snapshot: assetUsageSnapshot, usageSnapshotChecksum },
+      retestOfBatchId: null,
+      frozenAt,
+      rendererVersion: "pdf-v1"
+    });
+    const laterFrozenAt = "2026-08-09T01:00:00.000Z";
+    const laterAssetUsageSnapshot = { ...assetUsageSnapshot, frozenAt: laterFrozenAt };
+    const refreshed = buildAcceptanceReportSnapshot({
+      ...first,
+      assetUsage: {
+        frozenAt: laterFrozenAt,
+        snapshot: laterAssetUsageSnapshot,
+        usageSnapshotChecksum: createHash("sha256")
+          .update(JSON.stringify(laterAssetUsageSnapshot), "utf8")
+          .digest("hex")
+      },
+      frozenAt: laterFrozenAt
+    });
+
+    expect(
+      matchesExistingAcceptanceReportSnapshot({
+        existingSnapshot: first,
+        existingSnapshotChecksum: calculateSnapshotChecksum(first),
+        currentSnapshot: refreshed
+      })
+    ).toBe(true);
   });
 
   it("exposes only the versioned states and confirmation enums", () => {

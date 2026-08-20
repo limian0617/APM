@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   AcceptanceConfirmationDecision,
@@ -26,6 +26,7 @@ import {
   publishControlledDocumentVersion
 } from "@/modules/documents/application/controlled-document-service";
 import { STORAGE_AREAS, type ObjectStoragePort } from "@/modules/documents/contracts/file-storage";
+import { getAssetUsageSnapshotForAcceptance } from "@/modules/assets/application/project-asset-usage-service";
 
 import {
   ACCEPTANCE_CONFIRMATION_CHANNELS,
@@ -243,7 +244,8 @@ async function loadRetestChain(
 async function buildSnapshot(
   client: Prisma.TransactionClient,
   batch: Awaited<ReturnType<typeof loadLockedBatchFacts>>,
-  frozenAt: Date
+  frozenAt: Date,
+  readAudit?: { actorId: string; auditContext: AuditContext }
 ) {
   const revisionIds = batch.results
     .map((result) => result.revisions[0]?.id)
@@ -323,6 +325,22 @@ async function buildSnapshot(
     const ids = (evidence as { residualItemIds?: unknown }).residualItemIds;
     return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
   });
+  const assetUsageRead = await getAssetUsageSnapshotForAcceptance(
+    {
+      projectId: batch.projectId,
+      acceptanceType: batch.acceptanceType,
+      scopeType: batch.scopeType,
+      scopeId: batch.scopeId,
+      frozenAt,
+      ...(readAudit ? { readAudit } : {})
+    },
+    client
+  );
+  const assetUsage = {
+    frozenAt: assetUsageRead.frozenAt,
+    snapshot: assetUsageRead.snapshot,
+    usageSnapshotChecksum: assetUsageRead.usageSnapshotChecksum
+  };
   const snapshot = buildAcceptanceReportSnapshot({
     project: batch.project,
     batch: {
@@ -367,6 +385,7 @@ async function buildSnapshot(
         .map((result) => result.checkerCode),
       residualItemIds
     },
+    assetUsage,
     retestOfBatchId: batch.retestOfBatch?.id ?? null,
     frozenAt: frozenAt.toISOString(),
     rendererVersion: ACCEPTANCE_REPORT_RENDERER_VERSION
@@ -376,6 +395,30 @@ async function buildSnapshot(
     snapshotChecksum: calculateSnapshotChecksum(snapshot),
     retestChain,
     finalBatchId: retestChain.at(-1)!
+  };
+}
+
+export function snapshotReadAudit(
+  input: { actorId: string; auditContext: AuditContext },
+  phase: "historical-replay" | "current-authoritative"
+) {
+  const suffix = `:${phase}`;
+  const operationId = input.auditContext.operationId;
+  const derivedOperationId =
+    operationId && operationId.length + suffix.length > 191
+      ? `${operationId.slice(0, 191 - suffix.length - 17)}:${createHash("sha256")
+          .update(operationId)
+          .digest("hex")
+          .slice(0, 16)}${suffix}`
+      : operationId
+        ? `${operationId}${suffix}`
+        : null;
+  return {
+    actorId: input.actorId,
+    auditContext: {
+      ...input.auditContext,
+      operationId: derivedOperationId
+    }
   };
 }
 
@@ -429,22 +472,48 @@ export async function generateAcceptanceReport(
             409
           );
         }
-        const frozenAt = await databaseNow(client);
-        const facts = await buildSnapshot(client, batch, frozenAt);
         if (
           existing &&
           !input.supersedesReportId &&
-          matchesExistingAcceptanceReportSnapshot({
-            existingSnapshot: existing.snapshotJson,
-            existingSnapshotChecksum: existing.snapshotChecksum,
-            currentSnapshot: facts.snapshot
-          })
+          (() => {
+            const previousFrozenAt =
+              existing.snapshotJson &&
+              typeof existing.snapshotJson === "object" &&
+              "frozenAt" in existing.snapshotJson
+                ? (existing.snapshotJson as { frozenAt?: unknown }).frozenAt
+                : null;
+            return (
+              typeof previousFrozenAt === "string" &&
+              !Number.isNaN(new Date(previousFrozenAt).getTime())
+            );
+          })()
         ) {
-          return {
-            report: serializeReport(existing as unknown as Record<string, unknown>),
-            repeated: true
-          };
+          const previousFrozenAt = (existing.snapshotJson as { frozenAt: string }).frozenAt;
+          const replay = await buildSnapshot(
+            client,
+            batch,
+            new Date(previousFrozenAt),
+            snapshotReadAudit(input, "historical-replay")
+          );
+          if (
+            matchesExistingAcceptanceReportSnapshot({
+              existingSnapshot: existing.snapshotJson,
+              existingSnapshotChecksum: existing.snapshotChecksum,
+              currentSnapshot: replay.snapshot
+            })
+          )
+            return {
+              report: serializeReport(existing as unknown as Record<string, unknown>),
+              repeated: true
+            };
         }
+        const frozenAt = await databaseNow(client);
+        const facts = await buildSnapshot(
+          client,
+          batch,
+          frozenAt,
+          snapshotReadAudit(input, "current-authoritative")
+        );
         const reportNumber = `APM-${batch.acceptanceType}-${batch.id}`.toUpperCase();
         const latest = await client.acceptanceReport.findFirst({
           where: { projectId: input.projectId, reportNumber },

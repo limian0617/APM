@@ -153,3 +153,26 @@ export function parseIdempotencyHeaders(request: Request): { idempotencyKey: str
     idempotencyKey: "idempotency-key"
   });
 }
+
+export function parseIfMatchHeader(request: Request): number {
+  const raw = request.headers.get("if-match");
+  const match = raw?.trim().match(/^"?(\d+)"?$/u);
+  if (!match || Number(match[1]) < 1) {
+    throw new ApiContractError("VERSION_CONFLICT", "必须提供有效的 If-Match 资源版本。", 409, [
+      { field: "headers.if-match", code: "REQUIRED", message: "If-Match 必须是正整数资源版本。" }
+    ]);
+  }
+  return Number(match[1]);
+}
+
+export function assertIfMatchMatches(
+  headerVersion: number,
+  bodyVersion: number,
+  field: string
+): void {
+  if (headerVersion !== bodyVersion) {
+    throw new ApiContractError("VERSION_CONFLICT", `If-Match 与 ${field} 不一致。`, 409, [
+      { field: `body.${field}`, code: "CONFLICT", message: "请求体版本必须与 If-Match 一致。" }
+    ]);
+  }
+}

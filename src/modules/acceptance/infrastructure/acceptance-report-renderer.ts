@@ -42,6 +42,9 @@ export function renderAcceptanceReportPdf(input: {
     `GENERATED_AT ${input.snapshot.frozenAt}`,
     `RENDERER_VERSION ${input.snapshot.rendererVersion}`,
     `SNAPSHOT_SHA256 ${input.snapshotChecksum}`,
+    ...(input.snapshot.assetUsage
+      ? [`ASSET_USAGE_SHA256 ${input.snapshot.assetUsage.usageSnapshotChecksum}`]
+      : []),
     "最终PDF完整SHA-256以APM受控文档元数据和下载审计为准。",
     "确认凭证仅作为项目验收证据，不等同于法律电子签名。",
     `SUMMARY PASS=${input.snapshot.summary.passCount} FAIL=${input.snapshot.summary.failCount} NA=${input.snapshot.summary.naCount} RATE=${input.snapshot.summary.passRate ?? "NOT_CALCULABLE"}`,

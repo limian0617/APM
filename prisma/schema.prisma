@@ -315,6 +315,7 @@ model FileObject {
   acceptanceConfirmationEvidence   AcceptanceConfirmationEvidence[]
   archiveManifestItems             ProjectArchiveManifestItem[]
   assetComponentSnapshots          AssetComponentSnapshot[]          @relation("AssetComponentSourceFile")
+  projectAssetDerivationsTarget    ProjectAssetDerivation[]           @relation("ProjectAssetDerivationTargetFile")
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -1042,6 +1043,27 @@ enum AssetComponentType {
   VALIDATION_REPORT
 }
 
+enum ProjectAssetReferenceStatus {
+  ACTIVE
+  RETIRED
+}
+
+enum ProjectAssetUsageStatus {
+  ACTIVE
+  RETIRED
+}
+
+enum ProjectAssetUsageScopeType {
+  PROJECT
+  DELIVERY_UNIT
+  MODULE
+}
+
+enum ProjectAssetDerivationTargetType {
+  CONTROLLED_DOCUMENT_VERSION
+  MECHANICAL_DRAWING_VERSION
+}
+
 enum ProjectInitializationStatus {
   LEGACY
   READY
@@ -1408,6 +1430,15 @@ enum AuditAction {
   PUBLIC_LIBRARY_DOCUMENT_VOIDED
   PROJECT_PUBLIC_LIBRARY_REFERENCE_CREATED
   PROJECT_PUBLIC_LIBRARY_REFERENCE_RETIRED
+  PROJECT_ASSET_REFERENCE_CREATED
+  PROJECT_ASSET_REFERENCE_READ
+  PROJECT_ASSET_REFERENCE_RETIRED
+  PROJECT_ASSET_USAGE_CREATED
+  PROJECT_ASSET_USAGE_READ
+  PROJECT_ASSET_USAGE_RETIRED
+  PROJECT_ASSET_DERIVATION_CREATED
+  PROJECT_ASSET_DERIVATION_READ
+  PROJECT_ASSET_USAGE_SNAPSHOT_READ
   MECHANICAL_DRAWING_CREATED
   MECHANICAL_DRAWING_VERSION_DRAFTED
   MECHANICAL_DRAWING_VERSION_PUBLISHED
@@ -1587,6 +1618,10 @@ enum AuditObjectType {
   PUBLIC_LIBRARY_DOCUMENT
   PUBLIC_LIBRARY_DOCUMENT_VERSION
   PROJECT_PUBLIC_LIBRARY_REFERENCE
+  PROJECT_ASSET_REFERENCE
+  PROJECT_ASSET_USAGE
+  PROJECT_ASSET_DERIVATION
+  PROJECT_ASSET_USAGE_SNAPSHOT
   MECHANICAL_DRAWING
   MANUFACTURING_CATEGORY
   PROCESS_TAG
@@ -1722,6 +1757,11 @@ model User {
   publicLibraryVersionsVoided             PublicLibraryDocumentVersion[]         @relation("PublicLibraryVersionVoidedBy")
   projectPublicLibraryReferencesCreated   ProjectPublicLibraryReference[]        @relation("ProjectPublicLibraryReferenceCreatedBy")
   projectPublicLibraryReferencesRetired   ProjectPublicLibraryReference[]        @relation("ProjectPublicLibraryReferenceRetiredBy")
+  projectAssetReferencesCreated           ProjectAssetReference[]                @relation("ProjectAssetReferenceCreatedBy")
+  projectAssetReferencesRetired           ProjectAssetReference[]                @relation("ProjectAssetReferenceRetiredBy")
+  projectAssetUsagesCreated               ProjectAssetUsage[]                    @relation("ProjectAssetUsageCreatedBy")
+  projectAssetUsagesRetired               ProjectAssetUsage[]                    @relation("ProjectAssetUsageRetiredBy")
+  projectAssetDerivationsCreated          ProjectAssetDerivation[]               @relation("ProjectAssetDerivationCreatedBy")
   mechanicalDrawingsCreated               MechanicalDrawing[]                    @relation("MechanicalDrawingCreatedBy")
   mechanicalDrawingImportBatchesCreated   MechanicalDrawingImportBatch[]         @relation("MechanicalDrawingImportBatchCreatedBy")
   drawingSelectionSetsCreated             DrawingSelectionSet[]                  @relation("DrawingSelectionSetCreatedBy")
@@ -2023,6 +2063,9 @@ model Project {
   issueRelations                     IssueRelation[]
   mechanicalDrawingProcessTags       MechanicalDrawingProcessTag[]
   assetComponentSnapshots            AssetComponentSnapshot[]                   @relation("AssetComponentSourceProject")
+  projectAssetReferences             ProjectAssetReference[]
+  projectAssetUsages                 ProjectAssetUsage[]
+  projectAssetDerivations            ProjectAssetDerivation[]
   archive                            ProjectArchive?                            @relation("ProjectArchiveAggregate")
   archiveVersions                    ProjectArchiveVersion[]                    @relation("ProjectArchiveVersions")
   archiveManifestItems               ProjectArchiveManifestItem[]
@@ -2663,6 +2706,8 @@ model TechnicalAsset {
   releases     AssetRelease[]
   releaseVersions AssetReleaseVersion[]
   componentSnapshots AssetComponentSnapshot[]
+  projectAssetReferences ProjectAssetReference[] @relation("ProjectAssetReferenceTechnicalAsset")
+  projectAssetUsages     ProjectAssetUsage[]     @relation("ProjectAssetUsageTechnicalAsset")
 
   @@unique([id, rndProjectId])
   @@index([rndProjectId, status, assetNumber])
@@ -2723,6 +2768,8 @@ model AssetRelease {
   currentVersion    AssetReleaseVersion?  @relation("AssetReleaseCurrentVersion", fields: [currentVersionId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
   createdBy         User                  @relation("AssetReleaseCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   versions          AssetReleaseVersion[] @relation("AssetReleaseVersions")
+  projectAssetReferences ProjectAssetReference[]
+  projectAssetUsages     ProjectAssetUsage[]
 
   @@unique([technicalAssetId, releaseCode])
   @@unique([id, technicalAssetId])
@@ -2751,8 +2798,11 @@ model AssetReleaseVersion {
   publishedBy       User?                     @relation("AssetReleaseVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
   currentForRelease AssetRelease?             @relation("AssetReleaseCurrentVersion")
   components        AssetComponentSnapshot[]
+  projectAssetReferences ProjectAssetReference[]
+  projectAssetUsages     ProjectAssetUsage[]
 
   @@unique([id, technicalAssetId])
+  @@unique([id, releaseId, technicalAssetId])
   @@unique([releaseId, revision])
   @@index([technicalAssetId, status, createdAt])
   @@index([publishedById, publishedAt])
@@ -2783,12 +2833,132 @@ model AssetComponentSnapshot {
   sourceDrawing           MechanicalDrawing?              @relation("AssetComponentSourceDrawing", fields: [sourceDrawingId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
   sourceDocumentVersion   ControlledDocumentVersion       @relation("AssetComponentSourceDocumentVersion", fields: [sourceDocumentVersionId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
   sourceFile              FileObject                      @relation("AssetComponentSourceFile", fields: [sourceFileId, sourceProjectId], references: [id, projectId], onDelete: Restrict)
+  projectAssetUsages      ProjectAssetUsage[]
 
   @@unique([releaseVersionId, position])
   @@unique([id, technicalAssetId])
+  @@unique([id, releaseVersionId, technicalAssetId])
   @@index([sourceProjectId, sourceDocumentVersionId])
   @@index([sourceProjectId, sourceFileId])
   @@map("asset_component_snapshots")
+}
+
+model ProjectAssetReference {
+  id                    String                      @id @default(cuid())
+  projectId             String                      @map("project_id")
+  technicalAssetId      String                      @map("technical_asset_id")
+  assetReleaseId        String                      @map("asset_release_id")
+  assetReleaseVersionId String                      @map("asset_release_version_id")
+  releaseCode           String                      @map("release_code")
+  releaseRevision       Int                         @map("release_revision")
+  snapshotChecksum      String                      @map("snapshot_checksum")
+  sourceWatermark       String                      @map("source_watermark")
+  status                ProjectAssetReferenceStatus @default(ACTIVE)
+  version               Int                         @default(1)
+  createdById           String                      @map("created_by_id")
+  retiredById           String?                     @map("retired_by_id")
+  retiredAt             DateTime?                   @map("retired_at")
+  retireReason          String?                     @map("retire_reason")
+  createdAt             DateTime                    @default(now()) @map("created_at")
+  updatedAt             DateTime                    @default(now()) @map("updated_at")
+  project               Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  technicalAsset        TechnicalAsset              @relation("ProjectAssetReferenceTechnicalAsset", fields: [technicalAssetId], references: [id], onDelete: Restrict)
+  assetRelease          AssetRelease                @relation(fields: [assetReleaseId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  assetReleaseVersion   AssetReleaseVersion         @relation(fields: [assetReleaseVersionId, assetReleaseId, technicalAssetId], references: [id, releaseId, technicalAssetId], onDelete: Restrict)
+  createdBy             User                        @relation("ProjectAssetReferenceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  retiredBy             User?                       @relation("ProjectAssetReferenceRetiredBy", fields: [retiredById], references: [id], onDelete: Restrict)
+  usages                ProjectAssetUsage[]
+  derivations           ProjectAssetDerivation[]
+
+  @@unique([id, projectId])
+  @@unique([id, projectId, technicalAssetId, assetReleaseId, assetReleaseVersionId])
+  @@unique([projectId, assetReleaseVersionId])
+  @@index([projectId, status, createdAt])
+  @@index([technicalAssetId, assetReleaseVersionId])
+  @@map("project_asset_references")
+}
+
+model ProjectAssetUsage {
+  id                    String                     @id @default(cuid())
+  usageKey              String                     @map("usage_key")
+  projectId             String                     @map("project_id")
+  referenceId           String                     @map("reference_id")
+  technicalAssetId      String                     @map("technical_asset_id")
+  assetReleaseId        String                     @map("asset_release_id")
+  assetReleaseVersionId String                     @map("asset_release_version_id")
+  componentSnapshotId   String                     @map("component_snapshot_id")
+  releaseRevision       Int                        @map("release_revision")
+  snapshotChecksum      String                     @map("snapshot_checksum")
+  sourceWatermark       String                     @map("source_watermark")
+  quantity              Decimal                    @db.Decimal(20, 6)
+  configurationJson     Json                       @map("configuration_json")
+  scopeType             ProjectAssetUsageScopeType @map("scope_type")
+  scopeId               String                     @map("scope_id")
+  deliveryUnitId        String?                    @map("delivery_unit_id")
+  moduleId              String?                    @map("module_id")
+  status                ProjectAssetUsageStatus    @default(ACTIVE)
+  version               Int                        @default(1)
+  createdById           String                     @map("created_by_id")
+  retiredById           String?                    @map("retired_by_id")
+  retiredAt             DateTime?                  @map("retired_at")
+  retireReason          String?                    @map("retire_reason")
+  createdAt             DateTime                   @default(now()) @map("created_at")
+  updatedAt             DateTime                   @default(now()) @map("updated_at")
+  project               Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  reference             ProjectAssetReference     @relation(fields: [referenceId, projectId, technicalAssetId, assetReleaseId, assetReleaseVersionId], references: [id, projectId, technicalAssetId, assetReleaseId, assetReleaseVersionId], onDelete: Restrict)
+  technicalAsset        TechnicalAsset             @relation("ProjectAssetUsageTechnicalAsset", fields: [technicalAssetId], references: [id], onDelete: Restrict)
+  assetRelease          AssetRelease               @relation(fields: [assetReleaseId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  assetReleaseVersion   AssetReleaseVersion        @relation(fields: [assetReleaseVersionId, assetReleaseId, technicalAssetId], references: [id, releaseId, technicalAssetId], onDelete: Restrict)
+  componentSnapshot     AssetComponentSnapshot     @relation(fields: [componentSnapshotId, assetReleaseVersionId, technicalAssetId], references: [id, releaseVersionId, technicalAssetId], onDelete: Restrict)
+  deliveryUnit          DeliveryUnit?              @relation("ProjectAssetUsageDeliveryUnit", fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
+  projectModule         ProjectModule?             @relation("ProjectAssetUsageModule", fields: [moduleId, projectId, deliveryUnitId], references: [id, projectId, deliveryUnitId], onDelete: Restrict)
+  createdBy             User                       @relation("ProjectAssetUsageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  retiredBy             User?                      @relation("ProjectAssetUsageRetiredBy", fields: [retiredById], references: [id], onDelete: Restrict)
+  derivations           ProjectAssetDerivation[]
+
+  @@unique([id, projectId])
+  @@unique([projectId, usageKey])
+  @@index([projectId, status, scopeType, scopeId])
+  @@index([referenceId, status])
+  @@map("project_asset_usages")
+}
+
+model ProjectAssetDerivation {
+  id                                String              @id @default(cuid())
+  projectId                         String              @map("project_id")
+  sourceReferenceId                 String              @map("source_reference_id")
+  sourceUsageId                     String              @map("source_usage_id")
+  sourceTechnicalAssetId            String              @map("source_technical_asset_id")
+  sourceAssetReleaseId              String              @map("source_asset_release_id")
+  sourceAssetReleaseVersionId       String              @map("source_asset_release_version_id")
+  sourceComponentSnapshotId         String              @map("source_component_snapshot_id")
+  sourceReleaseRevision             Int                 @map("source_release_revision")
+  sourceSnapshotChecksum            String              @map("source_snapshot_checksum")
+  sourceWatermark                   String              @map("source_watermark")
+  targetControlledDocumentVersionId String              @map("target_controlled_document_version_id")
+  targetMechanicalDrawingId         String?             @map("target_mechanical_drawing_id")
+  targetFileId                      String              @map("target_file_id")
+  targetSourceFileSha256            String              @map("target_source_file_sha256")
+  targetType                        ProjectAssetDerivationTargetType @map("target_type")
+  targetDocumentVersion             Int                 @map("target_document_version")
+  targetDocumentVersionStatus       ControlledDocumentVersionStatus @map("target_document_version_status")
+  targetFileStatus                  FileObjectStatus    @map("target_file_status")
+  targetBindingKey                  String              @map("target_binding_key")
+  reason                            String
+  createdById                       String              @map("created_by_id")
+  createdAt                         DateTime            @default(now()) @map("created_at")
+  project                           Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceReference                   ProjectAssetReference @relation(fields: [sourceReferenceId, projectId], references: [id, projectId], onDelete: Restrict)
+  sourceUsage                       ProjectAssetUsage   @relation(fields: [sourceUsageId, projectId], references: [id, projectId], onDelete: Restrict)
+  targetControlledDocumentVersion   ControlledDocumentVersion @relation("ProjectAssetDerivationTargetDocumentVersion", fields: [targetControlledDocumentVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  targetMechanicalDrawing           MechanicalDrawing?  @relation("ProjectAssetDerivationTargetMechanicalDrawing", fields: [targetMechanicalDrawingId, projectId], references: [id, projectId], onDelete: Restrict)
+  targetFile                        FileObject          @relation("ProjectAssetDerivationTargetFile", fields: [targetFileId, projectId], references: [id, projectId], onDelete: Restrict)
+  createdBy                         User                @relation("ProjectAssetDerivationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([projectId, sourceUsageId, createdAt])
+  @@unique([projectId, targetBindingKey])
+  @@index([projectId, targetControlledDocumentVersionId])
+  @@map("project_asset_derivations")
 }
 
 model ControlledDocument {
@@ -2854,6 +3024,7 @@ model ControlledDocumentVersion {
   acceptanceReports             AcceptanceReport[]
   acceptanceConfirmations       AcceptanceConfirmation[]
   assetComponentSnapshots       AssetComponentSnapshot[]             @relation("AssetComponentSourceDocumentVersion")
+  projectAssetDerivationsTarget ProjectAssetDerivation[]             @relation("ProjectAssetDerivationTargetDocumentVersion")
 
   @@unique([documentId, version])
   @@unique([id, projectId])
@@ -2883,6 +3054,7 @@ model MechanicalDrawing {
   importItems                  MechanicalDrawingImportItem[]        @relation("ConfirmedMechanicalDrawing")
   materialRequirementRevisions ProjectMaterialRequirementRevision[] @relation("RequirementDrawing")
   assetComponentSnapshots      AssetComponentSnapshot[]             @relation("AssetComponentSourceDrawing")
+  projectAssetDerivationsTarget ProjectAssetDerivation[]             @relation("ProjectAssetDerivationTargetMechanicalDrawing")
 
   @@unique([id, projectId])
   @@unique([documentId, projectId])
@@ -4140,7 +4312,7 @@ model DeliveryUnit {
   createdAt                    DateTime                             @default(now()) @map("created_at")
   updatedAt                    DateTime                             @updatedAt @map("updated_at")
   project                      Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  parent                       DeliveryUnit?                        @relation("DeliveryUnitHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  parent                       DeliveryUnit?                        @relation("DeliveryUnitHierarchy", fields: [parentId, projectId], references: [id, projectId], onDelete: Restrict)
   children                     DeliveryUnit[]                       @relation("DeliveryUnitHierarchy")
   modules                      ProjectModule[]
   materialRequirementRevisions ProjectMaterialRequirementRevision[]
@@ -4153,6 +4325,7 @@ model DeliveryUnit {
   updatedBy                    User                                 @relation("DeliveryUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   retrospectiveContributions   ProjectRetrospectiveContribution[]   @relation("RetrospectiveContributionDeliveryUnit")
   knowledgeReuseRecords        KnowledgeReuseRecord[]               @relation("KnowledgeReuseDeliveryUnit")
+  projectAssetUsages           ProjectAssetUsage[]                  @relation("ProjectAssetUsageDeliveryUnit")
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -4176,16 +4349,18 @@ model ProjectModule {
   createdAt                    DateTime                             @default(now()) @map("created_at")
   updatedAt                    DateTime                             @updatedAt @map("updated_at")
   project                      Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  deliveryUnit                 DeliveryUnit                         @relation(fields: [deliveryUnitId], references: [id], onDelete: Restrict)
+  deliveryUnit                 DeliveryUnit                         @relation(fields: [deliveryUnitId, projectId], references: [id, projectId], onDelete: Restrict)
   createdBy                    User                                 @relation("ProjectModuleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy                    User                                 @relation("ProjectModuleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   responsibilityPackages       ResponsibilityPackage[]
   materialRequirementRevisions ProjectMaterialRequirementRevision[]
   planningTasks                PlanningTask[]
   gateInstances                ProjectGateInstance[]
+  projectAssetUsages           ProjectAssetUsage[]                  @relation("ProjectAssetUsageModule")
 
   @@unique([projectId, code])
   @@unique([id, projectId])
+  @@unique([id, projectId, deliveryUnitId])
   @@unique([deliveryUnitId, position])
   @@index([projectId, status])
   @@index([deliveryUnitId, status])
