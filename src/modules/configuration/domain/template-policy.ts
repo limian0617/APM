@@ -54,6 +54,11 @@ export type GateDefinitionRule = {
   bindingFormat: "LEGACY" | "EXPLICIT";
 };
 
+const CLOSURE_TEMPLATE_BINDINGS = [
+  { code: "CLOSURE.ARCHIVE.G9", version: 2 },
+  { code: "CLOSURE.RETROSPECTIVE.G9", version: 1 }
+] as const;
+
 export class TemplateValidationError extends Error {
   constructor(
     readonly code: string,
@@ -62,6 +67,31 @@ export class TemplateValidationError extends Error {
   ) {
     super(message);
     this.name = "TemplateValidationError";
+  }
+}
+
+export function validateClosureTemplateBindings(input: {
+  scope: GateScope;
+  code: string;
+  checkerBindings: readonly GateCheckerBinding[];
+}) {
+  if (input.code !== "G9") return;
+  const actual = [...input.checkerBindings]
+    .map((binding) => `${binding.code}@${binding.version}`)
+    .sort();
+  const expected = CLOSURE_TEMPLATE_BINDINGS.map(
+    (binding) => `${binding.code}@${binding.version}`
+  ).sort();
+  if (
+    input.scope !== "PROJECT" ||
+    actual.length !== expected.length ||
+    actual.some((binding, index) => binding !== expected[index])
+  ) {
+    throw new TemplateValidationError(
+      "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID",
+      "项目级 G9 必须精确绑定结项归档 V2 和复盘 V1 检查器。",
+      409
+    );
   }
 }
 
@@ -471,6 +501,22 @@ export function validateTemplateGateCodesUnique(
   if (new Set(codes).size !== codes.length) {
     throw new TemplateValidationError("DUPLICATE_RULE_CODE", "模板包含重复 Gate 代码。");
   }
+}
+
+export function validateTemplateClosureBindings(
+  components: ReadonlyArray<{ componentType: TemplateComponentTypeCode; content: unknown }>
+) {
+  const gates = components.flatMap(({ componentType, content }) =>
+    componentType === TEMPLATE_COMPONENT_TYPES.GATE ? parseGateDefinitionRules(content) : []
+  );
+  for (const gate of gates) {
+    validateClosureTemplateBindings({
+      scope: gate.scope,
+      code: gate.code,
+      checkerBindings: gate.checkerBindings
+    });
+  }
+  return { closureCapable: gates.some((gate) => gate.code === "G9" && gate.scope === "PROJECT") };
 }
 
 export function componentChecksum(input: {

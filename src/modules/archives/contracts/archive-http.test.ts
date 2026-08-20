@@ -15,18 +15,25 @@ describe("archive HTTP contracts", () => {
 
   it("requires exact project-close facts and rejects extra client fields", () => {
     expect(
-      archiveCloseBodySchema.parse({ archiveVersionId: "av1", g9SubmissionId: "g9-1", version: 4 })
+      archiveCloseBodySchema.parse({
+        archiveVersionId: "av1",
+        g9SubmissionId: "g9-1",
+        expectedProjectVersion: 4,
+        operationId: "close-project-1"
+      })
     ).toEqual({
       archiveVersionId: "av1",
       g9SubmissionId: "g9-1",
-      version: 4
+      expectedProjectVersion: 4,
+      operationId: "close-project-1"
     });
     expect(() =>
       archiveCloseBodySchema.parse({
         archiveVersionId: "av1",
         g9SubmissionId: "g9-1",
-        version: 4,
-        status: "CLOSED"
+        expectedProjectVersion: 4,
+        operationId: "close-project-1",
+        closurePolicyVersionId: "caller-must-not-select-policy"
       })
     ).toThrow();
     expect(() =>

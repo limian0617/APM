@@ -12,7 +12,12 @@ import {
   saveTemplateComponentDraft,
   setProjectTemplateEnabled
 } from "@/modules/configuration/application/template-service";
-import { createProjectFromTemplate } from "@/modules/projects/application/create-project";
+import { templateChecksum } from "@/modules/configuration/domain/template-policy";
+import {
+  assertProjectTemplateClosureBindings,
+  createProjectFromTemplate,
+  selectClosureGateSource
+} from "@/modules/projects/application/create-project";
 
 const describeDatabase = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const suffix = randomUUID().slice(0, 8);
@@ -173,6 +178,56 @@ function request(body: unknown, key: string, userId?: string) {
   });
 }
 
+describe("APM-104 project closure policy source selection", () => {
+  const v2G9 = {
+    id: "g9-definition-v2",
+    code: "G9",
+    scope: "PROJECT" as const,
+    instances: [{ id: "g9-instance-v2" }]
+  };
+
+  it("selects the exact project G9 and leaves auxiliary templates without a closure policy", () => {
+    expect(selectClosureGateSource([])).toBeNull();
+    expect(selectClosureGateSource([v2G9])).toEqual({
+      sourceGateDefinitionId: "g9-definition-v2",
+      gateInstanceId: "g9-instance-v2"
+    });
+  });
+
+  it("rejects duplicate or structurally invalid G9 materializations", () => {
+    expect(() => selectClosureGateSource([v2G9, { ...v2G9, id: "duplicate-g9" }])).toThrowError(
+      expect.objectContaining({ code: "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID", status: 409 })
+    );
+    expect(() =>
+      selectClosureGateSource([{ ...v2G9, scope: "DELIVERY_UNIT" as const, instances: [] }])
+    ).toThrowError(
+      expect.objectContaining({ code: "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID", status: 409 })
+    );
+  });
+
+  it("maps a published legacy G9 snapshot to the stable project creation conflict", () => {
+    expect(() =>
+      assertProjectTemplateClosureBindings([
+        {
+          componentType: "GATE",
+          content: {
+            gates: [
+              {
+                code: "G9",
+                name: "旧结项",
+                stageCode: "S8",
+                requiredCheckerCodes: ["CLOSURE.ARCHIVE.G9"]
+              }
+            ]
+          }
+        }
+      ])
+    ).toThrowError(
+      expect.objectContaining({ code: "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID", status: 409 })
+    );
+  });
+});
+
 describeDatabase("APM-011 PostgreSQL project creation", () => {
   let baseTemplate: Awaited<ReturnType<typeof seedPublishedTemplate>>;
 
@@ -283,7 +338,9 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
     const expectedGateDefinition = defaultGateContent().gates[0];
     if (!expectedGateDefinition) throw new Error("Gate 测试定义缺失。");
     const gateDefinition = await db.projectGateDefinition.findUniqueOrThrow({
-      where: { projectId_code: { projectId: firstBody.project.id, code: "G1" } },
+      where: {
+        projectId_code_revision: { projectId: firstBody.project.id, code: "G1", revision: 1 }
+      },
       include: { instances: true }
     });
     expect(gateDefinition).toMatchObject({
@@ -453,6 +510,197 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
     ]);
   });
 
+  it("publishes a V2 closure template and atomically materializes its exact policy", async () => {
+    const template = await seedPublishedTemplate("CLOSURE-V2", {
+      gates: [
+        {
+          code: "G9",
+          name: "项目结项",
+          stageCode: "S8",
+          scope: "PROJECT",
+          checkers: [
+            { code: "CLOSURE.ARCHIVE.G9", version: 2 },
+            { code: "CLOSURE.RETROSPECTIVE.G9", version: 1 }
+          ]
+        }
+      ]
+    });
+    const created = await createProjectFromTemplate({
+      ...projectBody(template, `PRJ-CLOSURE-V2-${suffix}`.toUpperCase()),
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `closure-v2-${suffix}`)
+    });
+    const snapshot = await db.projectTemplateSnapshot.findUniqueOrThrow({
+      where: { projectId: created.project.id }
+    });
+    const definition = await db.projectGateDefinition.findUniqueOrThrow({
+      where: {
+        projectId_code_revision: { projectId: created.project.id, code: "G9", revision: 1 }
+      },
+      include: { instances: true }
+    });
+    const policy = await db.projectClosurePolicy.findUniqueOrThrow({
+      where: { projectId: created.project.id },
+      include: { currentVersion: true }
+    });
+    expect(definition.instances).toHaveLength(1);
+    expect(policy.currentVersion).toMatchObject({
+      sourceTemplateSnapshotId: snapshot.id,
+      sourceGateDefinitionId: definition.id,
+      archiveCheckerCode: "CLOSURE.ARCHIVE.G9",
+      archiveCheckerVersion: 2,
+      retrospectiveCheckerCode: "CLOSURE.RETROSPECTIVE.G9",
+      retrospectiveCheckerVersion: 1,
+      archiveSourceFormulaVersion: "V2",
+      status: "ACTIVE",
+      bindingChecksum: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      policyChecksum: expect.stringMatching(/^[0-9a-f]{64}$/u)
+    });
+    expect(definition.instances[0]).toMatchObject({
+      closurePolicyVersionId: policy.currentVersionId,
+      archiveSourceFormulaVersion: "V2",
+      closurePolicyChecksum: policy.currentVersion?.policyChecksum
+    });
+    await expect(
+      db.auditLog.count({
+        where: {
+          projectId: created.project.id,
+          action: "PROJECT_CLOSURE_POLICY_UPGRADED",
+          objectId: policy.currentVersionId
+        }
+      })
+    ).resolves.toBe(1);
+    await expect(
+      db.outboxEvent.count({
+        where: {
+          eventType: "project.closure-policy.version.activated",
+          aggregateId: policy.currentVersionId
+        }
+      })
+    ).resolves.toBe(1);
+  });
+
+  it("rejects an already-published legacy G9 template without creating partial project facts", async () => {
+    const legacyGateCode = `PROJECT.LEGACY.G9.${suffix}`.toUpperCase();
+    const legacyGateDraft = await saveTemplateComponentDraft({
+      code: legacyGateCode,
+      componentType: "GATE",
+      name: "Legacy G9 component",
+      content: {
+        gates: [
+          {
+            code: "G9",
+            name: "历史项目结项",
+            stageCode: "S8",
+            scope: "PROJECT",
+            checkers: [{ code: "CLOSURE.ARCHIVE.G9", version: 1 }]
+          }
+        ]
+      },
+      version: 0,
+      reason: "建立历史已发布 Gate 组件",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `legacy-g9-component-draft-${suffix}`)
+    });
+    const legacyGate = await publishTemplateComponent({
+      code: legacyGateCode,
+      version: legacyGateDraft.component.version,
+      reason: "发布历史 Gate 组件",
+      actorId: ids.admin,
+      auditContext: context(ids.admin, `legacy-g9-component-publish-${suffix}`)
+    });
+    const legacyTemplateCode = `PROJECT.LEGACY.CLOSURE.${suffix}`.toUpperCase();
+    const legacyTemplateName = "Legacy closure template";
+    const legacyTemplateReferences = [
+      ...baseTemplate.components
+        .filter(({ componentType }) => componentType !== "GATE")
+        .map((component, position) => ({
+          componentVersionId: component.componentVersionId,
+          componentType: component.componentType,
+          slot: `LEGACY.${component.componentType}.${position}`,
+          position
+        })),
+      {
+        componentVersionId: legacyGate.publishedVersion.id,
+        componentType: "GATE" as const,
+        slot: "LEGACY.GATE.3",
+        position: 3
+      }
+    ];
+    const sourceChecksums = new Map(
+      (
+        await db.templateComponentVersion.findMany({
+          where: {
+            id: { in: legacyTemplateReferences.map(({ componentVersionId }) => componentVersionId) }
+          },
+          select: { id: true, checksum: true }
+        })
+      ).map(({ id, checksum }) => [id, checksum])
+    );
+    const legacyTemplateChecksum = templateChecksum({
+      name: legacyTemplateName,
+      description: null,
+      references: legacyTemplateReferences.map((reference) => {
+        const checksum = sourceChecksums.get(reference.componentVersionId);
+        if (!checksum) throw new Error("历史模板组件发布校验和缺失。");
+        return { ...reference, checksum };
+      })
+    });
+    await db.projectTemplate.create({
+      data: {
+        code: legacyTemplateCode,
+        name: legacyTemplateName,
+        status: "ACTIVE",
+        currentVersion: 1,
+        createdById: ids.admin,
+        updatedById: ids.admin,
+        versions: {
+          create: {
+            version: 1,
+            name: legacyTemplateName,
+            checksum: legacyTemplateChecksum,
+            publishedById: ids.admin,
+            components: {
+              create: legacyTemplateReferences
+            }
+          }
+        }
+      }
+    });
+    const projectCode = `PRJ-LEGACY-CLOSURE-${suffix}`.toUpperCase();
+    const operationId = `legacy-g9-project-${suffix}`;
+
+    await expect(
+      createProjectFromTemplate({
+        code: projectCode,
+        name: "Rejected legacy closure project",
+        departmentId: "engineering",
+        templateCode: legacyTemplateCode,
+        templateVersion: 1,
+        templateChecksum: legacyTemplateChecksum,
+        reason: "不允许使用历史 G9 模板创建项目",
+        actorId: ids.admin,
+        auditContext: context(ids.admin, operationId)
+      })
+    ).rejects.toMatchObject({ code: "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID", status: 409 });
+
+    await expect(db.project.count({ where: { code: projectCode } })).resolves.toBe(0);
+    await expect(
+      db.projectClosurePolicy.count({ where: { project: { code: projectCode } } })
+    ).resolves.toBe(0);
+    await expect(
+      db.auditLog.count({ where: { action: "PROJECT_CLOSURE_POLICY_UPGRADED", operationId } })
+    ).resolves.toBe(0);
+    await expect(
+      db.outboxEvent.count({
+        where: {
+          eventType: "project.created",
+          payload: { path: ["projectCode"], equals: projectCode }
+        }
+      })
+    ).resolves.toBe(0);
+  });
+
   it("rolls back Gate facts, audits, and Outbox events when an outer project transaction aborts", async () => {
     const code = `PRJ-GATE-ROLLBACK-${suffix}`.toUpperCase();
     const beforeGateAudits = await db.auditLog.count({
@@ -499,7 +747,9 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
       include: { components: { orderBy: { position: "asc" } } }
     });
     const beforeGateDefinition = await db.projectGateDefinition.findUniqueOrThrow({
-      where: { projectId_code: { projectId: created.project.id, code: "G1" } }
+      where: {
+        projectId_code_revision: { projectId: created.project.id, code: "G1", revision: 1 }
+      }
     });
     const gateComponentCode = `PROJECT.DRIFT.GATE.${suffix}`.toUpperCase();
     const updatedGateDraft = await saveTemplateComponentDraft({
@@ -564,7 +814,9 @@ describeDatabase("APM-011 PostgreSQL project creation", () => {
     ).resolves.toEqual(before);
     await expect(
       db.projectGateDefinition.findUniqueOrThrow({
-        where: { projectId_code: { projectId: created.project.id, code: "G1" } }
+        where: {
+          projectId_code_revision: { projectId: created.project.id, code: "G1", revision: 1 }
+        }
       })
     ).resolves.toMatchObject({
       definitionJson: beforeGateDefinition.definitionJson,

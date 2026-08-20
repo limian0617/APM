@@ -17,6 +17,7 @@ import {
 } from "@/modules/configuration/application/template-service";
 import { createProjectFromTemplate } from "@/modules/projects/application/create-project";
 import {
+  assertProjectClosurePolicyEligibility,
   initializeProjectStructure,
   setDeliveryUnitEnabled
 } from "@/modules/projects/application/project-structure";
@@ -215,6 +216,56 @@ function readRequest(url: string, actorId?: string) {
     headers: actorId ? { "x-apm-user-id": actorId } : undefined
   });
 }
+
+describe("APM-104 project closure policy eligibility", () => {
+  it("allows auxiliary and internal R&D projects without a project G9 policy", () => {
+    expect(() =>
+      assertProjectClosurePolicyEligibility({
+        projectType: "CUSTOMER_DELIVERY",
+        projectG9Count: 0,
+        closurePolicyVersionId: null
+      })
+    ).not.toThrow();
+    expect(() =>
+      assertProjectClosurePolicyEligibility({
+        projectType: "INTERNAL_RND",
+        projectG9Count: 0,
+        closurePolicyVersionId: null
+      })
+    ).not.toThrow();
+  });
+
+  it("requires an exact policy for customer delivery G9 and forbids it for internal R&D", () => {
+    expect(() =>
+      assertProjectClosurePolicyEligibility({
+        projectType: "CUSTOMER_DELIVERY",
+        projectG9Count: 1,
+        closurePolicyVersionId: null
+      })
+    ).toThrowError(
+      expect.objectContaining({ code: "CLOSURE_POLICY_VERSION_REQUIRED", status: 409 })
+    );
+    expect(() =>
+      assertProjectClosurePolicyEligibility({
+        projectType: "INTERNAL_RND",
+        projectG9Count: 1,
+        closurePolicyVersionId: "policy-version-1"
+      })
+    ).toThrowError(
+      expect.objectContaining({ code: "INTERNAL_RND_CLOSURE_POLICY_FORBIDDEN", status: 409 })
+    );
+  });
+
+  it("allows legacy G9 history alongside the exact current policy version", () => {
+    expect(() =>
+      assertProjectClosurePolicyEligibility({
+        projectType: "CUSTOMER_DELIVERY",
+        projectG9Count: 2,
+        closurePolicyVersionId: "policy-version-2"
+      })
+    ).not.toThrow();
+  });
+});
 
 describeDatabase("APM-012 PostgreSQL project structure", () => {
   let template: Awaited<ReturnType<typeof seedPublishedTemplate>>;

@@ -14,21 +14,29 @@ import type { JsonValue } from "@/modules/governance/domain/idempotency";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 
 import {
-  buildProjectArchiveManifest,
+  ArchiveManifestError,
   type ArchiveManifestSourceInput,
   type ProjectArchiveManifest
 } from "./archive-manifest-service";
-import { readProjectArchiveSources } from "./archive-source-reader";
+import { getArchiveSourceFormulaAdapter } from "./archive-source-formula-registry";
+import {
+  archiveSourceFormulaToPersistence,
+  type ArchiveSourceFormulaVersion
+} from "../domain/archive-source-formula";
+import { readRetrospectiveInput, type RetrospectiveInputBuild } from "./retrospective-input-reader";
 
 type ArchiveGenerationPayload = {
   projectId: string;
   requestedById: string;
+  archiveSourceFormulaVersion: ArchiveSourceFormulaVersion;
 };
 
 export type ArchiveVersionWriter = (input: {
   projectId: string;
   requestedById: string;
   generationJobId: string;
+  archiveSourceFormulaVersion: ArchiveSourceFormulaVersion;
+  retrospectiveInput?: RetrospectiveInputBuild;
   manifest: ProjectArchiveManifest;
 }) => Promise<{ id: string; version: number }>;
 
@@ -42,11 +50,16 @@ function parsePayload(job: JobExecution): ArchiveGenerationPayload {
   if (!projectId || !requestedById || projectId.length > 191 || requestedById.length > 191) {
     throw new TypeError("归档生成作业负载无效。");
   }
-  return { projectId, requestedById };
+  const archiveSourceFormulaVersion =
+    typeof value.archiveSourceFormulaVersion === "string"
+      ? getArchiveSourceFormulaAdapter(value.archiveSourceFormulaVersion).version
+      : getArchiveSourceFormulaAdapter(undefined).version;
+  return { projectId, requestedById, archiveSourceFormulaVersion };
 }
 
 export function createArchiveGenerationHandler(input: {
   readSources: (projectId: string) => Promise<readonly ArchiveManifestSourceInput[]>;
+  readRetrospectiveInput?: (projectId: string) => Promise<RetrospectiveInputBuild>;
   createVersion: ArchiveVersionWriter;
   scheduleIntegrityCheck: (input: {
     projectId: string;
@@ -56,14 +69,27 @@ export function createArchiveGenerationHandler(input: {
 }): JobHandler {
   return async (job) => {
     const payload = parsePayload(job);
-    const manifest = await buildProjectArchiveManifest({
+    const formula = getArchiveSourceFormulaAdapter(payload.archiveSourceFormulaVersion);
+    if (formula.version === "ARCHIVE.SOURCE@2" && !input.readRetrospectiveInput) {
+      throw new ArchiveManifestError(
+        "ARCHIVE_SOURCE_FACTS_UNAVAILABLE",
+        "ARCHIVE.SOURCE@2 归档缺少复盘输入事实读取器。"
+      );
+    }
+    const retrospectiveInput =
+      formula.version === "ARCHIVE.SOURCE@2"
+        ? await input.readRetrospectiveInput!(payload.projectId)
+        : undefined;
+    const manifest = formula.buildManifest({
       projectId: payload.projectId,
-      readSources: input.readSources
+      items: await input.readSources(payload.projectId)
     });
     const version = await input.createVersion({
       projectId: payload.projectId,
       requestedById: payload.requestedById,
       generationJobId: job.id,
+      archiveSourceFormulaVersion: formula.version,
+      retrospectiveInput,
       manifest
     });
     await input.scheduleIntegrityCheck({
@@ -99,18 +125,18 @@ function workerAuditContext(job: JobExecution, projectId: string, actorId: strin
 
 export function createPrismaArchiveGenerationHandler(input?: {
   client?: PrismaClient;
-  readSources?: (projectId: string) => Promise<readonly ArchiveManifestSourceInput[]>;
 }): JobHandler {
   const client = input?.client ?? db;
-  const readSources =
-    input?.readSources ??
-    (async (projectId: string) => readProjectArchiveSources({ projectId, client }));
   return async (job) => {
     const payload = parsePayload(job);
-    const manifest = await buildProjectArchiveManifest({
-      projectId: payload.projectId,
-      readSources
-    });
+    const formula = getArchiveSourceFormulaAdapter(payload.archiveSourceFormulaVersion);
+    const retrospectiveInput =
+      formula.version === "ARCHIVE.SOURCE@2"
+        ? await readRetrospectiveInput({ projectId: payload.projectId, client: client as never })
+        : undefined;
+    const manifest = formula.buildManifest(
+      await formula.read({ client: client as never, projectId: payload.projectId })
+    );
     await client.$transaction(async (transaction) => {
       const existing = await transaction.projectArchiveVersion.findUnique({
         where: { generationJobId: job.id }
@@ -153,6 +179,13 @@ export function createPrismaArchiveGenerationHandler(input?: {
           snapshotJson: manifest.snapshotJson as Prisma.InputJsonValue,
           externalPublicationApplicability: "NOT_APPLICABLE",
           externalPublicationReason: manifest.externalPublication.reason,
+          archiveSourceFormulaVersion: archiveSourceFormulaToPersistence(formula.version),
+          retrospectiveInputApplicability: retrospectiveInput ? "APPLICABLE" : "NOT_APPLICABLE",
+          retrospectiveInputWatermarkVersion: retrospectiveInput ? "RETROSPECTIVE.INPUT@1" : null,
+          retrospectiveInputSnapshotJson: retrospectiveInput
+            ? (retrospectiveInput.snapshot as Prisma.InputJsonValue)
+            : Prisma.DbNull,
+          retrospectiveInputWatermark: retrospectiveInput?.watermark ?? null,
           createdById: payload.requestedById,
           generationJobId: job.id,
           manifestItems: {

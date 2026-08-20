@@ -52,7 +52,7 @@ export const PROJECT_PRIMARY_NAVIGATION = [
 
 export const PROJECT_MORE_NAVIGATION = [
   { id: "changes", label: "变更", path: "changes", available: false },
-  { id: "governance", label: "审批与记录", path: "governance", available: false },
+  { id: "governance", label: "审批与记录", path: "governance", available: true },
   { id: "settings", label: "项目设置", path: "settings", available: false }
 ] as const satisfies readonly ProjectNavigationDefinition<ProjectMoreNavigationId>[];
 
@@ -90,7 +90,7 @@ export function buildProjectNavigation(projectId: string) {
 export function selectedProjectNavigation(
   projectId: string,
   pathname: string | null | undefined
-): ProjectPrimaryNavigationId | null {
+): ProjectPrimaryNavigationId | ProjectMoreNavigationId | null {
   const normalized = normalizedPathname(pathname);
   const root = projectRoot(projectId);
   if (!normalized || !normalized.startsWith(`${root}/`)) return null;
@@ -105,6 +105,9 @@ export function selectedProjectNavigation(
   }
   if (normalized === `${root}/acceptance` || normalized.startsWith(`${root}/acceptance/`)) {
     return "acceptance";
+  }
+  if (normalized === `${root}/governance` || normalized.startsWith(`${root}/governance/`)) {
+    return "governance";
   }
   return null;
 }

@@ -11,9 +11,12 @@ import {
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import {
   TEMPLATE_MASTER_STATUSES,
+  TemplateValidationError,
   type TemplateComponentContent,
-  type TemplateComponentTypeCode
+  type TemplateComponentTypeCode,
+  validateTemplateClosureBindings
 } from "@/modules/configuration/domain/template-policy";
+import { materializeInitialProjectClosurePolicy } from "@/modules/governance/application/project-closure-policy-service";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
 import { instantiateProjectGateDefinitions } from "@/modules/governance/application/project-gate-definition-service";
 
@@ -24,6 +27,52 @@ import {
   validateProjectIdentity
 } from "../domain/project-template-snapshot";
 import { instantiateProjectMilestones } from "./milestone-service";
+
+type MaterializedClosureGate = {
+  id: string;
+  code: string;
+  scope: "PROJECT" | "DELIVERY_UNIT" | "MODULE";
+  instances: Array<{ id: string }>;
+};
+
+export function selectClosureGateSource(gates: MaterializedClosureGate[]) {
+  const candidates = gates.filter(({ code }) => code === "G9");
+  if (candidates.length === 0) return null;
+  const candidate = candidates[0];
+  if (
+    candidates.length !== 1 ||
+    !candidate ||
+    candidate.scope !== "PROJECT" ||
+    candidate.instances.length !== 1 ||
+    !candidate.instances[0]
+  ) {
+    throw new ProjectCreationError(
+      "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID",
+      "结项模板必须物化唯一的项目级 G9 定义和实例。",
+      409
+    );
+  }
+  return {
+    sourceGateDefinitionId: candidate.id,
+    gateInstanceId: candidate.instances[0].id
+  };
+}
+
+export function assertProjectTemplateClosureBindings(
+  components: ReadonlyArray<{ componentType: TemplateComponentTypeCode; content: unknown }>
+) {
+  try {
+    return validateTemplateClosureBindings(components);
+  } catch (error) {
+    if (
+      error instanceof TemplateValidationError &&
+      error.code === "CLOSURE_POLICY_TEMPLATE_BINDINGS_INVALID"
+    ) {
+      throw new ProjectCreationError(error.code, error.message, error.status);
+    }
+    throw error;
+  }
+}
 
 function positiveVersion(value: unknown): number {
   if (!Number.isInteger(value) || (value as number) < 1) {
@@ -132,6 +181,12 @@ export async function createProjectFromTemplate(
           position: reference.position
         }))
       });
+      assertProjectTemplateClosureBindings(
+        snapshot.components.map((component) => ({
+          componentType: component.componentType,
+          content: component.content
+        }))
+      );
       const initializedAt = await databaseNow(client);
       let project: Prisma.ProjectGetPayload<{}>;
       try {
@@ -284,6 +339,22 @@ export async function createProjectFromTemplate(
         components: storedSnapshot.components,
         stages: projectStages
       });
+      const closureGateSource = selectClosureGateSource(
+        await client.projectGateDefinition.findMany({
+          where: { projectId: project.id, code: "G9", scope: "PROJECT" },
+          include: { instances: { where: { projectId: project.id } } },
+          orderBy: { revision: "asc" }
+        })
+      );
+      if (closureGateSource) {
+        await materializeInitialProjectClosurePolicy(client, {
+          projectId: project.id,
+          sourceTemplateSnapshotId: storedSnapshot.id,
+          ...closureGateSource,
+          actorId: input.actorId,
+          auditContext
+        });
+      }
       const membershipAudit = await writeAudit(client, {
         action: AUDIT_ACTIONS.PROJECT_MEMBER_ADDED,
         objectType: AUDIT_OBJECT_TYPES.PROJECT_MEMBER,

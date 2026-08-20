@@ -8,9 +8,17 @@ describe("APM-031 Gate checker registry", () => {
       code: "STAGE.AWAITING_GATE",
       version: 1
     });
-    expect(GATE_CHECKER_REGISTRY.size).toBe(8);
+    expect(GATE_CHECKER_REGISTRY.size).toBe(10);
     expect(resolveGateChecker("CLOSURE.ARCHIVE.G9", 1)).toMatchObject({
       code: "CLOSURE.ARCHIVE.G9",
+      version: 1
+    });
+    expect(resolveGateChecker("CLOSURE.ARCHIVE.G9", 2)).toMatchObject({
+      code: "CLOSURE.ARCHIVE.G9",
+      version: 2
+    });
+    expect(resolveGateChecker("CLOSURE.RETROSPECTIVE.G9", 1)).toMatchObject({
+      code: "CLOSURE.RETROSPECTIVE.G9",
       version: 1
     });
     expect(resolveGateChecker("STAGE.AWAITING_GATE", 2)).toBeUndefined();

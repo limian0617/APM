@@ -1,8 +1,52 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { APM_054_ARCHIVE_V1 } from "../fixtures/apm-054-archive-v1.fixture";
 import { readProjectArchiveSources } from "./archive-source-reader";
 
 describe("archive source reader", () => {
+  it("preserves the legacy G9 submission as an APM-054 source fact", async () => {
+    const client = {
+      project: { findUnique: vi.fn().mockResolvedValue({ id: APM_054_ARCHIVE_V1.projectId }) },
+      controlledDocumentVersion: { findMany: vi.fn().mockResolvedValue([]) },
+      mechanicalDrawingVersionFile: { findMany: vi.fn().mockResolvedValue([]) },
+      documentReview: { findMany: vi.fn().mockResolvedValue([]) },
+      gateSubmission: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "legacy-g9-submission",
+            sequence: 1,
+            status: "APPROVED",
+            gateInstanceId: "legacy-g9",
+            gateCheckSnapshotId: null,
+            submittedAt: null,
+            approvals: [],
+            documentReferences: []
+          }
+        ])
+      },
+      acceptanceBatch: { findMany: vi.fn().mockResolvedValue([]) },
+      acceptanceReport: { findMany: vi.fn().mockResolvedValue([]) },
+      acceptanceConfirmation: { findMany: vi.fn().mockResolvedValue([]) }
+    };
+
+    const sources = await readProjectArchiveSources({
+      projectId: APM_054_ARCHIVE_V1.projectId,
+      client
+    });
+
+    expect(sources).toContainEqual(
+      expect.objectContaining({
+        sourceType: "GATE_SUBMISSION",
+        sourceId: "legacy-g9-submission",
+        sourceVersion: "1",
+        snapshotJson: expect.objectContaining({
+          gateInstanceId: "legacy-g9",
+          status: "APPROVED"
+        })
+      })
+    );
+  });
+
   it("reads only exact project facts and preserves published file metadata", async () => {
     const client = {
       project: { findUnique: vi.fn().mockResolvedValue({ id: "project-1" }) },
