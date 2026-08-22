@@ -28,6 +28,12 @@ describe("APM-061 technical asset lifecycle", () => {
     );
   });
 
+  it("allows only DISABLED as the terminal exit from a validated asset", () => {
+    expect(allowedTechnicalAssetTransition("VALIDATED", "DISABLED")).toBe(true);
+    expect(allowedTechnicalAssetTransition("VALIDATED", "CANCELED")).toBe(false);
+    expect(allowedTechnicalAssetTransition("DISABLED", "VALIDATED")).toBe(false);
+  });
+
   it("requires an independent active validator", () => {
     expect(() => assertIndependentValidator("owner-1", "owner-1", "ACTIVE")).toThrowError(
       expect.objectContaining({ code: "VALIDATOR_MUST_BE_INDEPENDENT" })

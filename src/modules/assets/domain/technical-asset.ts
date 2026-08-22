@@ -13,6 +13,7 @@ export const TECHNICAL_ASSET_STATUSES = [
   "DRAFT",
   "VALIDATION_PENDING",
   "VALIDATED",
+  "DISABLED",
   "CANCELED"
 ] as const;
 
@@ -44,6 +45,8 @@ export type TechnicalAssetErrorCode =
   | "VERSION_CONFLICT"
   | "INVALID_RND_PROJECT_TRANSITION"
   | "INVALID_TECHNICAL_ASSET_TRANSITION"
+  | "TECHNICAL_ASSET_DEACTIVATION_COMMAND_REQUIRED"
+  | "TECHNICAL_ASSET_OWNER_REQUIRED"
   | "ASSET_NOT_PENDING_VALIDATION"
   | "VALIDATOR_MUST_BE_INDEPENDENT"
   | "VALIDATOR_DISABLED";
@@ -71,7 +74,8 @@ const rndProjectTransitions: Record<RndProjectStatus, readonly RndProjectStatus[
 const technicalAssetTransitions: Record<TechnicalAssetStatus, readonly TechnicalAssetStatus[]> = {
   DRAFT: ["VALIDATION_PENDING", "CANCELED"],
   VALIDATION_PENDING: ["DRAFT", "VALIDATED", "CANCELED"],
-  VALIDATED: ["CANCELED"],
+  VALIDATED: ["DISABLED"],
+  DISABLED: [],
   CANCELED: []
 };
 

@@ -36,6 +36,20 @@ describe("APM-034 alert HTTP contracts", () => {
     );
   });
 
+  it("accepts asset-impact rules only with a strict empty condition", () => {
+    const assetImpactRule = {
+      ...rule,
+      code: "ASSET.IMPACT",
+      sourceType: "ASSET_IMPACT",
+      condition: {}
+    };
+
+    expect(parseAlertRulePayload(assetImpactRule)).toEqual(assetImpactRule);
+    expect(() =>
+      parseAlertRulePayload({ ...assetImpactRule, condition: { status: "OPEN" } })
+    ).toThrow(expect.objectContaining({ code: "VALIDATION_FAILED", status: 422 }));
+  });
+
   it("requires optimistic versions and a reason when updating or disabling a rule", () => {
     expect(
       parseAlertRuleUpdatePayload({

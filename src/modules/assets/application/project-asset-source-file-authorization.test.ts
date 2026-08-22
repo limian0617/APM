@@ -31,6 +31,7 @@ function client(input: {
     ...input.component
   };
   return {
+    $queryRaw: vi.fn().mockResolvedValue([]),
     assetComponentSnapshot: { findMany: vi.fn().mockResolvedValue([component]) },
     fileObject: {
       findFirst: vi.fn(({ where }: { where: { id: string } }) =>
@@ -82,6 +83,7 @@ describe("APM-063 exact release source-file authorization", () => {
     expect(transaction.fileObject.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "main-file", projectId: "source-project-1" } })
     );
+    expect(transaction.$queryRaw).toHaveBeenCalledOnce();
   });
 
   it("rejects unavailable or SHA-mismatched primary and attached frozen files", async () => {

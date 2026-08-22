@@ -449,6 +449,11 @@ export async function generateAcceptanceReport(
     return await inTransaction(
       transaction,
       async (client) => {
+        await client.$queryRaw`
+          SELECT "id" FROM "projects"
+          WHERE "id" = ${input.projectId}
+          FOR UPDATE
+        `;
         const batch = await loadLockedBatchFacts(client, input.projectId, input.batchId);
         if (batch.version !== input.version) {
           throw new AcceptanceReportServiceError(

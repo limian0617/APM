@@ -1,9 +1,16 @@
 import { Prisma, ProjectAlertEventType, ProjectAlertStatus } from "@prisma/client";
 
 import { db, inTransaction } from "@/lib/db";
+import {
+  readAssetImpactAlertSource,
+  type AssetImpactAlertSource
+} from "@/modules/assets/application/project-asset-impact-alert-source";
+import { buildAssetImpactProjectionAttemptKey } from "@/modules/assets/domain/asset-upgrade-impact";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
+import { sanitizeAuditText } from "@/modules/audit/domain/sanitize";
 import {
   ALERT_AUDIT_FIELDS,
+  ASSET_UPGRADE_IMPACT_AUDIT_FIELDS,
   AUDIT_ACTIONS,
   AUDIT_OBJECT_TYPES,
   AUDIT_RESULTS,
@@ -18,6 +25,7 @@ import {
 } from "../domain/alert-evaluation";
 import {
   AlertValidationError,
+  ALERT_SOURCE_TYPES,
   nextAlertStatus,
   validateAlertRuleConfig,
   type AlertAction,
@@ -80,7 +88,7 @@ async function activeMembership(
   field: string
 ) {
   const membership = await client.projectMember.findFirst({
-    where: { id: membershipId, projectId, leftAt: null },
+    where: { id: membershipId, projectId, leftAt: null, user: { status: "ACTIVE" } },
     select: {
       id: true,
       userId: true,
@@ -224,6 +232,7 @@ async function writeAlertLifecycleAudit(
     reason: string;
     actorId: string | null;
     auditContext?: AuditContext;
+    sourceSnapshot?: Record<string, unknown>;
   }
 ) {
   return writeAudit(client, {
@@ -232,7 +241,12 @@ async function writeAlertLifecycleAudit(
     objectId: input.alert.id,
     context: input.auditContext ?? workerAuditContext(input.projectId, input.actorId, input.reason),
     after: {
-      value: { ...alertAuditValue(input.alert), eventType: input.eventType, reason: input.reason },
+      value: {
+        ...alertAuditValue(input.alert),
+        ...input.sourceSnapshot,
+        eventType: input.eventType,
+        reason: input.reason
+      },
       allowedFields: ALERT_AUDIT_FIELDS
     }
   });
@@ -349,6 +363,18 @@ export async function updateProjectAlertRule(
   const reason = text(input.reason, "reason", 1024);
 
   return inTransaction(transaction, async (client) => {
+    await client.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "projects"
+      WHERE "id" = ${projectId}
+      FOR UPDATE
+    `;
+    await client.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "project_alert_rules"
+      WHERE "id" = ${ruleId} AND "project_id" = ${projectId}
+      FOR UPDATE
+    `;
     const current = await client.projectAlertRule.findFirst({ where: { id: ruleId, projectId } });
     if (!current)
       throw new AlertServiceError("ALERT_RULE_NOT_FOUND", "预警规则不存在或不属于该项目。", 404);
@@ -517,7 +543,11 @@ export async function runProjectAlertScan(input: { projectId: string; scanId: st
         readinessResults
       ] = await Promise.all([
         client.projectAlertRule.findMany({
-          where: { projectId: input.projectId, status: "ENABLED" }
+          where: {
+            projectId: input.projectId,
+            status: "ENABLED",
+            sourceType: { not: ALERT_SOURCE_TYPES.ASSET_IMPACT }
+          }
         }),
         client.projectScheduleState.findUnique({
           where: { projectId: input.projectId },
@@ -987,6 +1017,511 @@ export async function runProjectAlertScan(input: { projectId: string; scanId: st
     }
     throw error;
   }
+}
+
+type AssetImpactProjectionInput = {
+  projectId: string;
+  impactId: string;
+  eventAssessmentRevisionId: string | null;
+  sourceEventType:
+    | "asset.impact.assessed"
+    | "asset.impact.disposition-recorded"
+    | "asset.impact.risk-acceptance.decided"
+    | "project.asset-upgrade.adopted"
+    | "asset.impact.closed";
+  sourceJobId: string;
+  jobAttemptId: string;
+  traceId: string | null;
+};
+
+function assetImpactSourceSnapshot(
+  source: AssetImpactAlertSource,
+  input: AssetImpactProjectionInput
+): Record<string, unknown> {
+  return {
+    projectId: source.projectId,
+    projectStatus: source.projectStatus,
+    impactId: source.impactId,
+    impactVersion: source.impactVersion,
+    technicalAssetId: source.technicalAssetId,
+    impactSourceType: source.impactSourceType,
+    impactSourceKey: source.impactSourceKey,
+    impactStatus: source.impactStatus,
+    assessmentRevisionId: source.assessmentRevisionId,
+    assessmentSequence: source.assessmentSequence,
+    assessmentSnapshotChecksum: source.snapshotChecksum,
+    assessmentSourceWatermark: source.sourceWatermark,
+    frozenAt: source.frozenAt.toISOString(),
+    ownerMembershipId: source.ownerMembershipId,
+    dueAt: source.dueAt?.toISOString() ?? null,
+    historicalOnly: source.historicalOnly,
+    manualAssignmentRequired: source.manualAssignmentRequired,
+    sourceJobId: input.sourceJobId,
+    sourceEventType: input.sourceEventType,
+    desiredState: source.desiredState
+  };
+}
+
+function assetImpactProjectionKey(
+  source: AssetImpactAlertSource,
+  input: AssetImpactProjectionInput,
+  rule: { id: string; version: number } | null
+) {
+  return buildAssetImpactProjectionAttemptKey({
+    impactId: source.impactId,
+    assessmentRevisionId: source.assessmentRevisionId,
+    assessmentSequence: source.assessmentSequence,
+    snapshotChecksum: source.snapshotChecksum,
+    sourceWatermark: source.sourceWatermark,
+    desiredState: source.desiredState,
+    sourceJobId: input.sourceJobId,
+    sourceEventType: input.sourceEventType,
+    ruleId: rule?.id,
+    ruleVersion: rule?.version
+  });
+}
+
+function projectionAuditContext(
+  input: AssetImpactProjectionInput,
+  source: AssetImpactAlertSource,
+  reason: string
+): AuditContext {
+  return {
+    actorId: null,
+    requestId: input.sourceJobId,
+    traceId: input.traceId,
+    source: AUDIT_SOURCES.WORKER,
+    sourceIp: null,
+    userAgent: null,
+    reason,
+    projectId: source.projectId,
+    departmentId: null,
+    operationId: sanitizeAuditText(input.jobAttemptId, 191) || null
+  };
+}
+
+function projectionAttemptFacts(
+  source: AssetImpactAlertSource,
+  projection: AssetImpactProjectionInput,
+  facts: {
+    alertId?: string | null;
+    ruleId?: string | null;
+    ruleVersion?: number | null;
+    result: "DELIVERED" | "BLOCKED_CONFIGURATION" | "FAILED_TRANSIENT";
+    blockedReason?: string | null;
+    idempotencyKey: string;
+  }
+) {
+  return {
+    projectId: source.projectId,
+    impactId: source.impactId,
+    alertId: facts.alertId ?? null,
+    alertRuleId: facts.ruleId ?? null,
+    ruleVersion: facts.ruleVersion ?? null,
+    sourceKey: source.alertSourceKey,
+    assessmentRevisionId: source.assessmentRevisionId,
+    assessmentSequence: source.assessmentSequence,
+    assessmentSnapshotChecksum: source.snapshotChecksum,
+    assessmentSourceWatermark: source.sourceWatermark,
+    desiredState: source.desiredState,
+    sourceJobId: projection.sourceJobId,
+    sourceEventType: projection.sourceEventType,
+    result: facts.result,
+    blockedReason: facts.blockedReason ?? null,
+    idempotencyKey: facts.idempotencyKey
+  };
+}
+
+async function projectionMembership(
+  client: Prisma.TransactionClient,
+  projectId: string,
+  membershipId: string
+) {
+  const membership = await client.projectMember.findFirst({
+    where: { id: membershipId, projectId, leftAt: null, user: { status: "ACTIVE" } },
+    select: {
+      id: true,
+      userId: true,
+      projectId: true,
+      projectRole: true,
+      departmentId: true,
+      joinedAt: true
+    }
+  });
+  return membership ? { ...membership, joinedAt: membership.joinedAt.toISOString() } : null;
+}
+
+async function writeProjectionReplayAudit(
+  client: Prisma.TransactionClient,
+  source: AssetImpactAlertSource,
+  input: AssetImpactProjectionInput,
+  attempt: {
+    id: string;
+    ruleId: string | null;
+    ruleVersion: number | null;
+    result: "DELIVERED" | "BLOCKED_CONFIGURATION" | "FAILED_TRANSIENT";
+    blockedReason: string | null;
+    idempotencyKey: string;
+  }
+) {
+  await writeAudit(client, {
+    action: AUDIT_ACTIONS.ASSET_IMPACT_ALERT_PROJECTION_REPLAYED,
+    objectType: AUDIT_OBJECT_TYPES.ASSET_IMPACT_ALERT_PROJECTION_ATTEMPT,
+    objectId: attempt.id,
+    context: projectionAuditContext(input, source, "资产影响预警投影重放。"),
+    after: {
+      value: projectionAttemptFacts(source, input, {
+        ruleId: attempt.ruleId,
+        ruleVersion: attempt.ruleVersion,
+        result: attempt.result,
+        blockedReason: attempt.blockedReason,
+        idempotencyKey: attempt.idempotencyKey
+      }),
+      allowedFields: ASSET_UPGRADE_IMPACT_AUDIT_FIELDS
+    }
+  });
+}
+
+async function recordBlockedProjection(
+  client: Prisma.TransactionClient,
+  source: AssetImpactAlertSource,
+  input: AssetImpactProjectionInput,
+  rule: { id: string; version: number } | null,
+  blockedReason: string
+) {
+  const idempotencyKey = assetImpactProjectionKey(source, input, rule);
+  const existing = await client.assetImpactAlertProjectionAttempt.findUnique({
+    where: { idempotencyKey }
+  });
+  if (existing) {
+    await writeProjectionReplayAudit(client, source, input, existing);
+    return { repeated: true, attemptId: existing.id };
+  }
+  const attempt = await client.assetImpactAlertProjectionAttempt.create({
+    data: {
+      impactId: source.impactId,
+      projectId: source.projectId,
+      technicalAssetId: source.technicalAssetId,
+      assessmentRevisionId: source.assessmentRevisionId,
+      assessmentSequence: source.assessmentSequence,
+      assessmentSnapshotChecksum: source.snapshotChecksum,
+      assessmentSourceWatermark: source.sourceWatermark,
+      sourceKey: source.alertSourceKey,
+      desiredState: source.desiredState,
+      sourceJobId: input.sourceJobId,
+      sourceEventType: input.sourceEventType,
+      ruleId: rule?.id ?? null,
+      ruleVersion: rule?.version ?? null,
+      result: "BLOCKED_CONFIGURATION",
+      blockedReason,
+      idempotencyKey
+    }
+  });
+  await writeAudit(client, {
+    action: AUDIT_ACTIONS.ASSET_IMPACT_ALERT_PROJECTION_BLOCKED,
+    objectType: AUDIT_OBJECT_TYPES.ASSET_IMPACT_ALERT_PROJECTION_ATTEMPT,
+    objectId: attempt.id,
+    result: AUDIT_RESULTS.FAILURE,
+    context: projectionAuditContext(input, source, blockedReason),
+    after: {
+      value: projectionAttemptFacts(source, input, {
+        ruleId: rule?.id,
+        ruleVersion: rule?.version,
+        result: "BLOCKED_CONFIGURATION",
+        blockedReason,
+        idempotencyKey
+      }),
+      allowedFields: ASSET_UPGRADE_IMPACT_AUDIT_FIELDS
+    }
+  });
+  return { repeated: false, attemptId: attempt.id };
+}
+
+function projectedAssessmentRevisionId(snapshot: Prisma.JsonValue): string | null {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
+  const value = (snapshot as Record<string, Prisma.JsonValue>).assessmentRevisionId;
+  return typeof value === "string" ? value : null;
+}
+
+async function recordDeliveredProjection(
+  client: Prisma.TransactionClient,
+  source: AssetImpactAlertSource,
+  input: AssetImpactProjectionInput,
+  rule: { id: string; version: number },
+  alertId: string | null,
+  idempotencyKey: string
+) {
+  const attempt = await client.assetImpactAlertProjectionAttempt.create({
+    data: {
+      impactId: source.impactId,
+      projectId: source.projectId,
+      technicalAssetId: source.technicalAssetId,
+      assessmentRevisionId: source.assessmentRevisionId,
+      assessmentSequence: source.assessmentSequence,
+      assessmentSnapshotChecksum: source.snapshotChecksum,
+      assessmentSourceWatermark: source.sourceWatermark,
+      sourceKey: source.alertSourceKey,
+      desiredState: source.desiredState,
+      sourceJobId: input.sourceJobId,
+      sourceEventType: input.sourceEventType,
+      ruleId: rule.id,
+      ruleVersion: rule.version,
+      result: "DELIVERED",
+      idempotencyKey
+    }
+  });
+  await writeAudit(client, {
+    action: AUDIT_ACTIONS.ASSET_IMPACT_ALERT_PROJECTED,
+    objectType: AUDIT_OBJECT_TYPES.ASSET_IMPACT_ALERT_PROJECTION_ATTEMPT,
+    objectId: attempt.id,
+    context: projectionAuditContext(input, source, "资产影响预警投影完成。"),
+    after: {
+      value: projectionAttemptFacts(source, input, {
+        alertId,
+        ruleId: rule.id,
+        ruleVersion: rule.version,
+        result: "DELIVERED",
+        idempotencyKey
+      }),
+      allowedFields: ASSET_UPGRADE_IMPACT_AUDIT_FIELDS
+    }
+  });
+  return attempt;
+}
+
+export async function projectAssetImpact(
+  input: AssetImpactProjectionInput,
+  transaction?: Prisma.TransactionClient
+) {
+  return inTransaction(transaction, async (client) => {
+    const source = await readAssetImpactAlertSource(client, input);
+    const snapshot = assetImpactSourceSnapshot(source, input);
+    await client.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "project_alert_rules"
+      WHERE "project_id" = ${source.projectId}
+        AND "source_type"::text = ${ALERT_SOURCE_TYPES.ASSET_IMPACT}
+      ORDER BY "id"
+      FOR UPDATE
+    `;
+    const rules = await client.projectAlertRule.findMany({
+      where: {
+        projectId: source.projectId,
+        sourceType: ALERT_SOURCE_TYPES.ASSET_IMPACT,
+        status: "ENABLED"
+      },
+      orderBy: { id: "asc" }
+    });
+    if (rules.length === 0) {
+      const blocked = await recordBlockedProjection(
+        client,
+        source,
+        input,
+        null,
+        "ASSET_IMPACT_ALERT_RULE_MISSING"
+      );
+      return { deliveredCount: 0, blockedCount: 1, repeatedCount: blocked.repeated ? 1 : 0 };
+    }
+
+    const now = await databaseNow(client);
+    let deliveredCount = 0;
+    let blockedCount = 0;
+    let repeatedCount = 0;
+    for (const rule of rules) {
+      const idempotencyKey = assetImpactProjectionKey(source, input, rule);
+      const existingAttempt = await client.assetImpactAlertProjectionAttempt.findUnique({
+        where: { idempotencyKey }
+      });
+      if (existingAttempt) {
+        await writeProjectionReplayAudit(client, source, input, existingAttempt);
+        repeatedCount++;
+        continue;
+      }
+
+      let conditionValid = true;
+      try {
+        validateAlertRuleConfig(rule.sourceType, rule.conditionJson);
+      } catch {
+        conditionValid = false;
+      }
+      const [owner, escalation] = await Promise.all([
+        projectionMembership(client, source.projectId, rule.ownerMembershipId),
+        projectionMembership(client, source.projectId, rule.escalationMembershipId)
+      ]);
+      const blockedReason = !conditionValid
+        ? "ASSET_IMPACT_ALERT_RULE_CONDITION_INVALID"
+        : !owner
+          ? "ASSET_IMPACT_ALERT_OWNER_MEMBERSHIP_INVALID"
+          : !escalation
+            ? "ASSET_IMPACT_ALERT_ESCALATION_MEMBERSHIP_INVALID"
+            : null;
+      if (blockedReason || !owner || !escalation) {
+        await recordBlockedProjection(client, source, input, rule, blockedReason ?? "INVALID_RULE");
+        blockedCount++;
+        continue;
+      }
+
+      await client.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "project_alerts"
+        WHERE "project_id" = ${source.projectId}
+          AND "rule_id" = ${rule.id}
+          AND "source_key" = ${source.alertSourceKey}
+        FOR UPDATE
+      `;
+      const existingAlert = await client.projectAlert.findUnique({
+        where: {
+          projectId_ruleId_sourceKey: {
+            projectId: source.projectId,
+            ruleId: rule.id,
+            sourceKey: source.alertSourceKey
+          }
+        }
+      });
+      let alert = existingAlert;
+      let eventType: ProjectAlertEventType | null = null;
+      let reason = "资产影响评估投影已更新。";
+      if (source.desiredState === "ACTIVE") {
+        if (!existingAlert) {
+          alert = await client.projectAlert.create({
+            data: {
+              projectId: source.projectId,
+              ruleId: rule.id,
+              sourceType: ALERT_SOURCE_TYPES.ASSET_IMPACT,
+              sourceKey: source.alertSourceKey,
+              sourceSnapshot: snapshot as Prisma.InputJsonValue,
+              probability: rule.probability,
+              impact: rule.impact,
+              ownerUserId: owner.userId,
+              ownerMembershipSnapshot: owner as Prisma.InputJsonValue,
+              escalationUserId: escalation.userId,
+              escalationMembershipSnapshot: escalation as Prisma.InputJsonValue,
+              firstTriggeredAt: now,
+              lastObservedAt: now
+            }
+          });
+          eventType = "TRIGGERED";
+          reason = "资产影响评估触发项目预警。";
+        } else if (existingAlert.status === "RESOLVED" || existingAlert.status === "CLOSED") {
+          const hasNewAssessmentRevision =
+            projectedAssessmentRevisionId(existingAlert.sourceSnapshot) !==
+            source.assessmentRevisionId;
+          if (hasNewAssessmentRevision) {
+            const isClosed = existingAlert.status === "CLOSED";
+            alert = await client.projectAlert.update({
+              where: { id: existingAlert.id },
+              data: isClosed
+                ? {
+                    sourceSnapshot: snapshot as Prisma.InputJsonValue,
+                    lastObservedAt: now,
+                    version: { increment: 1 }
+                  }
+                : {
+                    status: nextAlertStatus(existingAlert.status, "RETRIGGER"),
+                    sourceSnapshot: snapshot as Prisma.InputJsonValue,
+                    lastObservedAt: now,
+                    acknowledgedAt: null,
+                    resolvedAt: null,
+                    escalatedAt: null,
+                    version: { increment: 1 }
+                  }
+            });
+            eventType = "RETRIGGERED";
+            reason = isClosed
+              ? "已关闭预警收到新的资产影响评估修订，保留关闭事实并追加复发事件。"
+              : "新的资产影响评估修订重新触发项目预警。";
+          } else {
+            alert = await client.projectAlert.update({
+              where: { id: existingAlert.id },
+              data: { sourceSnapshot: snapshot as Prisma.InputJsonValue, lastObservedAt: now }
+            });
+          }
+        } else {
+          alert = await client.projectAlert.update({
+            where: { id: existingAlert.id },
+            data: {
+              sourceSnapshot: snapshot as Prisma.InputJsonValue,
+              lastObservedAt: now
+            }
+          });
+        }
+      } else if (existingAlert && activeStatuses.includes(existingAlert.status)) {
+        alert = await client.projectAlert.update({
+          where: { id: existingAlert.id },
+          data: {
+            status: "RESOLVED",
+            sourceSnapshot: snapshot as Prisma.InputJsonValue,
+            lastObservedAt: now,
+            resolvedAt: now,
+            version: { increment: 1 }
+          }
+        });
+        eventType = "RESOLVED";
+        reason = "资产影响已进入已缓解或已关闭状态。";
+      } else if (existingAlert) {
+        alert = await client.projectAlert.update({
+          where: { id: existingAlert.id },
+          data: {
+            sourceSnapshot: snapshot as Prisma.InputJsonValue,
+            lastObservedAt: now
+          }
+        });
+      }
+
+      if (alert && eventType) {
+        await appendEvent(client, {
+          projectId: source.projectId,
+          alertId: alert.id,
+          eventType,
+          reason,
+          snapshot,
+          actorId: null
+        });
+        await writeAlertLifecycleAudit(client, {
+          projectId: source.projectId,
+          alert,
+          eventType,
+          reason,
+          actorId: null,
+          auditContext: projectionAuditContext(input, source, reason),
+          sourceSnapshot: snapshot
+        });
+        const outboxEventType =
+          eventType === "RESOLVED"
+            ? "governance.alert.resolved"
+            : eventType === "RETRIGGERED" && alert.status === "CLOSED"
+              ? "governance.alert.recurred"
+              : "governance.alert.triggered";
+        await appendOutboxEvent(client, {
+          eventType: outboxEventType,
+          aggregateType: "PROJECT_ALERT",
+          aggregateId: alert.id,
+          idempotencyKey: `${idempotencyKey}:${eventType.toLowerCase()}`,
+          payload: {
+            projectId: source.projectId,
+            alertId: alert.id,
+            ownerUserId: alert.ownerUserId,
+            escalationUserId: alert.escalationUserId,
+            assessmentRevisionId: source.assessmentRevisionId,
+            assessmentSequence: source.assessmentSequence,
+            assessmentSnapshotChecksum: source.snapshotChecksum,
+            assessmentSourceWatermark: source.sourceWatermark,
+            desiredState: source.desiredState
+          }
+        });
+      }
+      await recordDeliveredProjection(
+        client,
+        source,
+        input,
+        rule,
+        alert?.id ?? null,
+        idempotencyKey
+      );
+      deliveredCount++;
+    }
+    return { deliveredCount, blockedCount, repeatedCount };
+  });
 }
 
 export async function transitionProjectAlert(

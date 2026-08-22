@@ -358,8 +358,8 @@ describeDatabase("APM-062 PostgreSQL asset Releases", () => {
     );
     await expect(
       db.$executeRawUnsafe(
-        `TRUNCATE TABLE "project_asset_derivations", "project_asset_usages", "project_asset_references", "asset_component_snapshots", "asset_release_versions", "asset_releases"`
+        `TRUNCATE TABLE "asset_impact_alert_projection_attempts", "asset_impact_dispositions", "asset_impact_risk_acceptance_decisions", "asset_impact_risk_acceptance_requests", "asset_impact_assessment_revisions", "asset_project_impacts", "asset_release_recall_affected_versions", "asset_release_recall_revisions", "asset_release_recalls", "asset_upgrade_usage_mappings", "asset_upgrade_adoptions", "asset_upgrade_candidates", "project_asset_derivations", "project_asset_usages", "project_asset_references", "asset_component_snapshots", "asset_release_versions", "asset_releases"`
       )
-    ).rejects.toThrow(/cannot be truncated/u);
+    ).rejects.toThrow(/cannot be truncated|TRUNCATE is forbidden/u);
   });
 });
