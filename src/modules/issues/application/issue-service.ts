@@ -1,10 +1,13 @@
 import { IssueSourceType, Prisma, UserStatus } from "@prisma/client";
 
+import { decideAuthorization, type AuthorizationActor } from "@/lib/auth/authorize";
+import { PERMISSIONS } from "@/lib/auth/permissions";
 import { db, inTransaction } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   AUDIT_ACTIONS,
   AUDIT_OBJECT_TYPES,
+  ISSUE_CAPTURE_AUDIT_FIELDS,
   ISSUE_AUDIT_FIELDS
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
@@ -35,7 +38,29 @@ const issueInclude = {
   }
 } satisfies Prisma.IssueInclude;
 
+const issueCaptureFileSelect = {
+  id: true,
+  projectId: true,
+  uploadedById: true,
+  originalName: true,
+  declaredMimeType: true,
+  verifiedMimeType: true,
+  sha256: true,
+  status: true,
+  sensitivity: true
+} satisfies Prisma.FileObjectSelect;
+
+const issueCaptureInclude = {
+  voiceFile: { select: issueCaptureFileSelect },
+  attachments: {
+    orderBy: { fileId: "asc" },
+    include: { file: { select: issueCaptureFileSelect } }
+  }
+} satisfies Prisma.IssueCaptureInclude;
+
 type IssueFact = Prisma.IssueGetPayload<{ include: typeof issueInclude }>;
+type IssueCaptureFact = Prisma.IssueCaptureGetPayload<{ include: typeof issueCaptureInclude }>;
+type IssueCaptureFileFact = Prisma.FileObjectGetPayload<{ select: typeof issueCaptureFileSelect }>;
 type IssueRelationFact = Prisma.IssueRelationGetPayload<{
   include: { blockerIssue: { select: { status: true } } };
 }>;
@@ -61,6 +86,12 @@ export class IssueServiceError extends Error {
   }
 }
 
+export type IssueCaptureFileAccess = {
+  actor: AuthorizationActor;
+  projectDepartmentId: string | null;
+  memberRoles: string[];
+};
+
 function requiredText(value: unknown, field: string, maximum: number): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > maximum) {
     throw new IssueServiceError(
@@ -75,6 +106,30 @@ function requiredText(value: unknown, field: string, maximum: number): string {
 function optionalText(value: unknown, field: string, maximum: number): string | null {
   if (value === undefined || value === null) return null;
   return requiredText(value, field, maximum);
+}
+
+function optionalCaptureText(value: unknown): string | null {
+  return value === undefined || value === null ? null : requiredText(value, "inputText", 10_000);
+}
+
+function optionalIdentifier(value: unknown, field: string): string | null {
+  return value === undefined || value === null ? null : requiredText(value, field, 191);
+}
+
+function captureMediaFileIds(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 20) {
+    throw new IssueServiceError(
+      "ISSUE_CAPTURE_INVALID_INPUT",
+      "mediaFileIds 必须是不超过 20 项的数组。",
+      422
+    );
+  }
+  const ids = value.map((item) => requiredText(item, "mediaFileIds", 191));
+  if (new Set(ids).size !== ids.length) {
+    throw new IssueServiceError("ISSUE_CAPTURE_INVALID_INPUT", "mediaFileIds 不得重复。", 422);
+  }
+  return ids;
 }
 
 function category(value: unknown): IssueCategory {
@@ -301,6 +356,146 @@ function serializeIssue(issue: IssueFact, now: Date) {
   };
 }
 
+function serializeIssueCapture(capture: IssueCaptureFact) {
+  return {
+    id: capture.id,
+    projectId: capture.projectId,
+    inputText: capture.inputText,
+    voiceFile: capture.voiceFile
+      ? {
+          id: capture.voiceFile.id,
+          sha256: capture.voiceFileSha256,
+          mimeType: capture.voiceFile.verifiedMimeType ?? capture.voiceFile.declaredMimeType,
+          sensitivity: capture.voiceFile.sensitivity
+        }
+      : null,
+    mediaFiles: capture.attachments.map((attachment) => ({
+      id: attachment.fileId,
+      sha256: attachment.fileSha256,
+      mimeType: attachment.file.verifiedMimeType ?? attachment.file.declaredMimeType,
+      sensitivity: attachment.file.sensitivity
+    })),
+    status: capture.status,
+    issueId: capture.issueId,
+    version: capture.version,
+    createdById: capture.createdById,
+    createdAt: capture.createdAt.toISOString(),
+    confirmedAt: capture.confirmedAt?.toISOString() ?? null,
+    allowedActions: capture.status === "PENDING_CONFIRMATION" ? ["CONFIRM"] : []
+  };
+}
+
+function issueCaptureAuditValue(capture: ReturnType<typeof serializeIssueCapture>, reason: string) {
+  return {
+    projectId: capture.projectId,
+    captureId: capture.id,
+    status: capture.status,
+    hasInputText: capture.inputText !== null,
+    voiceFileId: capture.voiceFile?.id ?? null,
+    voiceFileSha256: capture.voiceFile?.sha256 ?? null,
+    mediaCount: capture.mediaFiles.length,
+    issueId: capture.issueId,
+    version: capture.version,
+    reason
+  };
+}
+
+async function lockAndReadIssueCaptureFiles(
+  client: Prisma.TransactionClient,
+  input: {
+    projectId: string;
+    voiceFileId: string | null;
+    mediaFileIds: string[];
+    expectedSha256?: Map<string, string>;
+    access?: IssueCaptureFileAccess;
+  }
+) {
+  const requested = [
+    ...(input.voiceFileId ? [{ id: input.voiceFileId, kind: "VOICE" as const }] : []),
+    ...input.mediaFileIds.map((id) => ({ id, kind: "MEDIA" as const }))
+  ];
+  if (new Set(requested.map((file) => file.id)).size !== requested.length) {
+    throw new IssueServiceError(
+      "ISSUE_CAPTURE_INVALID_INPUT",
+      "语音文件不得重复作为媒体附件。",
+      422
+    );
+  }
+  for (const fileId of requested.map((file) => file.id).sort()) {
+    await client.$queryRaw`
+      SELECT "id" FROM "file_objects"
+      WHERE "id" = ${fileId} AND "project_id" = ${input.projectId}
+      FOR UPDATE
+    `;
+  }
+  const facts = await client.fileObject.findMany({
+    where: { projectId: input.projectId, id: { in: requested.map((file) => file.id) } },
+    select: issueCaptureFileSelect
+  });
+  const byId = new Map(facts.map((file) => [file.id, file]));
+  for (const requestedFile of requested) {
+    const file = byId.get(requestedFile.id);
+    if (!file) {
+      throw new IssueServiceError(
+        "ISSUE_CAPTURE_FILE_NOT_FOUND",
+        "录入文件不存在或不属于该项目。",
+        404
+      );
+    }
+    const mimeType = file.verifiedMimeType ?? file.declaredMimeType;
+    if (file.status !== "AVAILABLE" || !file.sha256) {
+      throw new IssueServiceError(
+        "ISSUE_CAPTURE_FILE_NOT_AVAILABLE",
+        "录入文件必须完成扫描并处于可用状态。",
+        409
+      );
+    }
+    const expectedSha256 = input.expectedSha256?.get(file.id);
+    if (expectedSha256 !== undefined && file.sha256 !== expectedSha256) {
+      throw new IssueServiceError(
+        "ISSUE_CAPTURE_FILE_CHANGED",
+        "录入文件与冻结校验值不一致。",
+        409
+      );
+    }
+    if (
+      (requestedFile.kind === "VOICE" && !mimeType.startsWith("audio/")) ||
+      (requestedFile.kind === "MEDIA" &&
+        !mimeType.startsWith("image/") &&
+        !mimeType.startsWith("video/"))
+    ) {
+      throw new IssueServiceError(
+        "ISSUE_CAPTURE_FILE_TYPE_INVALID",
+        requestedFile.kind === "VOICE" ? "语音文件必须是音频。" : "媒体附件必须是图片或视频。",
+        422
+      );
+    }
+    if (file.sensitivity === "RESTRICTED") {
+      if (!input.access) {
+        throw new IssueServiceError(
+          "ISSUE_CAPTURE_SENSITIVE_FILE_DENIED",
+          "无权引用严格受限录入文件。",
+          403
+        );
+      }
+      const decision = decideAuthorization(input.access.actor, PERMISSIONS.SENSITIVE_FILE_READ, {
+        projectId: input.projectId,
+        resourceDepartmentId: input.access.projectDepartmentId,
+        resourceOwnerId: file.uploadedById,
+        memberRoles: input.access.memberRoles
+      });
+      if (!decision.allowed) {
+        throw new IssueServiceError(
+          "ISSUE_CAPTURE_SENSITIVE_FILE_DENIED",
+          "无权引用严格受限录入文件。",
+          403
+        );
+      }
+    }
+  }
+  return byId;
+}
+
 function auditValue(
   issue: ReturnType<typeof serializeIssue>,
   eventType: IssueEventType,
@@ -397,6 +592,22 @@ async function lockProject(client: Prisma.TransactionClient, projectId: string) 
     SELECT "id" FROM "projects" WHERE "id" = ${projectId} FOR UPDATE
   `;
   return client.project.findUnique({ where: { id: projectId } });
+}
+
+async function lockIssueCapture(
+  client: Prisma.TransactionClient,
+  projectId: string,
+  captureId: string
+) {
+  await client.$queryRaw`
+    SELECT "id" FROM "issue_captures"
+    WHERE "id" = ${captureId} AND "project_id" = ${projectId}
+    FOR UPDATE
+  `;
+  return client.issueCapture.findFirst({
+    where: { id: captureId, projectId },
+    include: issueCaptureInclude
+  });
 }
 
 async function activeIssueMembership(
@@ -612,6 +823,86 @@ function context(
   return { ...input.auditContext, actorId: input.actorId, projectId, reason };
 }
 
+export async function createIssueCapture(
+  input: {
+    projectId: string;
+    inputText?: unknown;
+    voiceFileId?: unknown;
+    mediaFileIds?: unknown;
+    actorId: string;
+    fileAccess?: IssueCaptureFileAccess;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
+  const projectId = requiredText(input.projectId, "projectId", 191);
+  const inputText = optionalCaptureText(input.inputText);
+  const voiceFileId = optionalIdentifier(input.voiceFileId, "voiceFileId");
+  const mediaFileIds = captureMediaFileIds(input.mediaFileIds);
+  if (!inputText && !voiceFileId) {
+    throw new IssueServiceError(
+      "ISSUE_CAPTURE_INPUT_REQUIRED",
+      "inputText 与 voiceFileId 至少提供一项。",
+      422
+    );
+  }
+  if (voiceFileId && mediaFileIds.includes(voiceFileId)) {
+    throw new IssueServiceError(
+      "ISSUE_CAPTURE_INVALID_INPUT",
+      "语音文件不得重复作为媒体附件。",
+      422
+    );
+  }
+  return inTransaction(transaction, async (client) => {
+    const project = await lockProject(client, projectId);
+    if (!project) throw new IssueServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
+    assertProjectIssuesWritable(project.status);
+    const files = await lockAndReadIssueCaptureFiles(client, {
+      projectId,
+      voiceFileId,
+      mediaFileIds,
+      access: input.fileAccess
+    });
+    const capture = await client.issueCapture.create({
+      data: {
+        projectId,
+        inputText,
+        voiceFileId,
+        voiceFileSha256: voiceFileId ? files.get(voiceFileId)!.sha256 : null,
+        createdById: input.actorId,
+        attachments: {
+          create: mediaFileIds.map((fileId) => ({
+            projectId,
+            fileId,
+            fileSha256: files.get(fileId)!.sha256!
+          }))
+        }
+      },
+      include: issueCaptureInclude
+    });
+    const serialized = serializeIssueCapture(capture);
+    const reason = "保存移动端问题录入，等待用户确认文字。";
+    const audit = await writeAudit(client, {
+      action: AUDIT_ACTIONS.ISSUE_CAPTURE_CREATED,
+      objectType: AUDIT_OBJECT_TYPES.ISSUE_CAPTURE,
+      objectId: capture.id,
+      context: context(input, projectId, reason),
+      after: {
+        value: issueCaptureAuditValue(serialized, reason),
+        allowedFields: ISSUE_CAPTURE_AUDIT_FIELDS
+      }
+    });
+    const outbox = await appendOutboxEvent(client, {
+      eventType: "issues.issue-capture.created",
+      aggregateType: "ISSUE_CAPTURE",
+      aggregateId: capture.id,
+      idempotencyKey: capture.id,
+      payload: { ...issueCaptureAuditValue(serialized, reason), auditId: audit.id }
+    });
+    return { capture: serialized, auditId: audit.id, outboxEventId: outbox.id };
+  });
+}
+
 export async function createProjectIssue(
   input: {
     projectId: string;
@@ -626,6 +917,9 @@ export async function createProjectIssue(
     sourceType?: unknown;
     sourceSnapshot?: Record<string, unknown>;
     creationReason?: string;
+    captureId?: unknown;
+    captureVersion?: unknown;
+    captureFileAccess?: IssueCaptureFileAccess;
     actorId: string;
     auditContext: AuditContext;
   },
@@ -634,10 +928,89 @@ export async function createProjectIssue(
   const projectId = requiredText(input.projectId, "projectId", 191);
   const value = details(input);
   const issueSourceType = input.sourceType === undefined ? "PROJECT" : sourceType(input.sourceType);
+  const captureId = optionalIdentifier(input.captureId, "captureId");
+  const expectedCaptureVersion =
+    input.captureVersion === undefined ? null : version(input.captureVersion);
+  if ((captureId === null) !== (expectedCaptureVersion === null)) {
+    throw new IssueServiceError(
+      "ISSUE_CAPTURE_INVALID_INPUT",
+      "captureId 与 captureVersion 必须同时提供或同时省略。",
+      422
+    );
+  }
+  if (captureId && issueSourceType !== "PROJECT") {
+    throw new IssueServiceError(
+      "ISSUE_CAPTURE_SOURCE_INVALID",
+      "移动端录入只能创建项目来源问题。",
+      422
+    );
+  }
+  const phenomenonDescription = captureId ? value.confirmedText : value.phenomenonDescription;
   return inTransaction(transaction, async (client) => {
     const project = await lockProject(client, projectId);
     if (!project) throw new IssueServiceError("PROJECT_NOT_FOUND", "项目不存在。", 404);
     assertProjectIssuesWritable(project.status);
+    let pendingCapture: IssueCaptureFact | null = null;
+    let captureSourceSnapshot: Record<string, unknown> | undefined;
+    if (captureId && expectedCaptureVersion !== null) {
+      pendingCapture = await lockIssueCapture(client, projectId, captureId);
+      if (!pendingCapture || pendingCapture.createdById !== input.actorId) {
+        throw new IssueServiceError(
+          "ISSUE_CAPTURE_NOT_FOUND",
+          "移动端问题录入不存在或不属于当前用户。",
+          404
+        );
+      }
+      if (pendingCapture.status !== "PENDING_CONFIRMATION") {
+        throw new IssueServiceError(
+          "ISSUE_CAPTURE_ALREADY_CONFIRMED",
+          "移动端问题录入已确认。",
+          409
+        );
+      }
+      if (pendingCapture.version !== expectedCaptureVersion) {
+        throw new IssueServiceError(
+          "ISSUE_CAPTURE_VERSION_CONFLICT",
+          "移动端问题录入版本冲突。",
+          409
+        );
+      }
+      const expectedSha256 = new Map<string, string>();
+      if (pendingCapture.voiceFileId && pendingCapture.voiceFileSha256) {
+        expectedSha256.set(pendingCapture.voiceFileId, pendingCapture.voiceFileSha256);
+      }
+      for (const attachment of pendingCapture.attachments) {
+        expectedSha256.set(attachment.fileId, attachment.fileSha256);
+      }
+      const files = await lockAndReadIssueCaptureFiles(client, {
+        projectId,
+        voiceFileId: pendingCapture.voiceFileId,
+        mediaFileIds: pendingCapture.attachments.map((attachment) => attachment.fileId),
+        expectedSha256,
+        access: input.captureFileAccess
+      });
+      captureSourceSnapshot = {
+        captureId: pendingCapture.id,
+        captureVersion: pendingCapture.version,
+        inputText: pendingCapture.inputText,
+        voiceFile: pendingCapture.voiceFileId
+          ? {
+              id: pendingCapture.voiceFileId,
+              sha256: pendingCapture.voiceFileSha256,
+              mimeType:
+                files.get(pendingCapture.voiceFileId)!.verifiedMimeType ??
+                files.get(pendingCapture.voiceFileId)!.declaredMimeType
+            }
+          : null,
+        mediaFiles: pendingCapture.attachments.map((attachment) => ({
+          id: attachment.fileId,
+          sha256: attachment.fileSha256,
+          mimeType:
+            files.get(attachment.fileId)!.verifiedMimeType ??
+            files.get(attachment.fileId)!.declaredMimeType
+        }))
+      };
+    }
     const issue = await client.issue.create({
       data: {
         projectId,
@@ -646,7 +1019,7 @@ export async function createProjectIssue(
         sourceType: issueSourceType,
         category: value.category,
         severity: value.severity,
-        phenomenonDescription: value.phenomenonDescription,
+        phenomenonDescription,
         rootCauseCategory: value.rootCauseCategory,
         rootCauseDescription: value.rootCauseDescription,
         createdById: input.actorId,
@@ -655,6 +1028,13 @@ export async function createProjectIssue(
       },
       include: issueInclude
     });
+    const confirmedCapture = pendingCapture
+      ? await client.issueCapture.update({
+          where: { id: pendingCapture.id },
+          data: { status: "CONFIRMED", issueId: issue.id, version: { increment: 1 } },
+          include: issueCaptureInclude
+        })
+      : null;
     const now = await databaseNow(client);
     const serialized = serializeIssue(issue, now);
     const reason = input.creationReason ?? "创建统一问题主记录。";
@@ -663,7 +1043,14 @@ export async function createProjectIssue(
       projectId,
       eventType: "CREATED",
       reason,
-      snapshot: historySnapshot(serialized, "CREATED", reason, input.sourceSnapshot),
+      snapshot: historySnapshot(
+        serialized,
+        "CREATED",
+        reason,
+        captureSourceSnapshot
+          ? { ...(input.sourceSnapshot ?? {}), issueCapture: captureSourceSnapshot }
+          : input.sourceSnapshot
+      ),
       actorId: input.actorId
     });
     const audit = await writeAudit(client, {
@@ -680,10 +1067,49 @@ export async function createProjectIssue(
       idempotencyKey: issue.id,
       payload: { ...auditValue(serialized, "CREATED", reason), auditId: audit.id }
     });
+    let captureAuditId: string | null = null;
+    let captureOutboxEventId: string | null = null;
+    if (confirmedCapture) {
+      const captureSerialized = serializeIssueCapture(confirmedCapture);
+      const captureReason = "用户确认文字并创建正式问题。";
+      const captureAudit = await writeAudit(client, {
+        action: AUDIT_ACTIONS.ISSUE_CAPTURE_CONFIRMED,
+        objectType: AUDIT_OBJECT_TYPES.ISSUE_CAPTURE,
+        objectId: confirmedCapture.id,
+        context: context(input, projectId, captureReason),
+        before: {
+          value: issueCaptureAuditValue(serializeIssueCapture(pendingCapture!), captureReason),
+          allowedFields: ISSUE_CAPTURE_AUDIT_FIELDS
+        },
+        after: {
+          value: issueCaptureAuditValue(captureSerialized, captureReason),
+          allowedFields: ISSUE_CAPTURE_AUDIT_FIELDS
+        }
+      });
+      const captureOutbox = await appendOutboxEvent(client, {
+        eventType: "issues.issue-capture.confirmed",
+        aggregateType: "ISSUE_CAPTURE",
+        aggregateId: confirmedCapture.id,
+        idempotencyKey: `${confirmedCapture.id}:${confirmedCapture.version}`,
+        payload: {
+          ...issueCaptureAuditValue(captureSerialized, captureReason),
+          auditId: captureAudit.id
+        }
+      });
+      captureAuditId = captureAudit.id;
+      captureOutboxEventId = captureOutbox.id;
+    }
     return {
       issue: serializeIssue(await readIssueOrThrow(client, projectId, issue.id), now),
       auditId: audit.id,
-      outboxEventId: outbox.id
+      outboxEventId: outbox.id,
+      ...(confirmedCapture
+        ? {
+            capture: serializeIssueCapture(confirmedCapture),
+            captureAuditId,
+            captureOutboxEventId
+          }
+        : {})
     };
   });
 }

@@ -2941,6 +2941,460 @@ a {
   padding: 28px 32px 48px;
 }
 
+@media (max-width: 600px) {
+  .issue-capture-page {
+    padding: 20px 16px 40px;
+  }
+
+  .issue-capture-header {
+    align-items: start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .issue-capture-header h1 {
+    font-size: 23px;
+  }
+
+  .issue-capture-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .issue-capture-steps li {
+    min-height: 42px;
+  }
+
+  .issue-capture-input-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .issue-capture-actions {
+    justify-content: stretch;
+  }
+
+  .issue-capture-actions button {
+    flex: 1 1 180px;
+  }
+}
+
+.issue-capture-page {
+  width: min(100%, 860px);
+  margin: 0 auto;
+  padding: 28px 32px 56px;
+}
+
+.issue-capture-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #d9e0e8;
+  padding-bottom: 18px;
+}
+
+.issue-capture-eyebrow,
+.issue-capture-kicker {
+  margin: 0 0 6px;
+  color: #1d5c8d;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.issue-capture-header h1,
+.issue-capture-form h2,
+.issue-capture-success h2,
+.issue-capture-recent h2 {
+  margin: 0;
+  color: #182230;
+  font-size: 25px;
+  line-height: 1.3;
+}
+
+.issue-capture-header p:last-child,
+.issue-capture-note,
+.issue-capture-empty,
+.issue-capture-success p {
+  color: #5d6c7c;
+  font-size: 14px;
+}
+
+.issue-capture-project {
+  color: #526476;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.issue-capture-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 22px 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid #cfd9e2;
+  background: #cfd9e2;
+}
+
+.issue-capture-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  background: #fff;
+  color: #667788;
+  font-size: 13px;
+}
+
+.issue-capture-steps li span {
+  display: grid;
+  flex: 0 0 24px;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #e7edf2;
+  color: #526476;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.issue-capture-steps li.is-current {
+  color: #1b526d;
+  font-weight: 700;
+}
+
+.issue-capture-steps li.is-current span {
+  background: #1d5c8d;
+  color: #fff;
+}
+
+.issue-capture-error {
+  margin: 0 0 16px;
+  border-left: 4px solid #b63b32;
+  padding: 10px 12px;
+  background: #fff1ef;
+  color: #7f241e;
+  font-size: 14px;
+}
+
+.issue-capture-form,
+.issue-capture-success,
+.issue-capture-recent {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  border-top: 2px solid #1d5c8d;
+  padding-top: 16px;
+}
+
+.issue-capture-success {
+  border-top-color: #3a805a;
+}
+
+.issue-capture-recent {
+  margin-top: 30px;
+  border-top-color: #c8d4de;
+}
+
+.issue-capture-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.issue-capture-section-heading > span {
+  color: #667788;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.issue-capture-form label {
+  display: grid;
+  gap: 5px;
+  color: #526476;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.issue-capture-form input,
+.issue-capture-form textarea,
+.issue-capture-form select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #aebdca;
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: #fff;
+  color: #1f2e3c;
+  font: inherit;
+}
+
+.issue-capture-form textarea {
+  min-height: 128px;
+  resize: vertical;
+}
+
+.issue-capture-form input:focus-visible,
+.issue-capture-form textarea:focus-visible,
+.issue-capture-form select:focus-visible,
+.issue-capture-command:focus-visible,
+.issue-capture-secondary:focus-visible,
+.issue-capture-refresh:focus-visible {
+  outline: 2px solid #16718d;
+  outline-offset: 2px;
+}
+
+.issue-capture-input-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.issue-capture-input-grid > label:nth-child(2),
+.issue-capture-input-grid > label:nth-child(3) {
+  min-width: 0;
+}
+
+.issue-capture-file-field {
+  min-height: 112px;
+  align-content: start;
+  border: 1px dashed #9fb1bf;
+  padding: 12px;
+  background: #f8fafb;
+}
+
+.issue-capture-file-field input {
+  min-height: auto;
+  border: 0;
+  padding: 5px 0;
+}
+
+.issue-capture-file-field small {
+  color: #667788;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.issue-capture-note {
+  margin: 0;
+}
+
+.issue-capture-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.issue-capture-command,
+.issue-capture-secondary,
+.issue-capture-refresh {
+  min-height: 42px;
+  border-radius: 4px;
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.issue-capture-command {
+  border: 1px solid #1d5c8d;
+  background: #1d5c8d;
+  color: #fff;
+}
+
+.issue-capture-command:hover {
+  background: #15496e;
+}
+
+.issue-capture-secondary,
+.issue-capture-refresh {
+  border: 1px solid #aebdca;
+  background: #fff;
+  color: #1d5c8d;
+}
+
+.issue-capture-command:disabled,
+.issue-capture-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.issue-capture-success a {
+  width: fit-content;
+  color: #1d5c8d;
+  font-weight: 700;
+}
+
+.issue-capture-success .issue-capture-secondary {
+  justify-self: start;
+}
+
+.issue-capture-recent ul {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid #d9e0e8;
+}
+
+.issue-capture-recent li {
+  min-width: 0;
+  border-bottom: 1px solid #d9e0e8;
+}
+
+.issue-capture-recent li a {
+  display: block;
+  min-width: 0;
+  padding: 12px 8px;
+  color: #27394a;
+  text-decoration: none;
+}
+
+.issue-capture-recent li a:hover,
+.issue-capture-recent li a:focus-visible {
+  background: #eef7fb;
+  outline: 2px solid #16718d;
+  outline-offset: -2px;
+}
+
+.issue-capture-recent li strong,
+.issue-capture-recent li span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.issue-detail-page {
+  width: min(100%, 860px);
+  margin: 0 auto;
+  padding: 28px 32px 56px;
+}
+
+.issue-detail-back {
+  display: inline-block;
+  margin-bottom: 18px;
+  color: #1d5c8d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.issue-detail-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #d9e0e8;
+  padding-bottom: 18px;
+}
+
+.issue-detail-header h1 {
+  margin: 0;
+  color: #182230;
+  font-size: 25px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.issue-detail-project {
+  color: #526476;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.issue-detail-state {
+  margin-top: 24px;
+  border-left: 4px solid #1d5c8d;
+  padding: 14px 16px;
+  background: #f5f8fa;
+  color: #526476;
+}
+
+.issue-detail-state p {
+  margin: 0 0 10px;
+}
+
+.issue-detail-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 24px;
+  border: 1px solid #cfd9e2;
+  background: #cfd9e2;
+}
+
+.issue-detail-facts > div {
+  min-width: 0;
+  padding: 14px;
+  background: #fff;
+}
+
+.issue-detail-facts span,
+.issue-detail-facts strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.issue-detail-facts span {
+  color: #667788;
+  font-size: 12px;
+}
+
+.issue-detail-facts strong {
+  margin-top: 5px;
+  color: #1b526d;
+  font-size: 16px;
+}
+
+.issue-detail-section {
+  margin-top: 24px;
+  border-top: 2px solid #c8d4de;
+  padding-top: 14px;
+}
+
+.issue-detail-section h2 {
+  margin: 0 0 8px;
+  color: #1f2e3c;
+  font-size: 18px;
+}
+
+.issue-detail-section p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #526476;
+  line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+  .issue-detail-page {
+    padding: 20px 16px 40px;
+  }
+
+  .issue-detail-header {
+    align-items: start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .issue-detail-header h1 {
+    font-size: 23px;
+  }
+
+  .issue-detail-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.issue-capture-recent li span {
+  margin-top: 4px;
+  color: #667788;
+  font-size: 12px;
+}
+
 .acceptance-header {
   display: flex;
   align-items: end;
