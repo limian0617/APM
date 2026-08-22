@@ -765,7 +765,8 @@ const alertSourceTypeSchema = z.enum([
   "CRITICAL_TASK_DELAY",
   "MILESTONE_OVERDUE",
   "GATE_HARD_FAILURE",
-  "RESIDUAL_ITEM_OVERDUE"
+  "RESIDUAL_ITEM_OVERDUE",
+  "ASSET_IMPACT"
 ]);
 const alertRiskLevelSchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
 const alertConditionSchema = z.record(z.string(), z.unknown());
@@ -808,7 +809,9 @@ export const createProjectAlertRuleBodySchema = z
     if (value.sourceType === "CRITICAL_TASK_DELAY" || value.sourceType === "MILESTONE_OVERDUE")
       integer("thresholdDays", 0);
     if (
-      (value.sourceType === "GATE_HARD_FAILURE" || value.sourceType === "RESIDUAL_ITEM_OVERDUE") &&
+      (value.sourceType === "GATE_HARD_FAILURE" ||
+        value.sourceType === "RESIDUAL_ITEM_OVERDUE" ||
+        value.sourceType === "ASSET_IMPACT") &&
       Object.keys(value.condition).length > 0
     ) {
       context.addIssue({
@@ -845,7 +848,9 @@ export const updateProjectAlertRuleBodySchema = z
       integer("thresholdDays", 0);
     }
     if (
-      (value.sourceType === "GATE_HARD_FAILURE" || value.sourceType === "RESIDUAL_ITEM_OVERDUE") &&
+      (value.sourceType === "GATE_HARD_FAILURE" ||
+        value.sourceType === "RESIDUAL_ITEM_OVERDUE" ||
+        value.sourceType === "ASSET_IMPACT") &&
       Object.keys(value.condition).length > 0
     ) {
       context.addIssue({

@@ -1017,6 +1017,7 @@ enum TechnicalAssetStatus {
   DRAFT
   VALIDATION_PENDING
   VALIDATED
+  DISABLED
   CANCELED
 }
 
@@ -1046,6 +1047,83 @@ enum AssetComponentType {
 enum ProjectAssetReferenceStatus {
   ACTIVE
   RETIRED
+}
+
+enum AssetReleaseRecallScope {
+  RELEASE
+  RELEASE_VERSION
+}
+
+enum AssetReleaseRecallState {
+  ACTIVE
+  WITHDRAWN
+}
+
+enum AssetReleaseRecallRevisionKind {
+  ISSUED
+  CORRECTED
+  WITHDRAWN
+  REISSUED
+}
+
+enum AssetProjectImpactSourceType {
+  RECALL
+  ASSET_DEACTIVATION
+}
+
+enum AssetProjectImpactStatus {
+  OPEN
+  ACKNOWLEDGED
+  ASSESSING
+  UPGRADE_PLANNED
+  RISK_ACCEPTANCE_PENDING
+  MITIGATED
+  ACCEPTED_RISK
+  CLOSED
+}
+
+enum AssetImpactAssessmentKind {
+  INITIAL
+  REFRESH
+}
+
+enum AssetImpactDispositionType {
+  ACKNOWLEDGED
+  ASSESSING
+  UPGRADE_PLANNED
+  MITIGATED
+  RISK_ACCEPTANCE_REQUESTED
+  RISK_ACCEPTANCE_APPROVED
+  RISK_ACCEPTANCE_REJECTED
+  CLOSED
+  REFRESHED
+}
+
+enum AssetImpactRiskAcceptanceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AssetImpactRiskDecision {
+  APPROVED
+  REJECTED
+}
+
+enum AssetUpgradeUsageMigrationMode {
+  COPY
+  OVERRIDE
+}
+
+enum AssetImpactAlertProjectionDesiredState {
+  ACTIVE
+  RESOLVED
+}
+
+enum AssetImpactAlertProjectionResult {
+  DELIVERED
+  BLOCKED_CONFIGURATION
+  FAILED_TRANSIENT
 }
 
 enum ProjectAssetUsageStatus {
@@ -1225,6 +1303,7 @@ enum AlertSourceType {
   PROCUREMENT_CRITICAL_SHORTAGE
   PROCUREMENT_CHANGE_BLOCKED
   PROCUREMENT_DATA_STALE
+  ASSET_IMPACT
 }
 
 enum AlertRiskLevel {
@@ -1586,11 +1665,27 @@ enum AuditAction {
   TECHNICAL_ASSET_CREATED
   TECHNICAL_ASSET_STATUS_CHANGED
   TECHNICAL_ASSET_VALIDATED
+  TECHNICAL_ASSET_DISABLED
   ASSET_RELEASE_CREATED
   ASSET_RELEASE_VERSION_DRAFTED
   ASSET_RELEASE_VERSION_PUBLISHED
   ASSET_RELEASE_VERSION_SUPERSEDED
   ASSET_RELEASE_READ
+  ASSET_RELEASE_RECALL_ISSUED
+  ASSET_RELEASE_RECALL_REVISED
+  ASSET_RELEASE_RECALL_READ
+  ASSET_PROJECT_IMPACT_CREATED
+  ASSET_PROJECT_IMPACT_REFRESHED
+  ASSET_PROJECT_IMPACT_READ
+  ASSET_PROJECT_IMPACT_DISPOSITION_RECORDED
+  ASSET_IMPACT_RISK_ACCEPTANCE_REQUESTED
+  ASSET_IMPACT_RISK_ACCEPTANCE_DECIDED
+  ASSET_UPGRADE_CANDIDATE_CREATED
+  ASSET_UPGRADE_CANDIDATE_READ
+  ASSET_UPGRADE_ADOPTED
+  ASSET_IMPACT_ALERT_PROJECTED
+  ASSET_IMPACT_ALERT_PROJECTION_BLOCKED
+  ASSET_IMPACT_ALERT_PROJECTION_REPLAYED
   ISSUE_CREATED
   ISSUE_UPDATED
   ISSUE_STATUS_CHANGED
@@ -1702,6 +1797,18 @@ enum AuditObjectType {
   ASSET_RELEASE
   ASSET_RELEASE_VERSION
   ASSET_COMPONENT_SNAPSHOT
+  ASSET_RELEASE_RECALL
+  ASSET_RELEASE_RECALL_REVISION
+  ASSET_RELEASE_RECALL_AFFECTED_VERSION
+  ASSET_PROJECT_IMPACT
+  ASSET_IMPACT_ASSESSMENT_REVISION
+  ASSET_IMPACT_DISPOSITION
+  ASSET_IMPACT_RISK_ACCEPTANCE_REQUEST
+  ASSET_IMPACT_RISK_ACCEPTANCE_DECISION
+  ASSET_UPGRADE_CANDIDATE
+  ASSET_UPGRADE_ADOPTION
+  ASSET_UPGRADE_USAGE_MAPPING
+  ASSET_IMPACT_ALERT_PROJECTION_ATTEMPT
   ISSUE
   ISSUE_RELATION
   COCKPIT_PROJECTION
@@ -1858,6 +1965,15 @@ model User {
   assetReleasesCreated                    AssetRelease[]                         @relation("AssetReleaseCreatedBy")
   assetReleaseVersionsCreated             AssetReleaseVersion[]                  @relation("AssetReleaseVersionCreatedBy")
   assetReleaseVersionsPublished           AssetReleaseVersion[]                  @relation("AssetReleaseVersionPublishedBy")
+  assetReleaseRecallsCreated              AssetReleaseRecall[]                   @relation("AssetReleaseRecallCreatedBy")
+  assetReleaseRecallRevisionsActed        AssetReleaseRecallRevision[]           @relation("AssetReleaseRecallRevisionActor")
+  assetImpactAssessmentRevisionsActed     AssetImpactAssessmentRevision[]        @relation("AssetImpactAssessmentRevisionActor")
+  assetImpactDispositionsActed            AssetImpactDisposition[]                @relation("AssetImpactDispositionActor")
+  assetImpactRiskRequestsRequested        AssetImpactRiskAcceptanceRequest[]     @relation("AssetImpactRiskAcceptanceRequestedBy")
+  assetImpactRiskRequestsSourceActor      AssetImpactRiskAcceptanceRequest[]     @relation("AssetImpactRiskAcceptanceSourceActor")
+  assetImpactRiskDecisionsActed           AssetImpactRiskAcceptanceDecision[]    @relation("AssetImpactRiskAcceptanceDecisionActor")
+  assetUpgradeCandidatesCreated           AssetUpgradeCandidate[]                @relation("AssetUpgradeCandidateCreatedBy")
+  assetUpgradeAdoptionsActed             AssetUpgradeAdoption[]                 @relation("AssetUpgradeAdoptionActor")
   issuesCreated                           Issue[]                                @relation("IssueCreatedBy")
   issuesUpdated                           Issue[]                                @relation("IssueUpdatedBy")
   issuesClosed                            Issue[]                                @relation("IssueClosedBy")
@@ -2066,6 +2182,12 @@ model Project {
   projectAssetReferences             ProjectAssetReference[]
   projectAssetUsages                 ProjectAssetUsage[]
   projectAssetDerivations            ProjectAssetDerivation[]
+  assetProjectImpacts                AssetProjectImpact[]
+  assetImpactAssessmentRevisions     AssetImpactAssessmentRevision[]
+  assetImpactDispositions            AssetImpactDisposition[]
+  assetImpactRiskAcceptanceRequests  AssetImpactRiskAcceptanceRequest[]
+  assetUpgradeAdoptions              AssetUpgradeAdoption[]
+  assetImpactAlertProjectionAttempts AssetImpactAlertProjectionAttempt[]
   archive                            ProjectArchive?                            @relation("ProjectArchiveAggregate")
   archiveVersions                    ProjectArchiveVersion[]                    @relation("ProjectArchiveVersions")
   archiveManifestItems               ProjectArchiveManifestItem[]
@@ -2708,6 +2830,10 @@ model TechnicalAsset {
   componentSnapshots AssetComponentSnapshot[]
   projectAssetReferences ProjectAssetReference[] @relation("ProjectAssetReferenceTechnicalAsset")
   projectAssetUsages     ProjectAssetUsage[]     @relation("ProjectAssetUsageTechnicalAsset")
+  recalls                AssetReleaseRecall[]    @relation("AssetReleaseRecallTechnicalAsset")
+  projectImpacts         AssetProjectImpact[]    @relation("AssetProjectImpactTechnicalAsset")
+  upgradeCandidates      AssetUpgradeCandidate[] @relation("AssetUpgradeCandidateTechnicalAsset")
+  upgradeAdoptions       AssetUpgradeAdoption[]  @relation("AssetUpgradeAdoptionTechnicalAsset")
 
   @@unique([id, rndProjectId])
   @@index([rndProjectId, status, assetNumber])
@@ -2729,8 +2855,10 @@ model TechnicalAssetEvent {
   createdAt        DateTime                @default(now()) @map("created_at")
   technicalAsset   TechnicalAsset          @relation(fields: [technicalAssetId, rndProjectId], references: [id, rndProjectId], onDelete: Restrict)
   actor            User                    @relation("TechnicalAssetEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  deactivationImpacts AssetProjectImpact[] @relation("AssetProjectImpactDeactivationCause")
 
   @@unique([technicalAssetId, sequence])
+  @@unique([id, technicalAssetId])
   @@index([rndProjectId, createdAt])
   @@index([actorId, createdAt])
   @@map("technical_asset_events")
@@ -2770,6 +2898,11 @@ model AssetRelease {
   versions          AssetReleaseVersion[] @relation("AssetReleaseVersions")
   projectAssetReferences ProjectAssetReference[]
   projectAssetUsages     ProjectAssetUsage[]
+  recallTargets          AssetReleaseRecall[] @relation("AssetReleaseRecallTargetRelease")
+  recallAffectedVersions AssetReleaseRecallAffectedVersion[] @relation("AssetReleaseRecallAffectedRelease")
+  recallRevisionSourceReleases AssetReleaseRecallRevision[] @relation("AssetReleaseRecallRevisionSourceRelease")
+  upgradeCandidateSourceReleases AssetUpgradeCandidate[] @relation("AssetUpgradeCandidateSourceRelease")
+  upgradeCandidateTargetReleases AssetUpgradeCandidate[] @relation("AssetUpgradeCandidateTargetRelease")
 
   @@unique([technicalAssetId, releaseCode])
   @@unique([id, technicalAssetId])
@@ -2800,6 +2933,11 @@ model AssetReleaseVersion {
   components        AssetComponentSnapshot[]
   projectAssetReferences ProjectAssetReference[]
   projectAssetUsages     ProjectAssetUsage[]
+  recallTargets          AssetReleaseRecall[] @relation("AssetReleaseRecallTargetVersion")
+  recallAffectedVersions AssetReleaseRecallAffectedVersion[] @relation("AssetReleaseRecallAffectedVersion")
+  upgradeCandidateSourceVersions AssetUpgradeCandidate[] @relation("AssetUpgradeCandidateSourceVersion")
+  upgradeCandidateTargetVersions AssetUpgradeCandidate[] @relation("AssetUpgradeCandidateTargetVersion")
+  recallRevisionSourceVersions AssetReleaseRecallRevision[] @relation("AssetReleaseRecallRevisionSourceVersion")
 
   @@unique([id, technicalAssetId])
   @@unique([id, releaseId, technicalAssetId])
@@ -2869,8 +3007,11 @@ model ProjectAssetReference {
   retiredBy             User?                       @relation("ProjectAssetReferenceRetiredBy", fields: [retiredById], references: [id], onDelete: Restrict)
   usages                ProjectAssetUsage[]
   derivations           ProjectAssetDerivation[]
+  sourceUpgradeAdoptions AssetUpgradeAdoption[] @relation("AssetUpgradeAdoptionSourceReference")
+  targetUpgradeAdoptions AssetUpgradeAdoption[] @relation("AssetUpgradeAdoptionTargetReference")
 
   @@unique([id, projectId])
+  @@unique([id, projectId, technicalAssetId])
   @@unique([id, projectId, technicalAssetId, assetReleaseId, assetReleaseVersionId])
   @@unique([projectId, assetReleaseVersionId])
   @@index([projectId, status, createdAt])
@@ -2915,8 +3056,12 @@ model ProjectAssetUsage {
   createdBy             User                       @relation("ProjectAssetUsageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   retiredBy             User?                      @relation("ProjectAssetUsageRetiredBy", fields: [retiredById], references: [id], onDelete: Restrict)
   derivations           ProjectAssetDerivation[]
+  sourceUpgradeUsageMappings AssetUpgradeUsageMapping[] @relation("AssetUpgradeUsageMappingSourceUsage")
+  targetUpgradeUsageMappings AssetUpgradeUsageMapping[] @relation("AssetUpgradeUsageMappingTargetUsage")
 
   @@unique([id, projectId])
+  @@unique([id, projectId, technicalAssetId])
+  @@unique([id, projectId, technicalAssetId, referenceId, assetReleaseId, assetReleaseVersionId, componentSnapshotId])
   @@unique([projectId, usageKey])
   @@index([projectId, status, scopeType, scopeId])
   @@index([referenceId, status])
@@ -2959,6 +3104,382 @@ model ProjectAssetDerivation {
   @@unique([projectId, targetBindingKey])
   @@index([projectId, targetControlledDocumentVersionId])
   @@map("project_asset_derivations")
+}
+
+model AssetReleaseRecall {
+  id                     String                  @id @default(cuid())
+  technicalAssetId       String                  @map("technical_asset_id")
+  releaseId              String                  @map("release_id")
+  targetReleaseVersionId String?                 @map("target_release_version_id")
+  targetKey              String                  @map("target_key")
+  scope                  AssetReleaseRecallScope
+  currentRevisionId      String?                 @map("current_revision_id")
+  currentState           AssetReleaseRecallState @default(ACTIVE) @map("current_state")
+  version                Int                     @default(1)
+  affectedVersionSetChecksum String?             @map("affected_version_set_checksum")
+  createdById            String                  @map("created_by_id")
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+  technicalAsset         TechnicalAsset          @relation("AssetReleaseRecallTechnicalAsset", fields: [technicalAssetId], references: [id], onDelete: Restrict)
+  release                AssetRelease            @relation("AssetReleaseRecallTargetRelease", fields: [releaseId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  targetReleaseVersion   AssetReleaseVersion?    @relation("AssetReleaseRecallTargetVersion", fields: [targetReleaseVersionId, releaseId, technicalAssetId], references: [id, releaseId, technicalAssetId], onDelete: Restrict)
+  currentRevision        AssetReleaseRecallRevision? @relation("AssetReleaseRecallCurrentRevision", fields: [currentRevisionId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  createdBy              User                    @relation("AssetReleaseRecallCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  revisions              AssetReleaseRecallRevision[] @relation("AssetReleaseRecallRevisions")
+  affectedVersions       AssetReleaseRecallAffectedVersion[] @relation("AssetReleaseRecallAffectedVersions")
+  projectImpacts         AssetProjectImpact[]    @relation("AssetProjectImpactRecallCause")
+
+  @@unique([technicalAssetId, targetKey])
+  @@unique([id, technicalAssetId])
+  @@unique([currentRevisionId, technicalAssetId])
+  @@index([technicalAssetId, currentState, createdAt])
+  @@map("asset_release_recalls")
+}
+
+model AssetReleaseRecallRevision {
+  id                         String                         @id @default(cuid())
+  recallId                   String                         @map("recall_id")
+  technicalAssetId           String                         @map("technical_asset_id")
+  revision                   Int
+  kind                       AssetReleaseRecallRevisionKind
+  state                      AssetReleaseRecallState
+  severity                   AlertRiskLevel
+  reason                     String
+  affectedVersionSetChecksum String                         @map("affected_version_set_checksum")
+  affectedVersionCount       Int                            @map("affected_version_count")
+  sourceAssetReleaseVersionId String                        @map("source_asset_release_version_id")
+  sourceAssetReleaseId        String                        @map("source_asset_release_id")
+  sourceRevision              Int                            @map("source_revision")
+  sourceSnapshotChecksum      String                         @map("source_snapshot_checksum")
+  sourceWatermark            String                         @map("source_watermark")
+  evidenceJson                Json                           @map("evidence_json")
+  snapshotJson                Json                           @map("snapshot_json")
+  snapshotChecksum            String                         @map("snapshot_checksum")
+  actorId                    String                         @map("actor_id")
+  effectiveAt                DateTime                       @default(now()) @map("effective_at")
+  createdAt                  DateTime                       @default(now()) @map("created_at")
+  recall                     AssetReleaseRecall             @relation("AssetReleaseRecallRevisions", fields: [recallId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  sourceAssetRelease          AssetRelease                   @relation("AssetReleaseRecallRevisionSourceRelease", fields: [sourceAssetReleaseId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  sourceAssetReleaseVersion  AssetReleaseVersion            @relation("AssetReleaseRecallRevisionSourceVersion", fields: [sourceAssetReleaseVersionId, sourceAssetReleaseId, technicalAssetId], references: [id, releaseId, technicalAssetId], onDelete: Restrict)
+  actor                      User                           @relation("AssetReleaseRecallRevisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+  currentForRecall           AssetReleaseRecall?            @relation("AssetReleaseRecallCurrentRevision")
+  impactAssessmentRevisions  AssetImpactAssessmentRevision[] @relation("AssetImpactAssessmentRecallRevision")
+
+  @@unique([recallId, revision])
+  @@unique([id, technicalAssetId])
+  @@unique([id, recallId, technicalAssetId])
+  @@index([technicalAssetId, effectiveAt])
+  @@map("asset_release_recall_revisions")
+}
+
+model AssetReleaseRecallAffectedVersion {
+  id                    String                    @id @default(cuid())
+  recallId              String                    @map("recall_id")
+  technicalAssetId      String                    @map("technical_asset_id")
+  releaseId             String                    @map("release_id")
+  assetReleaseVersionId String                    @map("asset_release_version_id")
+  revision              Int
+  snapshotChecksum      String                    @map("snapshot_checksum")
+  sourceWatermark       String                    @map("source_watermark")
+  status                AssetReleaseVersionStatus
+  createdAt             DateTime                  @default(now()) @map("created_at")
+  recall                AssetReleaseRecall        @relation("AssetReleaseRecallAffectedVersions", fields: [recallId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  release               AssetRelease              @relation("AssetReleaseRecallAffectedRelease", fields: [releaseId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  assetReleaseVersion   AssetReleaseVersion       @relation("AssetReleaseRecallAffectedVersion", fields: [assetReleaseVersionId, releaseId, technicalAssetId], references: [id, releaseId, technicalAssetId], onDelete: Restrict)
+
+  @@unique([recallId, assetReleaseVersionId])
+  @@unique([id, recallId, technicalAssetId])
+  @@index([technicalAssetId, assetReleaseVersionId])
+  @@map("asset_release_recall_affected_versions")
+}
+
+model AssetProjectImpact {
+  id                          String                       @id @default(cuid())
+  projectId                   String                       @map("project_id")
+  technicalAssetId            String                       @map("technical_asset_id")
+  sourceType                  AssetProjectImpactSourceType @map("source_type")
+  sourceKey                   String                       @map("source_key")
+  recallId                    String?                      @map("recall_id")
+  technicalAssetEventId       String?                      @map("technical_asset_event_id")
+  currentAssessmentRevisionId String?                      @map("current_assessment_revision_id")
+  status                      AssetProjectImpactStatus     @default(OPEN)
+  ownerMembershipId           String?                      @map("owner_membership_id")
+  dueAt                       DateTime?                    @map("due_at")
+  version                     Int                          @default(1)
+  createdAt                   DateTime                     @default(now()) @map("created_at")
+  updatedAt                   DateTime                     @updatedAt @map("updated_at")
+  project                     Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  ownerMembership             ProjectMember?               @relation("AssetProjectImpactOwnerMembership", fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  technicalAsset              TechnicalAsset               @relation("AssetProjectImpactTechnicalAsset", fields: [technicalAssetId], references: [id], onDelete: Restrict)
+  recall                      AssetReleaseRecall?          @relation("AssetProjectImpactRecallCause", fields: [recallId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  technicalAssetEvent         TechnicalAssetEvent?         @relation("AssetProjectImpactDeactivationCause", fields: [technicalAssetEventId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  currentAssessmentRevision   AssetImpactAssessmentRevision? @relation("AssetProjectImpactCurrentAssessment", fields: [currentAssessmentRevisionId, projectId, technicalAssetId], references: [id, projectId, technicalAssetId], onDelete: Restrict)
+  assessmentRevisions         AssetImpactAssessmentRevision[] @relation("AssetProjectImpactAssessmentRevisions")
+  dispositions                AssetImpactDisposition[]
+  riskAcceptanceRequests      AssetImpactRiskAcceptanceRequest[]
+  projectionAttempts          AssetImpactAlertProjectionAttempt[]
+  upgradeAdoptions            AssetUpgradeAdoption[]
+
+  @@unique([projectId, sourceKey])
+  @@unique([id, projectId, technicalAssetId])
+  @@unique([currentAssessmentRevisionId, projectId, technicalAssetId])
+  @@index([technicalAssetId, status, updatedAt])
+  @@map("asset_project_impacts")
+}
+
+model AssetImpactAssessmentRevision {
+  id              String                    @id @default(cuid())
+  impactId        String                    @map("impact_id")
+  projectId       String                    @map("project_id")
+  technicalAssetId String                   @map("technical_asset_id")
+  sequence        Int
+  kind            AssetImpactAssessmentKind
+  recallId        String?                   @map("recall_id")
+  recallRevisionId String?                  @map("recall_revision_id")
+  sourceWatermark String                    @map("source_watermark")
+  snapshotChecksum String                   @map("snapshot_checksum")
+  snapshotJson    Json                      @map("snapshot_json")
+  frozenAt        DateTime                  @map("frozen_at")
+  actorId         String?                   @map("actor_id")
+  actorMembershipId String?                 @map("actor_membership_id")
+  actorMembershipSnapshotJson Json?         @map("actor_membership_snapshot_json")
+  ownerMembershipId String?                 @map("owner_membership_id")
+  ownerMembershipSnapshotJson Json?         @map("owner_membership_snapshot_json")
+  dueAt           DateTime?                 @map("due_at")
+  createdAt       DateTime                  @default(now()) @map("created_at")
+  project         Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  impact          AssetProjectImpact        @relation("AssetProjectImpactAssessmentRevisions", fields: [impactId, projectId, technicalAssetId], references: [id, projectId, technicalAssetId], onDelete: Restrict)
+  recallRevision  AssetReleaseRecallRevision? @relation("AssetImpactAssessmentRecallRevision", fields: [recallRevisionId, recallId, technicalAssetId], references: [id, recallId, technicalAssetId], onDelete: Restrict)
+  actor           User?                     @relation("AssetImpactAssessmentRevisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorMembership ProjectMember?            @relation("AssetImpactAssessmentRevisionActorMembership", fields: [actorMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership ProjectMember?            @relation("AssetImpactAssessmentRevisionOwnerMembership", fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  currentForImpact AssetProjectImpact?      @relation("AssetProjectImpactCurrentAssessment")
+  projectionAttempts AssetImpactAlertProjectionAttempt[]
+
+  @@unique([impactId, sequence])
+  @@unique([id, projectId, technicalAssetId])
+  @@unique([id, impactId, projectId, technicalAssetId], map: "asset_impact_assessment_revisions_exact_key")
+  @@unique([id, impactId, projectId, technicalAssetId, sequence, snapshotChecksum, sourceWatermark], map: "asset_impact_assessment_revisions_projection_exact_key")
+  @@index([projectId, frozenAt])
+  @@map("asset_impact_assessment_revisions")
+}
+
+model AssetImpactDisposition {
+  id               String                     @id @default(cuid())
+  impactId         String                     @map("impact_id")
+  projectId        String                     @map("project_id")
+  technicalAssetId String                     @map("technical_asset_id")
+  assessmentRevisionId String                  @map("assessment_revision_id")
+  sequence         Int
+  type             AssetImpactDispositionType
+  fromStatus       AssetProjectImpactStatus   @map("from_status")
+  toStatus         AssetProjectImpactStatus   @map("to_status")
+  reason           String
+  evidenceJson     Json                       @map("evidence_json")
+  actorId          String                     @map("actor_id")
+  actorMembershipId String                    @map("actor_membership_id")
+  actorMembershipSnapshotJson Json             @map("actor_membership_snapshot_json")
+  ownerMembershipId String                    @map("owner_membership_id")
+  ownerMembershipSnapshotJson Json             @map("owner_membership_snapshot_json")
+  dueAt            DateTime                   @map("due_at")
+  mitigationAdoptionId String?                @map("mitigation_adoption_id")
+  riskAcceptanceRequestId String?              @map("risk_acceptance_request_id")
+  riskAcceptanceDecisionId String?             @map("risk_acceptance_decision_id")
+  createdAt        DateTime                   @default(now()) @map("created_at")
+  project          Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  impact           AssetProjectImpact         @relation(fields: [impactId, projectId, technicalAssetId], references: [id, projectId, technicalAssetId], onDelete: Restrict)
+  actor            User                       @relation("AssetImpactDispositionActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorMembership  ProjectMember              @relation("AssetImpactDispositionActorMembership", fields: [actorMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  ownerMembership  ProjectMember              @relation("AssetImpactDispositionOwnerMembership", fields: [ownerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  mitigationAdoption AssetUpgradeAdoption?     @relation("AssetImpactDispositionMitigationAdoption", fields: [mitigationAdoptionId, impactId, projectId, technicalAssetId], references: [id, impactId, projectId, technicalAssetId], onDelete: Restrict)
+
+  @@unique([impactId, sequence])
+  @@index([projectId, createdAt])
+  @@map("asset_impact_dispositions")
+}
+
+model AssetImpactRiskAcceptanceRequest {
+  id               String                         @id @default(cuid())
+  impactId         String                         @map("impact_id")
+  projectId        String                         @map("project_id")
+  technicalAssetId String                         @map("technical_asset_id")
+  status           AssetImpactRiskAcceptanceStatus @default(PENDING)
+  version          Int                            @default(1)
+  requestedById    String                         @map("requested_by_id")
+  requestedMembershipId String                    @map("requested_membership_id")
+  requestedMembershipSnapshotJson Json              @map("requested_membership_snapshot_json")
+  sourceActorId    String                         @map("source_actor_id")
+  sourceActorSnapshotJson Json                     @map("source_actor_snapshot_json")
+  evidenceJson     Json                           @map("evidence_json")
+  reason           String
+  requestedAt      DateTime                       @map("requested_at")
+  createdAt        DateTime                       @default(now()) @map("created_at")
+  updatedAt        DateTime                       @updatedAt @map("updated_at")
+  project          Project                        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  impact           AssetProjectImpact             @relation(fields: [impactId, projectId, technicalAssetId], references: [id, projectId, technicalAssetId], onDelete: Restrict)
+  requestedBy      User                           @relation("AssetImpactRiskAcceptanceRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  requestedMembership ProjectMember               @relation("AssetImpactRiskAcceptanceRequestedMembership", fields: [requestedMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  sourceActor       User                           @relation("AssetImpactRiskAcceptanceSourceActor", fields: [sourceActorId], references: [id], onDelete: Restrict)
+  decisions        AssetImpactRiskAcceptanceDecision[]
+
+  @@unique([id, impactId, projectId, technicalAssetId])
+  @@index([impactId, status, requestedAt])
+  @@map("asset_impact_risk_acceptance_requests")
+}
+
+model AssetImpactRiskAcceptanceDecision {
+  id               String                    @id @default(cuid())
+  requestId        String                    @map("request_id")
+  impactId         String                    @map("impact_id")
+  projectId        String                    @map("project_id")
+  technicalAssetId String                    @map("technical_asset_id")
+  decision         AssetImpactRiskDecision
+  actorId          String                    @map("actor_id")
+  actorMembershipId String                   @map("actor_membership_id")
+  actorMembershipSnapshotJson Json             @map("actor_membership_snapshot_json")
+  evidenceJson     Json                      @map("evidence_json")
+  reason           String
+  decidedAt        DateTime                  @map("decided_at")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  request          AssetImpactRiskAcceptanceRequest @relation(fields: [requestId, impactId, projectId, technicalAssetId], references: [id, impactId, projectId, technicalAssetId], onDelete: Restrict)
+  actor            User                       @relation("AssetImpactRiskAcceptanceDecisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorMembership  ProjectMember              @relation("AssetImpactRiskAcceptanceDecisionMembership", fields: [actorMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([requestId])
+  @@unique([id, requestId, impactId, projectId, technicalAssetId])
+  @@index([projectId, decidedAt])
+  @@map("asset_impact_risk_acceptance_decisions")
+}
+
+model AssetUpgradeCandidate {
+  id                           String                 @id @default(cuid())
+  technicalAssetId             String                 @map("technical_asset_id")
+  sourceAssetReleaseId         String                 @map("source_asset_release_id")
+  sourceAssetReleaseVersionId  String                 @map("source_asset_release_version_id")
+  sourceRevision               Int                    @map("source_revision")
+  sourceSnapshotChecksum       String                 @map("source_snapshot_checksum")
+  sourceWatermark              String                 @map("source_watermark")
+  targetAssetReleaseId         String                 @map("target_asset_release_id")
+  targetAssetReleaseVersionId  String                 @map("target_asset_release_version_id")
+  targetRevision               Int                    @map("target_revision")
+  targetSnapshotChecksum       String                 @map("target_snapshot_checksum")
+  targetWatermark              String                 @map("target_watermark")
+  compatibilitySnapshotJson    Json                   @map("compatibility_snapshot_json")
+  compatibilitySnapshotChecksum String                @map("compatibility_snapshot_checksum")
+  createdById                  String                 @map("created_by_id")
+  createdAt                    DateTime               @default(now()) @map("created_at")
+  technicalAsset               TechnicalAsset         @relation("AssetUpgradeCandidateTechnicalAsset", fields: [technicalAssetId], references: [id], onDelete: Restrict)
+  sourceRelease                AssetRelease           @relation("AssetUpgradeCandidateSourceRelease", fields: [sourceAssetReleaseId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  sourceReleaseVersion         AssetReleaseVersion    @relation("AssetUpgradeCandidateSourceVersion", fields: [sourceAssetReleaseVersionId, sourceAssetReleaseId, technicalAssetId], references: [id, releaseId, technicalAssetId], onDelete: Restrict)
+  targetRelease                AssetRelease           @relation("AssetUpgradeCandidateTargetRelease", fields: [targetAssetReleaseId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  targetReleaseVersion         AssetReleaseVersion    @relation("AssetUpgradeCandidateTargetVersion", fields: [targetAssetReleaseVersionId, targetAssetReleaseId, technicalAssetId], references: [id, releaseId, technicalAssetId], onDelete: Restrict)
+  createdBy                    User                   @relation("AssetUpgradeCandidateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  adoptions                    AssetUpgradeAdoption[]
+
+  @@unique([technicalAssetId, sourceAssetReleaseVersionId, targetAssetReleaseVersionId])
+  @@unique([id, technicalAssetId])
+  @@index([technicalAssetId, sourceAssetReleaseVersionId, targetAssetReleaseVersionId])
+  @@map("asset_upgrade_candidates")
+}
+
+model AssetUpgradeAdoption {
+  id                           String                 @id @default(cuid())
+  candidateId                 String                 @map("candidate_id")
+  projectId                   String                 @map("project_id")
+  impactId                    String                 @map("impact_id")
+  technicalAssetId            String                 @map("technical_asset_id")
+  sourceReferenceId           String                 @map("source_reference_id")
+  sourceReferenceVersion      Int                    @map("source_reference_version")
+  targetReferenceId           String                 @map("target_reference_id")
+  targetReferenceVersion      Int                    @map("target_reference_version")
+  sourceAssetReleaseId        String                 @map("source_asset_release_id")
+  sourceAssetReleaseVersionId String                 @map("source_asset_release_version_id")
+  sourceRevision              Int                    @map("source_revision")
+  sourceSnapshotChecksum      String                 @map("source_snapshot_checksum")
+  sourceWatermark             String                 @map("source_watermark")
+  targetAssetReleaseId        String                 @map("target_asset_release_id")
+  targetAssetReleaseVersionId String                 @map("target_asset_release_version_id")
+  targetRevision              Int                    @map("target_revision")
+  targetSnapshotChecksum      String                 @map("target_snapshot_checksum")
+  targetWatermark             String                 @map("target_watermark")
+  reason                      String
+  actorId                     String                 @map("actor_id")
+  adoptedAt                   DateTime               @default(now()) @map("adopted_at")
+  createdAt                   DateTime               @default(now()) @map("created_at")
+  candidate                   AssetUpgradeCandidate @relation(fields: [candidateId, technicalAssetId], references: [id, technicalAssetId], onDelete: Restrict)
+  project                     Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  impact                      AssetProjectImpact     @relation(fields: [impactId, projectId, technicalAssetId], references: [id, projectId, technicalAssetId], onDelete: Restrict)
+  technicalAsset              TechnicalAsset         @relation("AssetUpgradeAdoptionTechnicalAsset", fields: [technicalAssetId], references: [id], onDelete: Restrict)
+  sourceReference             ProjectAssetReference  @relation("AssetUpgradeAdoptionSourceReference", fields: [sourceReferenceId, projectId, technicalAssetId, sourceAssetReleaseId, sourceAssetReleaseVersionId], references: [id, projectId, technicalAssetId, assetReleaseId, assetReleaseVersionId], onDelete: Restrict)
+  targetReference             ProjectAssetReference  @relation("AssetUpgradeAdoptionTargetReference", fields: [targetReferenceId, projectId, technicalAssetId, targetAssetReleaseId, targetAssetReleaseVersionId], references: [id, projectId, technicalAssetId, assetReleaseId, assetReleaseVersionId], onDelete: Restrict)
+  actor                       User                   @relation("AssetUpgradeAdoptionActor", fields: [actorId], references: [id], onDelete: Restrict)
+  usageMappings               AssetUpgradeUsageMapping[]
+  mitigationDispositions      AssetImpactDisposition[] @relation("AssetImpactDispositionMitigationAdoption")
+
+  @@unique([id, projectId, technicalAssetId])
+  @@unique([id, impactId, projectId, technicalAssetId])
+  @@unique([projectId, sourceReferenceId])
+  @@index([projectId, adoptedAt])
+  @@map("asset_upgrade_adoptions")
+}
+
+model AssetUpgradeUsageMapping {
+  id                           String                         @id @default(cuid())
+  adoptionId                   String                         @map("adoption_id")
+  projectId                   String                         @map("project_id")
+  technicalAssetId            String                         @map("technical_asset_id")
+  sourceUsageId                String                         @map("source_usage_id")
+  sourceUsageVersion           Int                            @map("source_usage_version")
+  sourceReferenceId            String                         @map("source_reference_id")
+  sourceAssetReleaseId         String                         @map("source_asset_release_id")
+  sourceAssetReleaseVersionId  String                         @map("source_asset_release_version_id")
+  sourceComponentSnapshotId    String                         @map("source_component_snapshot_id")
+  targetUsageId                String                         @map("target_usage_id")
+  targetUsageKey               String                         @map("target_usage_key")
+  targetUsageVersion            Int                            @map("target_usage_version")
+  targetReferenceId             String                         @map("target_reference_id")
+  targetAssetReleaseId          String                         @map("target_asset_release_id")
+  targetAssetReleaseVersionId   String                         @map("target_asset_release_version_id")
+  targetComponentSnapshotId     String                         @map("target_component_snapshot_id")
+  migrationMode                 AssetUpgradeUsageMigrationMode @map("migration_mode")
+  mappingSnapshotJson           Json                           @map("mapping_snapshot_json")
+  mappingSnapshotChecksum       String                         @map("mapping_snapshot_checksum")
+  createdAt                     DateTime                       @default(now()) @map("created_at")
+  adoption                      AssetUpgradeAdoption            @relation(fields: [adoptionId, projectId, technicalAssetId], references: [id, projectId, technicalAssetId], onDelete: Restrict)
+  sourceUsage                   ProjectAssetUsage               @relation("AssetUpgradeUsageMappingSourceUsage", fields: [sourceUsageId, projectId, technicalAssetId, sourceReferenceId, sourceAssetReleaseId, sourceAssetReleaseVersionId, sourceComponentSnapshotId], references: [id, projectId, technicalAssetId, referenceId, assetReleaseId, assetReleaseVersionId, componentSnapshotId], onDelete: Restrict)
+  targetUsage                   ProjectAssetUsage               @relation("AssetUpgradeUsageMappingTargetUsage", fields: [targetUsageId, projectId, technicalAssetId, targetReferenceId, targetAssetReleaseId, targetAssetReleaseVersionId, targetComponentSnapshotId], references: [id, projectId, technicalAssetId, referenceId, assetReleaseId, assetReleaseVersionId, componentSnapshotId], onDelete: Restrict)
+
+  @@unique([adoptionId, sourceUsageId])
+  @@unique([adoptionId, targetUsageId])
+  @@unique([id, projectId, technicalAssetId])
+  @@map("asset_upgrade_usage_mappings")
+}
+
+model AssetImpactAlertProjectionAttempt {
+  id                   String                                @id @default(cuid())
+  impactId             String                                @map("impact_id")
+  projectId            String                                @map("project_id")
+  technicalAssetId     String                                @map("technical_asset_id")
+  assessmentRevisionId String                                @map("assessment_revision_id")
+  assessmentSequence   Int                                   @map("assessment_sequence")
+  assessmentSnapshotChecksum String                          @map("assessment_snapshot_checksum")
+  assessmentSourceWatermark String                           @map("assessment_source_watermark")
+  sourceKey            String                                @map("source_key")
+  desiredState         AssetImpactAlertProjectionDesiredState @map("desired_state")
+  sourceJobId          String                                @map("source_job_id")
+  sourceEventType      String                                @map("source_event_type")
+  ruleId               String?                               @map("rule_id")
+  ruleVersion          Int?                                  @map("rule_version")
+  result               AssetImpactAlertProjectionResult
+  blockedReason        String?                               @map("blocked_reason")
+  idempotencyKey       String                                @unique @map("idempotency_key")
+  createdAt            DateTime                              @default(now()) @map("created_at")
+  project              Project                               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  impact               AssetProjectImpact                    @relation(fields: [impactId, projectId, technicalAssetId], references: [id, projectId, technicalAssetId], onDelete: Restrict)
+  assessmentRevision   AssetImpactAssessmentRevision         @relation(fields: [assessmentRevisionId, impactId, projectId, technicalAssetId, assessmentSequence, assessmentSnapshotChecksum, assessmentSourceWatermark], references: [id, impactId, projectId, technicalAssetId, sequence, snapshotChecksum, sourceWatermark], onDelete: Restrict)
+
+  @@index([projectId, result, createdAt])
+  @@map("asset_impact_alert_projection_attempts")
 }
 
 model ControlledDocument {
@@ -5674,6 +6195,13 @@ model ProjectMember {
   retrospectiveContributions    ProjectRetrospectiveContribution[] @relation("RetrospectiveContributionMember")
   retrospectiveParticipants     ProjectRetrospectiveParticipant[]  @relation("RetrospectiveParticipantMember")
   knowledgeReuseConfirmations   KnowledgeReuseRecord[]             @relation("KnowledgeReuseConfirmedBy")
+  ownedAssetProjectImpacts      AssetProjectImpact[]                @relation("AssetProjectImpactOwnerMembership")
+  assetImpactAssessmentActors   AssetImpactAssessmentRevision[]      @relation("AssetImpactAssessmentRevisionActorMembership")
+  assetImpactAssessmentOwners   AssetImpactAssessmentRevision[]      @relation("AssetImpactAssessmentRevisionOwnerMembership")
+  assetImpactDispositionActors  AssetImpactDisposition[]            @relation("AssetImpactDispositionActorMembership")
+  assetImpactDispositionOwners  AssetImpactDisposition[]            @relation("AssetImpactDispositionOwnerMembership")
+  assetImpactRiskRequests       AssetImpactRiskAcceptanceRequest[]   @relation("AssetImpactRiskAcceptanceRequestedMembership")
+  assetImpactRiskDecisions      AssetImpactRiskAcceptanceDecision[]  @relation("AssetImpactRiskAcceptanceDecisionMembership")
 
   @@unique([id, projectId])
   @@index([projectId, leftAt])

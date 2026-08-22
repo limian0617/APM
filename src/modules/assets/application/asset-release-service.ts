@@ -165,6 +165,12 @@ async function databaseNow(client: Transaction): Promise<Date> {
 }
 
 async function lockTechnicalAsset(client: Transaction, technicalAssetId: string) {
+  const [location] = await client.$queryRaw<Array<{ rndProjectId: string }>>`
+    SELECT "rnd_project_id" AS "rndProjectId" FROM "technical_assets" WHERE "id" = ${technicalAssetId}
+  `;
+  if (location) {
+    await client.$queryRaw`SELECT "id" FROM "rnd_projects" WHERE "id" = ${location.rndProjectId} FOR UPDATE`;
+  }
   await client.$queryRaw`SELECT "id" FROM "technical_assets" WHERE "id" = ${technicalAssetId} FOR UPDATE`;
   return client.technicalAsset.findUnique({
     where: { id: technicalAssetId },
@@ -197,9 +203,10 @@ async function lockRelease(client: Transaction, technicalAssetId: string, releas
   return client.assetRelease.findFirst({ where: { id: releaseId, technicalAssetId } });
 }
 
-function assertWritableAsset(asset: { status: string; rndProject: { status: string } }) {
+export function assertWritableAsset(asset: { status: string; rndProject: { status: string } }) {
   if (
     asset.status === "CANCELED" ||
+    asset.status === "DISABLED" ||
     asset.rndProject.status === "COMPLETED" ||
     asset.rndProject.status === "CANCELED"
   ) {

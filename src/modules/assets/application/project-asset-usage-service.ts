@@ -21,6 +21,7 @@ import {
   assertRetireVersion,
   assertProjectAssetUsageScope,
   canonicalProjectAssetConfiguration,
+  frozenProjectAssetUsageVersion,
   parseProjectAssetQuantity,
   ProjectAssetUsageError
 } from "../domain/project-asset-usage";
@@ -67,21 +68,6 @@ export function selectAssetUsageSnapshotRows<T extends UsageSnapshotRow>(input: 
   );
 }
 
-function frozenUsageVersion(
-  row: { version: number; status: string; retiredAt: Date | null },
-  frozenAt: Date
-) {
-  if (row.status !== "RETIRED" || !row.retiredAt || row.retiredAt <= frozenAt) return row.version;
-  if (!Number.isSafeInteger(row.version) || row.version <= 1) {
-    throw new ProjectAssetUsageError(
-      "PROJECT_ASSET_SNAPSHOT_VERSION_INVALID",
-      "退役使用记录缺少可重放的 ACTIVE 版本。",
-      409
-    );
-  }
-  return row.version - 1;
-}
-
 async function databaseNow(client: Client) {
   const [row] = await client.$queryRaw<Array<{ now: Date }>>`SELECT CURRENT_TIMESTAMP AS "now"`;
   if (!row) throw new Error("无法读取数据库时间。");
@@ -121,8 +107,8 @@ async function lockSourceFacts(
     componentSnapshotId?: string;
   }
 ) {
-  await client.$queryRaw`SELECT "id" FROM "technical_assets" WHERE "id" = ${input.technicalAssetId} FOR UPDATE`;
   await client.$queryRaw`SELECT "id" FROM "rnd_projects" WHERE "id" = (SELECT "rnd_project_id" FROM "technical_assets" WHERE "id" = ${input.technicalAssetId}) FOR UPDATE`;
+  await client.$queryRaw`SELECT "id" FROM "technical_assets" WHERE "id" = ${input.technicalAssetId} FOR UPDATE`;
   await client.$queryRaw`SELECT "id" FROM "asset_releases" WHERE "id" = ${input.assetReleaseId} AND "technical_asset_id" = ${input.technicalAssetId} FOR UPDATE`;
   await client.$queryRaw`SELECT "id" FROM "asset_release_versions" WHERE "id" = ${input.assetReleaseVersionId} AND "release_id" = ${input.assetReleaseId} AND "technical_asset_id" = ${input.technicalAssetId} FOR UPDATE`;
   await client.$queryRaw`SELECT "id" FROM "asset_component_snapshots" WHERE "release_version_id" = ${input.assetReleaseVersionId} AND "technical_asset_id" = ${input.technicalAssetId} FOR UPDATE`;
@@ -231,13 +217,27 @@ export async function assertSourceFilesAvailableAndAuthorized(
   client: Client,
   input: {
     technicalAssetId: string;
-    assetReleaseVersionId: string;
+    assetReleaseVersionId?: string;
+    assetReleaseVersionIds?: readonly string[];
     authorizationActor: AuthorizationActor;
   }
 ) {
+  const releaseVersionIds = [
+    ...new Set(
+      input.assetReleaseVersionIds ??
+        (input.assetReleaseVersionId ? [input.assetReleaseVersionId] : [])
+    )
+  ].sort();
+  if (!releaseVersionIds.length) {
+    throw new ProjectAssetUsageError(
+      "PROJECT_ASSET_COMPONENT_NOT_FOUND",
+      "Release 版本不含可引用组件快照。",
+      409
+    );
+  }
   const components = await client.assetComponentSnapshot.findMany({
     where: {
-      releaseVersionId: input.assetReleaseVersionId,
+      releaseVersionId: { in: releaseVersionIds },
       technicalAssetId: input.technicalAssetId
     },
     select: {
@@ -254,6 +254,12 @@ export async function assertSourceFilesAvailableAndAuthorized(
       409
     );
   }
+  const fileIds = [
+    ...new Set(
+      components.flatMap((component) => sourceFileFacts(component).map(({ fileId }) => fileId))
+    )
+  ].sort();
+  await client.$queryRaw`SELECT "id" FROM "file_objects" WHERE "id" IN (${Prisma.join(fileIds)}) ORDER BY "id" FOR UPDATE`;
   for (const component of components) {
     for (const sourceFile of sourceFileFacts(component)) {
       const file = await client.fileObject.findFirst({
@@ -283,13 +289,27 @@ export async function assertSourceFilesSensitiveReadAuthorized(
   client: Client,
   input: {
     technicalAssetId: string;
-    assetReleaseVersionId: string;
+    assetReleaseVersionId?: string;
+    assetReleaseVersionIds?: readonly string[];
     authorizationActor: AuthorizationActor;
   }
 ) {
+  const releaseVersionIds = [
+    ...new Set(
+      input.assetReleaseVersionIds ??
+        (input.assetReleaseVersionId ? [input.assetReleaseVersionId] : [])
+    )
+  ].sort();
+  if (!releaseVersionIds.length) {
+    throw new ProjectAssetUsageError(
+      "PROJECT_ASSET_COMPONENT_NOT_FOUND",
+      "Release 版本不含可引用组件快照。",
+      409
+    );
+  }
   const components = await client.assetComponentSnapshot.findMany({
     where: {
-      releaseVersionId: input.assetReleaseVersionId,
+      releaseVersionId: { in: releaseVersionIds },
       technicalAssetId: input.technicalAssetId
     },
     select: {
@@ -306,6 +326,12 @@ export async function assertSourceFilesSensitiveReadAuthorized(
       409
     );
   }
+  const fileIds = [
+    ...new Set(
+      components.flatMap((component) => sourceFileFacts(component).map(({ fileId }) => fileId))
+    )
+  ].sort();
+  await client.$queryRaw`SELECT "id" FROM "file_objects" WHERE "id" IN (${Prisma.join(fileIds)}) ORDER BY "id" FOR UPDATE`;
   for (const component of components) {
     for (const sourceFile of sourceFileFacts(component)) {
       const file = await client.fileObject.findFirst({
@@ -658,6 +684,7 @@ export async function createProjectAssetReference(
       );
     if (
       release.technicalAsset.status !== "VALIDATED" ||
+      release.technicalAsset.rndProject.status === "COMPLETED" ||
       release.technicalAsset.rndProject.status === "CANCELED"
     )
       throw new ProjectAssetUsageError(
@@ -834,6 +861,7 @@ export async function createProjectAssetUsage(
       !releaseVersion ||
       releaseVersion.status !== "PUBLISHED" ||
       releaseVersion.technicalAsset.status !== "VALIDATED" ||
+      releaseVersion.technicalAsset.rndProject.status === "COMPLETED" ||
       releaseVersion.technicalAsset.rndProject.status === "CANCELED"
     )
       throw new ProjectAssetUsageError(
@@ -1101,6 +1129,7 @@ export async function createProjectAssetDerivation(
       !component ||
       releaseVersion.status !== "PUBLISHED" ||
       releaseVersion.technicalAsset.status !== "VALIDATED" ||
+      releaseVersion.technicalAsset.rndProject.status === "COMPLETED" ||
       releaseVersion.technicalAsset.rndProject.status === "CANCELED"
     )
       throw new ProjectAssetUsageError(
@@ -1346,7 +1375,7 @@ export async function getAssetUsageSnapshotForAcceptance(
       parentDeliveryUnitId: projectModule?.deliveryUnitId
     });
     const entries = scoped.map((row) => {
-      const version = frozenUsageVersion(row, input.frozenAt);
+      const version = frozenProjectAssetUsageVersion(row, input.frozenAt);
       return {
         usageId: row.id,
         version,

@@ -14,11 +14,11 @@ const checksumSchema = z
   .trim()
   .regex(/^[0-9a-f]{64}$/iu)
   .transform((value) => value.toLowerCase());
-const quantitySchema = z
+export const projectAssetQuantitySchema = z
   .string()
   .trim()
   .regex(/^(0|[1-9]\d{0,19})(?:\.\d{1,6})?$/u);
-const configurationSchema = z.strictObject({
+export const projectAssetConfigurationSchema = z.strictObject({
   purpose: z.string().trim().min(1).max(200),
   parameters: z.record(z.string(), z.unknown()).optional(),
   notes: z.string().trim().max(2000).optional()
@@ -31,8 +31,8 @@ export const projectAssetUsageCreateBodySchema = z
     usageKey: identifierSchema,
     referenceVersion: positiveVersionSchema,
     componentSnapshotId: identifierSchema,
-    quantity: quantitySchema,
-    configuration: configurationSchema,
+    quantity: projectAssetQuantitySchema,
+    configuration: projectAssetConfigurationSchema,
     scopeType: projectAssetUsageScopeSchema,
     scopeId: identifierSchema,
     deliveryUnitId: identifierSchema.nullable().optional(),

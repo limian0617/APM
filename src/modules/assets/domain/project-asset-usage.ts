@@ -25,6 +25,21 @@ export class ProjectAssetUsageError extends Error {
   }
 }
 
+export function frozenProjectAssetUsageVersion(
+  row: { version: number; status: string; retiredAt: Date | null },
+  frozenAt: Date
+) {
+  if (row.status !== "RETIRED" || !row.retiredAt || row.retiredAt <= frozenAt) return row.version;
+  if (!Number.isSafeInteger(row.version) || row.version <= 1) {
+    throw new ProjectAssetUsageError(
+      "PROJECT_ASSET_SNAPSHOT_VERSION_INVALID",
+      "退役使用记录缺少可重放的 ACTIVE 版本。",
+      409
+    );
+  }
+  return row.version - 1;
+}
+
 function assertFiniteJson(value: unknown, path: string): void {
   if (value === null || typeof value === "boolean" || typeof value === "string") return;
   if (typeof value === "number") {

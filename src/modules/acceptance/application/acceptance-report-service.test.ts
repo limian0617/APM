@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import type { AuditContext } from "@/modules/audit/contracts/audit";
@@ -20,6 +22,19 @@ function auditContext(operationId: string): AuditContext {
 }
 
 describe("APM-102 controlled report storage", () => {
+  it("locks Project before the batch and authoritative report snapshot", () => {
+    const source = readFileSync(new URL("./acceptance-report-service.ts", import.meta.url), "utf8");
+    const generate = source.slice(
+      source.indexOf("export async function generateAcceptanceReport("),
+      source.indexOf("export async function listAcceptanceReports(")
+    );
+
+    expect(generate.indexOf('SELECT "id" FROM "projects"')).toBeGreaterThanOrEqual(0);
+    expect(generate.indexOf('SELECT "id" FROM "projects"')).toBeLessThan(
+      generate.indexOf("loadLockedBatchFacts(")
+    );
+  });
+
   it("generates an opaque UUID file-object key for each generated report", () => {
     const objectKey = createControlledReportObjectKey();
 

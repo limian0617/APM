@@ -8,6 +8,7 @@ import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   createRndProject,
   createTechnicalAsset,
+  deactivateTechnicalAsset,
   getTechnicalAsset,
   recordTechnicalAssetValidation,
   transitionRndProject,
@@ -21,6 +22,15 @@ const ids = {
   owner: `asset-owner-${suffix}`,
   validator: `asset-validator-${suffix}`,
   disabledValidator: `asset-disabled-validator-${suffix}`
+};
+
+const authorizationActor = {
+  id: ids.owner,
+  name: "资产 Owner",
+  status: "ACTIVE" as const,
+  departmentId: "engineering",
+  systemRoles: ["TECHNICAL_ASSET_MAINTAINER"],
+  grants: []
 };
 
 function context(actorId: string, operationId: string): AuditContext {
@@ -246,8 +256,142 @@ describeDatabase("APM-061 PostgreSQL technical asset masters", () => {
     );
     await expect(
       db.$executeRawUnsafe(
-        `TRUNCATE TABLE "project_asset_derivations", "project_asset_usages", "project_asset_references", "asset_component_snapshots", "asset_release_versions", "asset_releases", "technical_asset_validations", "technical_asset_events", "technical_assets", "rnd_project_events", "rnd_projects"`
+        `TRUNCATE TABLE "asset_impact_alert_projection_attempts", "asset_upgrade_usage_mappings", "asset_upgrade_adoptions", "asset_upgrade_candidates", "asset_impact_risk_acceptance_decisions", "asset_impact_risk_acceptance_requests", "asset_impact_dispositions", "asset_impact_assessment_revisions", "asset_project_impacts", "asset_release_recall_affected_versions", "asset_release_recall_revisions", "asset_release_recalls", "project_asset_derivations", "project_asset_usages", "project_asset_references", "asset_component_snapshots", "asset_release_versions", "asset_releases", "technical_asset_validations", "technical_asset_events", "technical_assets", "rnd_project_events", "rnd_projects"`
       )
-    ).rejects.toThrow(/cannot be truncated/u);
+    ).rejects.toThrow(/cannot be truncated|TRUNCATE is forbidden/u);
+  });
+
+  it("requires the dedicated deactivation command for VALIDATED to DISABLED", async () => {
+    const rndProject = await db.rndProject.create({
+      data: {
+        id: `rnd-deactivate-${suffix}`,
+        code: `RND.DEACTIVATE.${suffix}`.toUpperCase(),
+        name: "停用命令边界",
+        ownerId: ids.owner,
+        createdById: ids.assetMaintainer
+      }
+    });
+    const asset = await db.technicalAsset.create({
+      data: {
+        id: `asset-deactivate-${suffix}`,
+        rndProjectId: rndProject.id,
+        assetNumber: `AST.DEACTIVATE.${suffix}`.toUpperCase(),
+        assetType: "MECHANICAL",
+        name: "停用命令边界资产",
+        ownerId: ids.owner,
+        status: "VALIDATED",
+        createdById: ids.assetMaintainer
+      }
+    });
+
+    await expect(
+      transitionTechnicalAsset({
+        rndProjectId: rndProject.id,
+        assetId: asset.id,
+        version: asset.version,
+        toStatus: "DISABLED",
+        reason: "不得绕过专用停用命令",
+        actorId: ids.owner,
+        auditContext: context(ids.owner, `asset-generic-disable-${suffix}`)
+      })
+    ).rejects.toMatchObject({ code: "TECHNICAL_ASSET_DEACTIVATION_COMMAND_REQUIRED", status: 409 });
+
+    const deactivated = await deactivateTechnicalAsset({
+      assetId: asset.id,
+      version: asset.version,
+      reason: "资产停止新的项目使用",
+      actorId: ids.owner,
+      authorizationActor,
+      auditContext: context(ids.owner, `asset-dedicated-disable-${suffix}`)
+    });
+    expect(deactivated.asset).toMatchObject({ status: "DISABLED", version: 2 });
+    await expect(
+      db.technicalAssetEvent.count({
+        where: {
+          technicalAssetId: asset.id,
+          fromStatus: "VALIDATED",
+          toStatus: "DISABLED"
+        }
+      })
+    ).resolves.toBe(1);
+    await expect(
+      db.auditLog.count({
+        where: { objectId: deactivated.auditId, action: "TECHNICAL_ASSET_DISABLED" }
+      })
+    ).resolves.toBe(0);
+    await expect(
+      db.auditLog.count({
+        where: { id: deactivated.auditId, action: "TECHNICAL_ASSET_DISABLED" }
+      })
+    ).resolves.toBe(1);
+    await expect(
+      db.outboxEvent.count({
+        where: { id: deactivated.outboxEventId, eventType: "asset.technical-asset.deactivated" }
+      })
+    ).resolves.toBe(1);
+  });
+
+  it("rolls back the asset, event, and success audit when the deactivation outbox conflicts", async () => {
+    const rndProject = await db.rndProject.create({
+      data: {
+        id: `rnd-deactivate-rollback-${suffix}`,
+        code: `RND.DEACTIVATE.ROLLBACK.${suffix}`.toUpperCase(),
+        name: "停用事务回滚",
+        ownerId: ids.owner,
+        createdById: ids.assetMaintainer
+      }
+    });
+    const asset = await db.technicalAsset.create({
+      data: {
+        id: `asset-deactivate-rollback-${suffix}`,
+        rndProjectId: rndProject.id,
+        assetNumber: `AST.DEACTIVATE.ROLLBACK.${suffix}`.toUpperCase(),
+        assetType: "MECHANICAL",
+        name: "停用事务回滚资产",
+        ownerId: ids.owner,
+        status: "VALIDATED",
+        createdById: ids.assetMaintainer
+      }
+    });
+    await db.outboxEvent.create({
+      data: {
+        eventType: "asset.technical-asset.deactivated",
+        aggregateType: "TECHNICAL_ASSET",
+        aggregateId: asset.id,
+        payload: {},
+        payloadHash: "0".repeat(64),
+        idempotencyKey: `${asset.id}:v2`
+      }
+    });
+
+    await expect(
+      deactivateTechnicalAsset({
+        assetId: asset.id,
+        version: asset.version,
+        reason: "制造 Outbox 冲突",
+        actorId: ids.owner,
+        authorizationActor,
+        auditContext: context(ids.owner, `asset-disable-rollback-${suffix}`)
+      })
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
+    await expect(
+      db.technicalAsset.findUniqueOrThrow({ where: { id: asset.id } })
+    ).resolves.toMatchObject({
+      status: "VALIDATED",
+      version: 1
+    });
+    await expect(
+      db.technicalAssetEvent.count({
+        where: { technicalAssetId: asset.id, toStatus: "DISABLED" }
+      })
+    ).resolves.toBe(0);
+    await expect(
+      db.auditLog.count({
+        where: {
+          operationId: `asset-disable-rollback-${suffix}`,
+          action: "TECHNICAL_ASSET_DISABLED"
+        }
+      })
+    ).resolves.toBe(0);
   });
 });

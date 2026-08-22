@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 
+import type { AuthorizationActor } from "@/lib/auth/authorize";
 import { db, inTransaction } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
@@ -10,6 +11,8 @@ import {
 } from "@/modules/audit/domain/vocabulary";
 import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
 import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+
+import { assertSourceFilesAvailableAndAuthorized } from "./project-asset-usage-service";
 
 import {
   TechnicalAssetError,
@@ -565,6 +568,13 @@ export async function transitionTechnicalAsset(
 ) {
   const expectedVersion = validatePositiveVersion(input.version);
   const reason = validateReason(input.reason);
+  if (input.toStatus === "DISABLED") {
+    throw new TechnicalAssetError(
+      "TECHNICAL_ASSET_DEACTIVATION_COMMAND_REQUIRED",
+      "停用企业技术资产必须使用专用停用命令。",
+      409
+    );
+  }
   try {
     return await inTransaction(transaction, async (client) => {
       const rndProject = await lockRndProject(client, input.rndProjectId);
@@ -647,6 +657,149 @@ export async function transitionTechnicalAsset(
           ...technicalAssetAuditValue(asset),
           fromStatus: current.status,
           toStatus: asset.status
+        }
+      });
+      return {
+        asset: serializeTechnicalAsset(asset),
+        resourceVersion: asset.version,
+        auditId: audit.id,
+        outboxEventId: outbox.id
+      };
+    });
+  } catch (error) {
+    mapDatabaseError(error);
+  }
+}
+
+export async function deactivateTechnicalAsset(
+  input: {
+    assetId: string;
+    version: unknown;
+    reason: unknown;
+    actorId: string;
+    authorizationActor: AuthorizationActor;
+    auditContext: AuditContext;
+  },
+  transaction?: Transaction
+) {
+  const expectedVersion = validatePositiveVersion(input.version);
+  const reason = validateReason(input.reason);
+  if (input.authorizationActor.id !== input.actorId) {
+    throw new TechnicalAssetError(
+      "TECHNICAL_ASSET_OWNER_REQUIRED",
+      "操作人身份上下文不一致。",
+      403
+    );
+  }
+  try {
+    return await inTransaction(transaction, async (client) => {
+      const identity = await client.technicalAsset.findUnique({
+        where: { id: input.assetId },
+        select: { rndProjectId: true }
+      });
+      if (!identity) {
+        throw new TechnicalAssetError("TECHNICAL_ASSET_NOT_FOUND", "企业技术资产不存在。", 404);
+      }
+      const rndProject = await lockRndProject(client, identity.rndProjectId);
+      if (!rndProject) {
+        throw new TechnicalAssetError("RND_PROJECT_NOT_FOUND", "内部研发项目不存在。", 404);
+      }
+      const current = await lockTechnicalAsset(client, identity.rndProjectId, input.assetId);
+      if (!current) {
+        throw new TechnicalAssetError("TECHNICAL_ASSET_NOT_FOUND", "企业技术资产不存在。", 404);
+      }
+      if (current.ownerId !== input.actorId) {
+        throw new TechnicalAssetError(
+          "TECHNICAL_ASSET_OWNER_REQUIRED",
+          "只有企业技术资产 Owner 可以停用该资产。",
+          403
+        );
+      }
+      if (current.version !== expectedVersion) {
+        throw new TechnicalAssetError(
+          "VERSION_CONFLICT",
+          "企业技术资产已发生变化，请刷新后重试。",
+          409
+        );
+      }
+      assertTechnicalAssetTransition(current.status as TechnicalAssetStatus, "DISABLED");
+
+      await client.$queryRaw`SELECT "id" FROM "asset_releases" WHERE "technical_asset_id" = ${current.id} ORDER BY "id" FOR UPDATE`;
+      await client.$queryRaw`SELECT "id" FROM "asset_release_versions" WHERE "technical_asset_id" = ${current.id} ORDER BY "id" FOR UPDATE`;
+      const releaseVersions = await client.assetReleaseVersion.findMany({
+        where: { technicalAssetId: current.id },
+        orderBy: { id: "asc" },
+        select: { id: true }
+      });
+      if (releaseVersions.length) {
+        await assertSourceFilesAvailableAndAuthorized(client, {
+          technicalAssetId: current.id,
+          assetReleaseVersionIds: releaseVersions.map(({ id }) => id),
+          authorizationActor: input.authorizationActor
+        });
+      }
+
+      const now = await databaseNow(client);
+      const nextVersion = current.version + 1;
+      const predicted = { ...current, status: "DISABLED", version: nextVersion, updatedAt: now };
+      const updated = await client.technicalAsset.updateMany({
+        where: { id: current.id, rndProjectId: current.rndProjectId, version: expectedVersion },
+        data: { status: "DISABLED", version: { increment: 1 }, updatedAt: now }
+      });
+      if (updated.count !== 1) {
+        throw new TechnicalAssetError(
+          "VERSION_CONFLICT",
+          "企业技术资产已发生变化，请刷新后重试。",
+          409
+        );
+      }
+      const event = await client.technicalAssetEvent.create({
+        data: {
+          rndProjectId: current.rndProjectId,
+          technicalAssetId: current.id,
+          sequence: await nextTechnicalAssetEventSequence(client, current.id),
+          eventType: "STATUS_CHANGED",
+          fromStatus: current.status,
+          toStatus: "DISABLED",
+          reason,
+          snapshotJson: technicalAssetAuditValue(predicted) as Prisma.InputJsonValue,
+          actorId: input.actorId
+        }
+      });
+      const asset = await client.technicalAsset.findUniqueOrThrow({ where: { id: current.id } });
+      const audit = await writeAudit(client, {
+        action: AUDIT_ACTIONS.TECHNICAL_ASSET_DISABLED,
+        objectType: AUDIT_OBJECT_TYPES.TECHNICAL_ASSET_EVENT,
+        objectId: event.id,
+        context: commandContext(input.auditContext, input.actorId, reason, rndProject.departmentId),
+        before: {
+          value: technicalAssetAuditValue(current),
+          allowedFields: TECHNICAL_ASSET_AUDIT_FIELDS
+        },
+        after: {
+          value: {
+            ...technicalAssetAuditValue(asset),
+            fromStatus: current.status,
+            toStatus: asset.status,
+            eventId: event.id,
+            eventSequence: event.sequence,
+            reason
+          },
+          allowedFields: TECHNICAL_ASSET_AUDIT_FIELDS
+        }
+      });
+      const outbox = await appendOutboxEvent(client, {
+        eventType: "asset.technical-asset.deactivated",
+        aggregateType: "TECHNICAL_ASSET",
+        aggregateId: asset.id,
+        idempotencyKey: `${asset.id}:v${asset.version}`,
+        payload: {
+          ...technicalAssetAuditValue(asset),
+          fromStatus: current.status,
+          toStatus: asset.status,
+          eventId: event.id,
+          eventSequence: event.sequence,
+          deactivatedAt: now.toISOString()
         }
       });
       return {

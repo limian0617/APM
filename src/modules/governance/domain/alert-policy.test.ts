@@ -48,6 +48,11 @@ describe("APM-034 alert policy", () => {
     }
   });
 
+  it("registers asset impact as an empty-condition source", () => {
+    expect(ALERT_SOURCE_TYPES.ASSET_IMPACT).toBe("ASSET_IMPACT");
+    expect(validateAlertRuleConfig(ALERT_SOURCE_TYPES.ASSET_IMPACT, {})).toEqual({});
+  });
+
   it("builds a stable source key scoped by the registered source type", () => {
     expect(buildAlertSourceKey(ALERT_SOURCE_TYPES.GATE_HARD_FAILURE, " gate-check-1 ")).toBe(
       "GATE_HARD_FAILURE:gate-check-1"
