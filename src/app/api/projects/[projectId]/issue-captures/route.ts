@@ -1,70 +1,49 @@
 import { PERMISSIONS } from "@/lib/auth/permissions";
 import { authorizeProjectRequest } from "@/lib/auth/project-guard";
+import { createIssueCapture } from "@/modules/issues/application/issue-service";
+import {
+  issueServiceErrorResponse,
+  parseIssueCaptureCreatePayload
+} from "@/modules/issues/contracts/issue-http";
 import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { withRequestObservability } from "@/modules/observability/application/request-observer";
 import { idempotentCommandResponse } from "@/modules/platform-api/application/idempotent-command";
 import {
-  assertIfMatchMatches,
   parseIdempotencyHeaders,
-  parseIfMatchHeader,
   parseJsonBody,
   parsePath
 } from "@/modules/platform-api/contracts/dto";
 import { apiContractErrorResponse } from "@/modules/platform-api/contracts/errors";
 import {
-  createProjectIssueBodySchema,
+  createIssueCaptureBodySchema,
   projectPathSchema
 } from "@/modules/platform-api/contracts/internal-routes";
-import { createProjectIssue, listProjectIssues } from "@/modules/issues/application/issue-service";
-import {
-  issueServiceErrorResponse,
-  parseIssueCreatePayload,
-  parseIssueListQuery
-} from "@/modules/issues/contracts/issue-http";
 
 type RouteContext = { params: Promise<{ projectId: string }> };
 
-async function listIssues(request: Request, context: RouteContext) {
-  const { projectId } = await context.params;
-  const guard = await authorizeProjectRequest(request, projectId, PERMISSIONS.PROJECT_ISSUE_READ);
-  if (!guard.authorized) return guard.response;
-  try {
-    const path = parsePath(projectPathSchema, { projectId });
-    const query = parseIssueListQuery(new URL(request.url));
-    return Response.json(await listProjectIssues({ projectId: path.projectId, ...query }));
-  } catch (error) {
-    return (
-      apiContractErrorResponse(error) ?? issueServiceErrorResponse(error) ?? Promise.reject(error)
-    );
-  }
-}
-
-async function createIssue(request: Request, context: RouteContext) {
+async function createCapture(request: Request, context: RouteContext) {
   const { projectId } = await context.params;
   const guard = await authorizeProjectRequest(request, projectId, PERMISSIONS.PROJECT_ISSUE_CREATE);
   if (!guard.authorized) return guard.response;
   try {
     const path = parsePath(projectPathSchema, { projectId });
-    const body = parseIssueCreatePayload(
-      await parseJsonBody(request, createProjectIssueBodySchema)
+    const body = parseIssueCaptureCreatePayload(
+      await parseJsonBody(request, createIssueCaptureBodySchema)
     );
-    if (body.captureId !== undefined) {
-      assertIfMatchMatches(parseIfMatchHeader(request), body.captureVersion!, "captureVersion");
-    }
     const { idempotencyKey } = parseIdempotencyHeaders(request);
     return await idempotentCommandResponse({
       actorId: guard.actor.id,
-      operation: "projects.issue.create",
+      operation: "projects.issue-capture.create",
       idempotencyKey,
       request: { path, body },
       execute: async (transaction) => ({
         status: 201,
-        body: await createProjectIssue(
+        body: await createIssueCapture(
           {
             projectId: path.projectId,
             ...body,
             actorId: guard.actor.id,
-            captureFileAccess: {
+            fileAccess: {
               actor: guard.actor,
               projectDepartmentId: guard.project.departmentId,
               memberRoles: guard.project.memberRoles
@@ -86,11 +65,7 @@ async function createIssue(request: Request, context: RouteContext) {
   }
 }
 
-export const GET = withRequestObservability(
-  { module: "issues", operation: "list-project-issues" },
-  listIssues
-);
 export const POST = withRequestObservability(
-  { module: "issues", operation: "create-project-issue" },
-  createIssue
+  { module: "issues", operation: "create-issue-capture" },
+  createCapture
 );

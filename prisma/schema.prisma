@@ -316,6 +316,8 @@ model FileObject {
   archiveManifestItems             ProjectArchiveManifestItem[]
   assetComponentSnapshots          AssetComponentSnapshot[]          @relation("AssetComponentSourceFile")
   projectAssetDerivationsTarget    ProjectAssetDerivation[]           @relation("ProjectAssetDerivationTargetFile")
+  issueCaptureVoices               IssueCapture[]                     @relation("IssueCaptureVoiceFile")
+  issueCaptureAttachments          IssueCaptureAttachment[]           @relation("IssueCaptureAttachmentFile")
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -1382,6 +1384,11 @@ enum IssueStatus {
   CLOSED
 }
 
+enum IssueCaptureStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+}
+
 enum IssueHistoryEventType {
   CREATED
   DETAILS_UPDATED
@@ -1693,6 +1700,8 @@ enum AuditAction {
   ISSUE_RESPONSIBILITY_ASSIGNED
   ISSUE_RELATION_ADDED
   ISSUE_RELATION_CLOSED
+  ISSUE_CAPTURE_CREATED
+  ISSUE_CAPTURE_CONFIRMED
   COCKPIT_PROJECTION_REFRESHED
   COCKPIT_RESOURCE_LOAD_REFRESHED
   COCKPIT_RESOURCE_LOAD_PERSON_READ
@@ -1811,6 +1820,7 @@ enum AuditObjectType {
   ASSET_IMPACT_ALERT_PROJECTION_ATTEMPT
   ISSUE
   ISSUE_RELATION
+  ISSUE_CAPTURE
   COCKPIT_PROJECTION
   COCKPIT_RESOURCE_LOAD
 }
@@ -1977,6 +1987,7 @@ model User {
   issuesCreated                           Issue[]                                @relation("IssueCreatedBy")
   issuesUpdated                           Issue[]                                @relation("IssueUpdatedBy")
   issuesClosed                            Issue[]                                @relation("IssueClosedBy")
+  issueCapturesCreated                    IssueCapture[]                         @relation("IssueCaptureCreatedBy")
   issueHistoriesActed                     IssueHistory[]                         @relation("IssueHistoryActor")
   issueRelationsCreated                   IssueRelation[]                        @relation("IssueRelationCreatedBy")
   issueRelationsClosed                    IssueRelation[]                        @relation("IssueRelationClosedBy")
@@ -2175,6 +2186,7 @@ model Project {
   resourceLoadPersonProjections      ResourceLoadPersonProjection[]
   publicLibraryReferences            ProjectPublicLibraryReference[]
   issues                             Issue[]
+  issueCaptures                      IssueCapture[]
   issueHistories                     IssueHistory[]
   issueRelations                     IssueRelation[]
   mechanicalDrawingProcessTags       MechanicalDrawingProcessTag[]
@@ -5629,6 +5641,45 @@ model ProjectAlertScan {
   @@map("project_alert_scans")
 }
 
+model IssueCapture {
+  id              String                   @id @default(cuid())
+  projectId       String                   @map("project_id")
+  inputText       String?                  @map("input_text")
+  voiceFileId     String?                  @map("voice_file_id")
+  voiceFileSha256 String?                  @map("voice_file_sha256")
+  status          IssueCaptureStatus       @default(PENDING_CONFIRMATION)
+  issueId         String?                  @map("issue_id")
+  version         Int                      @default(1)
+  createdById     String                   @map("created_by_id")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  confirmedAt     DateTime?                @map("confirmed_at")
+  project         Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy       User                     @relation("IssueCaptureCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voiceFile       FileObject?              @relation("IssueCaptureVoiceFile", fields: [voiceFileId, projectId], references: [id, projectId], onDelete: Restrict)
+  issue           Issue?                   @relation("IssueCaptureIssue", fields: [issueId, projectId], references: [id, projectId], onDelete: Restrict)
+  attachments     IssueCaptureAttachment[]
+
+  @@unique([id, projectId])
+  @@unique([issueId, projectId])
+  @@index([projectId, createdById, status, createdAt])
+  @@map("issue_captures")
+}
+
+model IssueCaptureAttachment {
+  id         String       @id @default(cuid())
+  projectId  String       @map("project_id")
+  captureId  String       @map("capture_id")
+  fileId     String       @map("file_id")
+  fileSha256 String       @map("file_sha256")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  capture    IssueCapture @relation(fields: [captureId, projectId], references: [id, projectId], onDelete: Restrict)
+  file       FileObject   @relation("IssueCaptureAttachmentFile", fields: [fileId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([captureId, fileId])
+  @@index([projectId, fileId])
+  @@map("issue_capture_attachments")
+}
+
 model Issue {
   id                      String                            @id @default(cuid())
   projectId               String                            @map("project_id")
@@ -5666,6 +5717,7 @@ model Issue {
   acceptanceResidualItems ResidualItem[]                    @relation("AcceptanceResidualIssue")
   retrospectiveSources    ProjectRetrospectiveIssueSource[] @relation("RetrospectiveIssueSource")
   knowledgeSources        KnowledgeEntrySource[]            @relation("KnowledgeIssueSource")
+  capture                 IssueCapture?                     @relation("IssueCaptureIssue")
 
   @@unique([id, projectId])
   @@index([projectId, status, severity, updatedAt])

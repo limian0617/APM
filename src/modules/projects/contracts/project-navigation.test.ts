@@ -26,11 +26,12 @@ describe("project navigation manifest", () => {
     ]);
   });
 
-  it("publishes real cockpit, execution, procurement, FAT/SAT and governance pages while unfinished entries remain inert", () => {
+  it("publishes real cockpit, execution, issues, procurement, FAT/SAT and governance pages while unfinished entries remain inert", () => {
     const navigation = buildProjectNavigation("demo project/1");
     const plan = navigation.primary.find((entry) => entry.id === "plan");
     const overview = navigation.primary.find((entry) => entry.id === "overview");
     const procurement = navigation.primary.find((entry) => entry.id === "procurement");
+    const issues = navigation.primary.find((entry) => entry.id === "issues");
     const acceptance = navigation.primary.find((entry) => entry.id === "acceptance");
     const governance = navigation.more.find((entry) => entry.id === "governance");
 
@@ -50,6 +51,12 @@ describe("project navigation manifest", () => {
       available: true,
       href: "/projects/demo%20project%2F1/procurement?view=overview"
     });
+    expect(issues).toEqual({
+      id: "issues",
+      label: "问题",
+      available: true,
+      href: "/projects/demo%20project%2F1/issues"
+    });
     expect(acceptance).toEqual({
       id: "acceptance",
       label: "FAT/SAT",
@@ -64,7 +71,9 @@ describe("project navigation manifest", () => {
     });
     expect(
       navigation.primary
-        .filter((entry) => !["plan", "overview", "procurement", "acceptance"].includes(entry.id))
+        .filter(
+          (entry) => !["plan", "overview", "issues", "procurement", "acceptance"].includes(entry.id)
+        )
         .every((entry) => !entry.available)
     ).toBe(true);
     expect(

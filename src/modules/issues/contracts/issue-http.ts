@@ -1,6 +1,7 @@
 import { parseDto, parseQuery } from "@/modules/platform-api/contracts/dto";
 import { apiErrorResponse } from "@/modules/platform-api/contracts/errors";
 import {
+  createIssueCaptureBodySchema,
   createProjectIssueBodySchema,
   issueRelationBodySchema,
   issueRelationCloseBodySchema,
@@ -14,6 +15,10 @@ import { IssueServiceError } from "../application/issue-service";
 
 export function parseIssueCreatePayload(value: unknown) {
   return parseDto(createProjectIssueBodySchema, value, "body");
+}
+
+export function parseIssueCaptureCreatePayload(value: unknown) {
+  return parseDto(createIssueCaptureBodySchema, value, "body");
 }
 
 export function parseIssueUpdatePayload(value: unknown) {

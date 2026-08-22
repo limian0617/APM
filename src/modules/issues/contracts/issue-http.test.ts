@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parseIssueCaptureCreatePayload,
   parseIssueCreatePayload,
   parseIssueListQuery,
   parseIssueRelationClosePayload,
@@ -24,6 +25,39 @@ describe("APM-070 issue HTTP contracts", () => {
 
   it("accepts a strict project issue create payload", () => {
     expect(parseIssueCreatePayload(details)).toEqual(details);
+  });
+
+  it("accepts an exact mobile capture version without accepting transcript fields", () => {
+    expect(
+      parseIssueCreatePayload({
+        ...details,
+        captureId: "capture-1",
+        captureVersion: 1
+      })
+    ).toEqual({ ...details, captureId: "capture-1", captureVersion: 1 });
+
+    expect(() =>
+      parseIssueCreatePayload({
+        ...details,
+        captureId: "capture-1",
+        captureVersion: 1,
+        rawTranscript: "未经用户确认的转写不得进入正式问题。"
+      })
+    ).toThrow();
+  });
+
+  it("requires text or voice for a capture and keeps supporting media optional", () => {
+    expect(
+      parseIssueCaptureCreatePayload({ voiceFileId: "voice-1", mediaFileIds: ["photo-1"] })
+    ).toEqual({ voiceFileId: "voice-1", mediaFileIds: ["photo-1"] });
+    expect(parseIssueCaptureCreatePayload({ inputText: "现场卡滞" })).toEqual({
+      inputText: "现场卡滞",
+      mediaFileIds: []
+    });
+    expect(() => parseIssueCaptureCreatePayload({ mediaFileIds: ["photo-1"] })).toThrow();
+    expect(() =>
+      parseIssueCaptureCreatePayload({ voiceFileId: "voice-1", asrTranscript: "模型转写" })
+    ).toThrow();
   });
 
   it("requires both root-cause fields together on updates", () => {

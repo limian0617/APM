@@ -913,8 +913,50 @@ function requireCompleteIssueRootCause(
 }
 
 export const createProjectIssueBodySchema = z
-  .strictObject(issueDetailsSchema)
-  .superRefine(requireCompleteIssueRootCause);
+  .strictObject({
+    ...issueDetailsSchema,
+    captureId: identifierSchema.optional(),
+    captureVersion: positiveVersionSchema.optional()
+  })
+  .superRefine((value, context) => {
+    requireCompleteIssueRootCause(value, context);
+    if ((value.captureId === undefined) !== (value.captureVersion === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["captureId"],
+        message: "captureId 与 captureVersion 必须同时提供或同时省略。"
+      });
+    }
+  });
+export const createIssueCaptureBodySchema = z
+  .strictObject({
+    inputText: z.string().trim().min(1).max(10_000).nullable().optional(),
+    voiceFileId: identifierSchema.nullable().optional(),
+    mediaFileIds: z.array(identifierSchema).max(20).default([])
+  })
+  .superRefine((value, context) => {
+    if (!value.inputText && !value.voiceFileId) {
+      context.addIssue({
+        code: "custom",
+        path: ["inputText"],
+        message: "inputText 与 voiceFileId 至少提供一项。"
+      });
+    }
+    if (new Set(value.mediaFileIds).size !== value.mediaFileIds.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["mediaFileIds"],
+        message: "mediaFileIds 不得重复。"
+      });
+    }
+    if (value.voiceFileId && value.mediaFileIds.includes(value.voiceFileId)) {
+      context.addIssue({
+        code: "custom",
+        path: ["mediaFileIds"],
+        message: "语音文件不得重复作为媒体附件。"
+      });
+    }
+  });
 export const updateProjectIssueBodySchema = z
   .strictObject({ version: positiveVersionSchema, reason: reasonSchema, ...issueDetailsSchema })
   .superRefine(requireCompleteIssueRootCause);
