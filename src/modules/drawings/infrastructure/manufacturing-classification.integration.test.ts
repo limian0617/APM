@@ -523,7 +523,7 @@ describeDatabase("APM-053 PostgreSQL manufacturing classification persistence", 
     );
     await expect(
       db.$executeRawUnsafe('TRUNCATE TABLE "supplier_reference_manufacturing_capabilities"')
-    ).rejects.toThrow(/cannot truncate a table referenced in a foreign key constraint/u);
+    ).rejects.toMatchObject({ meta: { code: "0A000" } });
     await expect(
       db.$executeRawUnsafe('TRUNCATE TABLE "supplier_reference_manufacturing_capabilities" CASCADE')
     ).rejects.toThrow(/must be disabled instead of removed/u);

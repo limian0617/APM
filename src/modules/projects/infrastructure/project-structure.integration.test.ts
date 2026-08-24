@@ -698,6 +698,6 @@ describeDatabase("APM-012 PostgreSQL project structure", () => {
     );
     await expect(
       db.$executeRawUnsafe('TRUNCATE TABLE "project_modules", "delivery_units"')
-    ).rejects.toThrow(/disabled instead of removed|cannot truncate a table referenced/iu);
+    ).rejects.toMatchObject({ meta: { code: "0A000" } });
   });
 });
