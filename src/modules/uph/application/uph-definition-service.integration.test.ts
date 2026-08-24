@@ -242,7 +242,6 @@ async function expectUphCheckViolation(action: Promise<unknown>) {
 
 describe.skipIf(!enabled)("APM-080 PostgreSQL service contract", () => {
   beforeEach(async () => {
-    await db.$executeRawUnsafe(`SET session_replication_role = replica`);
     for (const [id, employeeNo, name] of [
       ["u-proc", "E-UPH-PROC", "Process"],
       ["u-comm", "E-UPH-COMM", "Commission"],
@@ -252,40 +251,47 @@ describe.skipIf(!enabled)("APM-080 PostgreSQL service contract", () => {
     }
     await db.$executeRaw`INSERT INTO templates(id,code,name,status,current_version,version,created_by_id,updated_by_id,created_at,updated_at) VALUES ('uph-test-template','UPH.TEST','UPH Test','ACTIVE',1,1,'u-proc','u-proc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`;
     await db.$executeRaw`INSERT INTO template_versions(id,template_id,version,status,name,checksum,published_by_id,published_at) VALUES ('uph-test-template-version','uph-test-template',1,'PUBLISHED','UPH Test v1',repeat('0',64),'u-proc',CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`;
+    await db.$executeRaw`INSERT INTO template_components(id,code,component_type,name,draft_content,status,current_version,version,created_by_id,updated_by_id,created_at,updated_at) VALUES ('uph-test-capability-component','UPH.TEST.CAPABILITY','CAPABILITY_RULE'::"TemplateComponentType",'UPH capability rule','{"capabilities":[{"code":"UPH_ANALYSIS","required":false}]}'::jsonb,'ACTIVE'::"TemplateMasterStatus",1,1,'u-proc','u-proc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`;
+    await db.$executeRaw`INSERT INTO template_component_versions(id,component_id,version,status,component_type,name,content_json,checksum,published_by_id,published_at) VALUES ('uph-test-capability-component-version','uph-test-capability-component',1,'PUBLISHED'::"TemplateVersionStatus",'CAPABILITY_RULE'::"TemplateComponentType",'UPH capability rule','{"capabilities":[{"code":"UPH_ANALYSIS","required":false}]}'::jsonb,repeat('0',64),'u-proc',CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`;
     await db.$executeRaw`UPDATE company_capabilities SET enabled = true WHERE code = 'UPH_ANALYSIS'`;
     await db.$executeRaw`INSERT INTO projects(id,code,name,status,version,initialization_status,source_template_version_id,source_template_checksum,initialized_at,project_type,equipment_shape,structure_status,capability_configuration_status,capabilities_configured_at,created_by_id,created_at,updated_at) VALUES ('p-uph','P-UPH','UPH test project','DRAFT',1,'READY','uph-test-template-version',repeat('0',64),CURRENT_TIMESTAMP,'CUSTOMER_DELIVERY','LINE','READY','READY',CURRENT_TIMESTAMP,'u-proc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`;
-    await db.$executeRaw`INSERT INTO project_capabilities(project_id,capability_code,template_allowed,template_required,selected_enabled,source_snapshot_component_id,version,created_by_id,updated_by_id,created_at,updated_at) VALUES ('p-uph','UPH_ANALYSIS',true,false,true,'uph-test-capability-source',1,'u-proc','u-proc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (project_id,capability_code) DO UPDATE SET selected_enabled = EXCLUDED.selected_enabled`;
+    await db.$executeRaw`INSERT INTO project_template_snapshots(id,project_id,source_template_version_id,source_template_checksum,snapshot_checksum,template_code,template_name,template_version,template_published_at) SELECT 'uph-test-project-snapshot',p.id,v.id,v.checksum,repeat('0',64),t.code,v.name,v.version,v.published_at FROM projects p JOIN template_versions v ON v.id = p.source_template_version_id JOIN templates t ON t.id = v.template_id WHERE p.id = 'p-uph' ON CONFLICT (project_id) DO NOTHING`;
+    await db.$executeRaw`INSERT INTO project_template_snapshot_components(id,snapshot_id,source_component_version_id,component_type,slot,position,source_checksum,component_code,component_name,component_version,content_json) SELECT 'uph-test-capability-snapshot-component','uph-test-project-snapshot',v.id,v.component_type,'CAPABILITY_RULE',0,v.checksum,c.code,v.name,v.version,v.content_json FROM template_component_versions v JOIN template_components c ON c.id = v.component_id WHERE v.id = 'uph-test-capability-component-version' ON CONFLICT (snapshot_id,slot) DO NOTHING`;
+    await db.$executeRaw`INSERT INTO project_capabilities(project_id,capability_code,template_allowed,template_required,selected_enabled,source_snapshot_component_id,version,created_by_id,updated_by_id,created_at,updated_at) VALUES ('p-uph','UPH_ANALYSIS',true,false,true,'uph-test-capability-snapshot-component',1,'u-proc','u-proc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (project_id,capability_code) DO UPDATE SET selected_enabled = EXCLUDED.selected_enabled`;
     await db.$executeRaw`INSERT INTO delivery_units(id,project_id,parent_id,unit_type,code,name,status,position,version,created_by_id,updated_by_id,created_at,updated_at) VALUES ('du-line','p-uph',NULL,'LINE','LINE-1','Line 1','ACTIVE',0,1,'u-proc','u-proc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`;
     await db.$executeRaw`INSERT INTO delivery_units(id,project_id,parent_id,unit_type,code,name,status,position,version,created_by_id,updated_by_id,created_at,updated_at) VALUES ('du-machine','p-uph','du-line','MACHINE','MACHINE-1','Machine 1','ACTIVE',0,1,'u-proc','u-proc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`;
     await db.$executeRaw`INSERT INTO project_members(id,project_id,user_id,project_role,assigned_by_id,joined_at,version) VALUES ('pm-proc','p-uph','u-proc','ENGINEER','u-proc',CURRENT_TIMESTAMP,1),('pm-comm','p-uph','u-comm','ENGINEER','u-proc',CURRENT_TIMESTAMP,1),('pm-qual','p-uph','u-qual','QUALITY','u-proc',CURRENT_TIMESTAMP,1) ON CONFLICT (id) DO NOTHING`;
     await db.$executeRaw`INSERT INTO project_modules(id,project_id,delivery_unit_id,code,name,status,position,version,created_by_id,updated_by_id,created_at,updated_at) VALUES ('pm-uph','p-uph','du-machine','MOD1','Module 1','ACTIVE',0,1,'u-proc','u-proc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`;
     await db.$executeRaw`INSERT INTO project_modules(id,project_id,delivery_unit_id,code,name,status,position,version,created_by_id,updated_by_id,created_at,updated_at) VALUES ('pm-uph-b','p-uph','du-machine','MOD2','Module 2','DISABLED',1,1,'u-proc','u-proc',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`;
-    await db.$executeRawUnsafe(`SET session_replication_role = origin`);
   });
 
   afterEach(async () => {
-    await db.$executeRawUnsafe(`SET session_replication_role = replica`);
-    await db.$executeRaw`DELETE FROM outbox_events WHERE aggregate_id IN (SELECT id FROM project_uph_topology_versions WHERE project_id = 'p-uph') OR aggregate_id IN (SELECT id FROM project_uph_ct_definition_versions WHERE project_id = 'p-uph') OR aggregate_id IN (SELECT id FROM project_uph_formula_versions WHERE project_id = 'p-uph')`;
-    await db.$executeRaw`DELETE FROM audit_logs WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`DELETE FROM project_uph_ct_definition_versions WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`DELETE FROM project_uph_ct_definitions WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`DELETE FROM project_uph_topology_nodes WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`DELETE FROM project_uph_topology_versions WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`DELETE FROM project_uph_topologies WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`DELETE FROM project_uph_formula_versions WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`DELETE FROM project_uph_formulas WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`DELETE FROM api_idempotency_records WHERE actor_id IN ('u-proc','u-comm','u-qual')`;
-    await db.$executeRaw`DELETE FROM project_capabilities WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`UPDATE company_capabilities SET enabled = false WHERE code = 'UPH_ANALYSIS'`;
-    await db.$executeRaw`DELETE FROM project_modules WHERE id = 'pm-uph'`;
-    await db.$executeRaw`DELETE FROM project_modules WHERE id = 'pm-uph-b'`;
-    await db.$executeRaw`DELETE FROM delivery_units WHERE id = 'du-child'`;
-    await db.$executeRaw`DELETE FROM delivery_units WHERE id = 'du-machine'`;
-    await db.$executeRaw`DELETE FROM project_members WHERE project_id = 'p-uph'`;
-    await db.$executeRaw`DELETE FROM delivery_units WHERE id = 'du-line'`;
-    await db.$executeRaw`DELETE FROM projects WHERE id = 'p-uph'`;
-    // Immutable template and user facts remain in the disposable integration database.
-    await db.$executeRawUnsafe(`SET session_replication_role = origin`);
+    await db.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await transaction.$executeRaw`DELETE FROM outbox_events WHERE aggregate_id IN (SELECT id FROM project_uph_topology_versions WHERE project_id = 'p-uph') OR aggregate_id IN (SELECT id FROM project_uph_ct_definition_versions WHERE project_id = 'p-uph') OR aggregate_id IN (SELECT id FROM project_uph_formula_versions WHERE project_id = 'p-uph')`;
+      await transaction.$executeRaw`DELETE FROM audit_logs WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`DELETE FROM project_uph_ct_definition_versions WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`DELETE FROM project_uph_ct_definitions WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`DELETE FROM project_uph_topology_nodes WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`DELETE FROM project_uph_topology_versions WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`DELETE FROM project_uph_topologies WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`DELETE FROM project_uph_formula_versions WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`DELETE FROM project_uph_formulas WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`DELETE FROM api_idempotency_records WHERE actor_id IN ('u-proc','u-comm','u-qual')`;
+      await transaction.$executeRaw`DELETE FROM project_capabilities WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`UPDATE company_capabilities SET enabled = false WHERE code = 'UPH_ANALYSIS'`;
+      await transaction.$executeRaw`DELETE FROM project_modules WHERE id = 'pm-uph'`;
+      await transaction.$executeRaw`DELETE FROM project_modules WHERE id = 'pm-uph-b'`;
+      await transaction.$executeRaw`DELETE FROM delivery_units WHERE id = 'du-child'`;
+      await transaction.$executeRaw`DELETE FROM delivery_units WHERE id = 'du-machine'`;
+      await transaction.$executeRaw`DELETE FROM project_members WHERE project_id = 'p-uph'`;
+      await transaction.$executeRaw`DELETE FROM delivery_units WHERE id = 'du-line'`;
+      await transaction.$executeRaw`DELETE FROM project_template_snapshot_components WHERE id = 'uph-test-capability-snapshot-component'`;
+      await transaction.$executeRaw`DELETE FROM project_template_snapshots WHERE id = 'uph-test-project-snapshot'`;
+      await transaction.$executeRaw`DELETE FROM template_component_versions WHERE id = 'uph-test-capability-component-version'`;
+      await transaction.$executeRaw`DELETE FROM template_components WHERE id = 'uph-test-capability-component'`;
+      await transaction.$executeRaw`DELETE FROM projects WHERE id = 'p-uph'`;
+    });
   });
 
   it("creates, signs and publishes a CT version with independent actors", async () => {
