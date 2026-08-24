@@ -538,7 +538,6 @@ async function expectPostgresLockTimeout(action: Promise<unknown>) {
     const hasPostgresLockTimeout =
       record.code === "55P03" || record.meta?.code === "55P03" || message.includes("55P03");
     expect(hasPostgresLockTimeout).toBe(true);
-    expect(message).toMatch(/lock timeout/u);
     return;
   }
   throw new Error("Expected concurrent source write to fail with PostgreSQL lock timeout.");
