@@ -94,6 +94,53 @@ describe("stage audit vocabulary", () => {
   });
 });
 
+describe("APM-081 UPH test-batch audit vocabulary", () => {
+  it("keeps test-batch commands and immutable facts aligned across Prisma and migration 59", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260825010000_apm_081_uph_test_batches/migration.sql"
+      ),
+      "utf8"
+    );
+    const actions = [
+      "UPH_TEST_BATCH_CREATED",
+      "UPH_TEST_BATCH_REVISION_METADATA_UPDATED",
+      "UPH_CYCLE_SAMPLE_APPENDED",
+      "UPH_CYCLE_SAMPLE_CORRECTED",
+      "UPH_TEST_BATCH_PRODUCTION_COUNT_UPDATED",
+      "UPH_TEST_BATCH_MODULE_QUALITY_COUNT_UPDATED",
+      "UPH_TEST_BATCH_EVIDENCE_REFERENCED",
+      "UPH_TEST_BATCH_PM_CONFIRMED",
+      "UPH_TEST_BATCH_LOCKED",
+      "UPH_TEST_BATCH_REVISION_REPLACED"
+    ] as const;
+    const objectTypes = [
+      "UPH_TEST_BATCH",
+      "UPH_TEST_BATCH_REVISION",
+      "UPH_MODULE_CYCLE_SAMPLE",
+      "UPH_TEST_BATCH_EVIDENCE"
+    ] as const;
+
+    expect(AUDIT_ACTIONS).toMatchObject(Object.fromEntries(actions.map((value) => [value, value])));
+    expect(AUDIT_OBJECT_TYPES).toMatchObject(
+      Object.fromEntries(objectTypes.map((value) => [value, value]))
+    );
+    expect(AUDIT_ACTION_VALUES).toEqual(expect.arrayContaining([...actions]));
+    expect(AUDIT_OBJECT_TYPE_VALUES).toEqual(expect.arrayContaining([...objectTypes]));
+
+    for (const value of actions) {
+      expect(schema).toContain(value);
+      expect(migration).toContain(`ADD VALUE IF NOT EXISTS '${value}'`);
+    }
+    for (const value of objectTypes) {
+      expect(schema).toContain(value);
+      expect(migration).toContain(`ADD VALUE IF NOT EXISTS '${value}'`);
+    }
+  });
+});
+
 describe("procurement change impact audit vocabulary", () => {
   it("keeps detected impacts, disposition evidence, and resolved impacts auditable", () => {
     const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");

@@ -7,9 +7,27 @@ import {
 
 import { UphDefinitionServiceError } from "./uph-definition-service";
 
+function isUphTestBatchServiceError(
+  error: unknown
+): error is { name: string; code: string; message: string; status: number } {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as Record<string, unknown>;
+  return (
+    candidate.name === "UphTestBatchServiceError" &&
+    typeof candidate.code === "string" &&
+    typeof candidate.message === "string" &&
+    Number.isInteger(candidate.status) &&
+    (candidate.status as number) >= 400 &&
+    (candidate.status as number) <= 599
+  );
+}
+
 export function uphApiErrorResponse(error: unknown): Response | null {
   const contract = apiContractErrorResponse(error);
   if (contract) return contract;
+  if (isUphTestBatchServiceError(error)) {
+    return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
+  }
   if (error instanceof UphDefinitionServiceError) {
     return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
   }
