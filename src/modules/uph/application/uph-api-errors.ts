@@ -6,6 +6,7 @@ import {
 } from "@/modules/platform-api/contracts/errors";
 
 import { UphDefinitionServiceError } from "./uph-definition-service";
+import { UphAnalysisServiceError } from "./uph-analysis-service";
 
 function isUphTestBatchServiceError(
   error: unknown
@@ -29,6 +30,9 @@ export function uphApiErrorResponse(error: unknown): Response | null {
     return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
   }
   if (error instanceof UphDefinitionServiceError) {
+    return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
+  }
+  if (error instanceof UphAnalysisServiceError) {
     return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {

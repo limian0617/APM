@@ -141,6 +141,29 @@ describe("APM-081 UPH test-batch audit vocabulary", () => {
   });
 });
 
+describe("APM-082 UPH analysis snapshot audit vocabulary", () => {
+  it("keeps immutable analysis snapshot vocabulary aligned across Prisma and migration 60", () => {
+    const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "prisma/migrations/20260826010000_apm_082_uph_analysis_snapshots/migration.sql"
+      ),
+      "utf8"
+    );
+
+    expect(AUDIT_ACTIONS.UPH_ANALYSIS_SNAPSHOT_CREATED).toBe("UPH_ANALYSIS_SNAPSHOT_CREATED");
+    expect(AUDIT_OBJECT_TYPES.UPH_ANALYSIS_SNAPSHOT).toBe("UPH_ANALYSIS_SNAPSHOT");
+    expect(AUDIT_ACTION_VALUES).toContain("UPH_ANALYSIS_SNAPSHOT_CREATED");
+    expect(AUDIT_OBJECT_TYPE_VALUES).toContain("UPH_ANALYSIS_SNAPSHOT");
+    expect(schema).toContain("UPH_ANALYSIS_SNAPSHOT_CREATED");
+    expect(schema).toContain("UPH_ANALYSIS_SNAPSHOT");
+    expect(migration).toContain("ADD VALUE IF NOT EXISTS 'UPH_ANALYSIS_SNAPSHOT_CREATED'");
+    expect(migration).toContain("ADD VALUE IF NOT EXISTS 'UPH_ANALYSIS_SNAPSHOT'");
+    expect(migration).toContain("uph.analysis-snapshot.created");
+  });
+});
+
 describe("procurement change impact audit vocabulary", () => {
   it("keeps detected impacts, disposition evidence, and resolved impacts auditable", () => {
     const schema = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");

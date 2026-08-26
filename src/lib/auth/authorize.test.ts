@@ -45,6 +45,12 @@ describe("decideAuthorization", () => {
       PROJECT_ROLES.QUALITY,
       PROJECT_ROLES.ENGINEER,
       SYSTEM_ROLES.QUALITY
+    ],
+    [
+      PERMISSIONS.PROJECT_UPH_ANALYZE,
+      PROJECT_ROLES.ENGINEER,
+      PROJECT_ROLES.DEPARTMENT_LEAD,
+      SYSTEM_ROLES.ENGINEER
     ]
   ] as const)(
     "enforces the dedicated %s project role and default-deny boundaries",
