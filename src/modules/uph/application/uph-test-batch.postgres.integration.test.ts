@@ -38,6 +38,7 @@ type PublishedFixture = {
   moduleId: string;
   formulaVersionId: string;
   processActor: AuthorizationActor;
+  commissioningActor: AuthorizationActor;
   pmActor: AuthorizationActor;
   qualityActor: AuthorizationActor;
   auditContext: AuditContext;
@@ -392,6 +393,7 @@ async function seedPublishedUphFixture() {
       moduleId: "module-uph-081",
       formulaVersionId: formula.id,
       processActor,
+      commissioningActor,
       pmActor,
       qualityActor,
       auditContext
@@ -1138,6 +1140,57 @@ describe.skipIf(!enabled)("APM-081 PostgreSQL persistence RED contract", () => {
   it("clears derived confirmation, checksum, and statistic facts when a successor raw-copies", async () => {
     const { db, service } = await requireApm081();
     const fixture = await createConfirmedFixture();
+    const published = await seedPublishedUphFixture();
+    const commissioningSampleId = `commissioning-history-${crypto.randomUUID()}`;
+    const commissioningSourceEventId = `commissioning-device-${crypto.randomUUID()}`;
+    await expect(
+      db.$executeRawUnsafe(
+        `WITH capture_fact AS (
+           SELECT member.id AS membership_id,
+                  member.user_id,
+                  date_trunc('milliseconds', CURRENT_TIMESTAMP) AS recorded_at
+             FROM project_members member
+             JOIN users actor ON actor.id = member.user_id
+            WHERE member.id = $1
+              AND member.project_id = $2
+              AND member.user_id = $3
+              AND member.project_role = 'ENGINEER'
+              AND member.left_at IS NULL
+              AND actor.status = 'ACTIVE'
+         )
+         INSERT INTO project_uph_module_cycle_samples (
+           id, project_id, revision_id, module_binding_id, ordinal, correction_of_sample_id,
+           source_event_id, cycle_duration_seconds, observed_at, recorded_at, capture_method,
+           captured_by_membership_id, captured_by_user_id, captured_by_role,
+           captured_by_snapshot_json, captured_by_checksum, disposition, exclusion_reason_code
+         )
+         SELECT $4, binding.project_id, binding.revision_id, binding.id, 11, NULL,
+                $5, 11.000000, '2026-08-25T08:11:00.000Z'::timestamptz, capture_fact.recorded_at,
+                'DEVICE_EVENT'::"UphTestBatchSampleCaptureMethod",
+                capture_fact.membership_id, capture_fact.user_id, 'ENGINEER'::"ProjectRole",
+                "uph_test_batch_responsibility_snapshot"(
+                  capture_fact.membership_id, capture_fact.user_id, 'ENGINEER'::"ProjectRole",
+                  capture_fact.recorded_at, NULL
+                ),
+                "uph_test_batch_responsibility_checksum"(
+                  capture_fact.membership_id, capture_fact.user_id, 'ENGINEER'::"ProjectRole",
+                  capture_fact.recorded_at, NULL
+                ),
+                'INCLUDED'::"UphTestBatchSampleDisposition", NULL
+           FROM project_uph_test_batch_revision_module_bindings binding
+           CROSS JOIN capture_fact
+          WHERE binding.id = $6
+            AND binding.project_id = $2
+            AND binding.revision_id = $7`,
+        "member-uph-081-commission",
+        fixture.projectId,
+        published.commissioningActor.id,
+        commissioningSampleId,
+        commissioningSourceEventId,
+        fixture.moduleBindingId,
+        fixture.revisionId
+      )
+    ).resolves.toBe(1);
     const confirmed = await service.confirmUphTestBatch({
       projectId: fixture.projectId,
       batchId: fixture.batchId,
@@ -1182,7 +1235,7 @@ describe.skipIf(!enabled)("APM-081 PostgreSQL persistence RED contract", () => {
       locked_checksum: expect.stringMatching(/^[a-f0-9]{64}$/u)
     });
     expect(lockedBinding[0]).toMatchObject({
-      valid_sample_count: 10,
+      valid_sample_count: 11,
       excluded_sample_count: 0,
       arithmetic_mean_seconds: expect.anything(),
       p50_seconds: expect.anything(),
@@ -1204,6 +1257,14 @@ describe.skipIf(!enabled)("APM-081 PostgreSQL persistence RED contract", () => {
       ),
       ["23514", "55000"]
     );
+    await db.$executeRawUnsafe(
+      `UPDATE project_members SET left_at = CURRENT_TIMESTAMP WHERE id = $1`,
+      "member-uph-081-commission"
+    );
+    await db.$executeRawUnsafe(
+      `UPDATE users SET status = 'DISABLED' WHERE id = $1`,
+      published.commissioningActor.id
+    );
     const successor = await service.replaceUphTestBatchRevision({
       projectId: fixture.projectId,
       batchId: fixture.batchId,
@@ -1214,7 +1275,7 @@ describe.skipIf(!enabled)("APM-081 PostgreSQL persistence RED contract", () => {
       reason: "correct locked sample",
       auditContext: { ...fixture.auditContext, actorId: fixture.processActor.id }
     });
-    const [revision, binding, pointers] = await Promise.all([
+    const [revision, binding, pointers, copiedSamples] = await Promise.all([
       db.$queryRawUnsafe<Array<Record<string, unknown>>>(
         `SELECT pm_confirmer_user_id, quality_locker_user_id, confirmed_input_snapshot_json,
                 confirmed_input_checksum, statistics_snapshot_json, statistics_checksum,
@@ -1249,6 +1310,45 @@ describe.skipIf(!enabled)("APM-081 PostgreSQL persistence RED contract", () => {
         fixture.revisionId,
         successor.revisionId,
         fixture.batchId
+      ),
+      db.$queryRawUnsafe<
+        Array<{ copied: number; exact_frozen_facts: number; commissioning_capture: number }>
+      >(
+        `SELECT count(*)::int AS copied,
+                count(*) FILTER (
+                  WHERE (copied.source_event_id, copied.cycle_duration_seconds, copied.observed_at,
+                         copied.recorded_at, copied.capture_method, copied.captured_by_membership_id,
+                         copied.captured_by_user_id, copied.captured_by_role, copied.captured_by_snapshot_json,
+                         copied.captured_by_checksum, copied.disposition, copied.exclusion_reason_code)
+                        IS NOT DISTINCT FROM
+                        (original.source_event_id, original.cycle_duration_seconds, original.observed_at,
+                         original.recorded_at, original.capture_method, original.captured_by_membership_id,
+                         original.captured_by_user_id, original.captured_by_role, original.captured_by_snapshot_json,
+                         original.captured_by_checksum, original.disposition, original.exclusion_reason_code)
+                )::int AS exact_frozen_facts,
+                count(*) FILTER (
+                  WHERE original.ordinal = 11
+                    AND original.captured_by_membership_id = $3
+                    AND original.captured_by_user_id = $4
+                    AND original.captured_by_role = 'ENGINEER'
+                )::int AS commissioning_capture
+           FROM project_uph_module_cycle_samples original
+           JOIN project_uph_test_batch_revision_module_bindings original_binding
+             ON original_binding.id = original.module_binding_id
+           JOIN project_uph_test_batch_revision_module_bindings copied_binding
+             ON copied_binding.revision_id = $2
+            AND copied_binding.project_id = original_binding.project_id
+            AND copied_binding.project_module_id = original_binding.project_module_id
+           JOIN project_uph_module_cycle_samples copied
+             ON copied.module_binding_id = copied_binding.id
+            AND copied.revision_id = $2
+            AND copied.project_id = original.project_id
+            AND copied.ordinal = original.ordinal
+          WHERE original.revision_id = $1`,
+        fixture.revisionId,
+        successor.revisionId,
+        "member-uph-081-commission",
+        published.commissioningActor.id
       )
     ]);
     expect(revision[0]).toEqual({
@@ -1283,6 +1383,57 @@ describe.skipIf(!enabled)("APM-081 PostgreSQL persistence RED contract", () => {
         current_locked_revision_id: fixture.revisionId
       }
     ]);
+    expect(copiedSamples).toEqual([
+      { copied: 11, exact_frozen_facts: 11, commissioning_capture: 1 }
+    ]);
+    await expectSqlStateAndMessage(
+      db.$executeRawUnsafe(
+        `WITH capture_fact AS (
+           SELECT member.id AS membership_id,
+                  member.user_id,
+                  date_trunc('milliseconds', CURRENT_TIMESTAMP) AS recorded_at
+             FROM project_members member
+             JOIN users actor ON actor.id = member.user_id
+            WHERE member.id = $1
+              AND member.project_id = $2
+              AND member.user_id = $3
+              AND member.project_role = 'ENGINEER'
+         )
+         INSERT INTO project_uph_module_cycle_samples (
+           id, project_id, revision_id, module_binding_id, ordinal, correction_of_sample_id,
+           source_event_id, cycle_duration_seconds, observed_at, recorded_at, capture_method,
+           captured_by_membership_id, captured_by_user_id, captured_by_role,
+           captured_by_snapshot_json, captured_by_checksum, disposition, exclusion_reason_code
+         )
+         SELECT $4, binding.project_id, binding.revision_id, binding.id, 12, NULL,
+                $5, 12.000000, '2026-08-25T08:12:00.000Z'::timestamptz, capture_fact.recorded_at,
+                'DEVICE_EVENT'::"UphTestBatchSampleCaptureMethod",
+                capture_fact.membership_id, capture_fact.user_id, 'ENGINEER'::"ProjectRole",
+                "uph_test_batch_responsibility_snapshot"(
+                  capture_fact.membership_id, capture_fact.user_id, 'ENGINEER'::"ProjectRole",
+                  capture_fact.recorded_at, NULL
+                ),
+                "uph_test_batch_responsibility_checksum"(
+                  capture_fact.membership_id, capture_fact.user_id, 'ENGINEER'::"ProjectRole",
+                  capture_fact.recorded_at, NULL
+                ),
+                'INCLUDED'::"UphTestBatchSampleDisposition", NULL
+           FROM project_uph_test_batch_revision_module_bindings binding
+           CROSS JOIN capture_fact
+          WHERE binding.revision_id = $6
+            AND binding.project_id = $2
+            AND binding.project_module_id = $7`,
+        "member-uph-081-commission",
+        fixture.projectId,
+        published.commissioningActor.id,
+        `stale-commissioning-${crypto.randomUUID()}`,
+        `stale-commissioning-event-${crypto.randomUUID()}`,
+        successor.revisionId,
+        fixture.moduleId
+      ),
+      "23514",
+      /UPH sample must freeze an active same-project ENGINEER capture membership/u
+    );
     const successorConfirmed = await service.confirmUphTestBatch({
       projectId: fixture.projectId,
       batchId: fixture.batchId,
@@ -1489,6 +1640,106 @@ describe.skipIf(!enabled)("APM-081 PostgreSQL persistence RED contract", () => {
         failedKey
       )
     ).resolves.toEqual([{ ...before[0], idempotency_records: 0 }]);
+
+    const deferredCreated = await service.createUphTestBatch({
+      projectId: fixture.projectId,
+      actorId: fixture.processActor.id,
+      authorizationActor: fixture.processActor,
+      body: {
+        batchNumber: `DEFERRED-${crypto.randomUUID()}`,
+        topologyRootNodeId: fixture.topologyRootNodeId,
+        plannedProductionSeconds: 3600,
+        planDeclarationReason: "Deferred guard rollback fixture",
+        observationStartedAt: "2026-08-25T08:00:00.000Z",
+        observationEndedAt: null,
+        timezone: "Asia/Shanghai"
+      },
+      auditContext: { ...fixture.auditContext, actorId: fixture.processActor.id }
+    });
+    const deferredOperation = "projects.uph.test-batch.pm-confirm.deferred-rollback";
+    const deferredKey = `pm-confirm-deferred-${crypto.randomUUID()}`;
+    const deferredBefore = await db.$queryRawUnsafe<
+      Array<{
+        status: string;
+        resource_version: number;
+        audit_success: number;
+        outbox: number;
+        idempotency_records: number;
+      }>
+    >(
+      `SELECT revision.status::text AS status,
+              batch.resource_version,
+              (SELECT count(*)::int FROM audit_logs WHERE operation_id = $3 AND result = 'SUCCESS') AS audit_success,
+              (SELECT count(*)::int FROM outbox_events WHERE aggregate_id = $2 AND event_type = 'uph.test-batch.pm-confirmed') AS outbox,
+              (SELECT count(*)::int FROM api_idempotency_records WHERE actor_id = $4 AND operation = $3 AND idempotency_key = $5) AS idempotency_records
+         FROM project_uph_test_batch_revisions revision
+         JOIN project_uph_test_batches batch ON batch.id = revision.batch_id
+        WHERE revision.id = $1 AND batch.id = $2`,
+      deferredCreated.revisionId,
+      deferredCreated.batchId,
+      deferredOperation,
+      fixture.pmActor.id,
+      deferredKey
+    );
+    await expect(
+      idempotency.executeIdempotentCommand({
+        actorId: fixture.pmActor.id,
+        operation: deferredOperation,
+        idempotencyKey: deferredKey,
+        request: {
+          path: {
+            projectId: fixture.projectId,
+            batchId: deferredCreated.batchId,
+            revisionId: deferredCreated.revisionId
+          },
+          body: { resourceVersion: deferredCreated.resourceVersion }
+        },
+        execute: async (transaction: TransactionClient) => ({
+          status: 200,
+          body: await service.confirmUphTestBatch(
+            {
+              projectId: fixture.projectId,
+              batchId: deferredCreated.batchId,
+              revisionId: deferredCreated.revisionId,
+              actorId: fixture.pmActor.id,
+              authorizationActor: fixture.pmActor,
+              resourceVersion: deferredCreated.resourceVersion,
+              auditContext: {
+                ...fixture.auditContext,
+                actorId: fixture.pmActor.id,
+                operationId: deferredOperation
+              }
+            },
+            transaction
+          )
+        })
+      })
+    ).rejects.toMatchObject({ code: "UPH_CONSTRAINT_VIOLATION", status: 422 });
+    await expect(
+      db.$queryRawUnsafe<
+        Array<{
+          status: string;
+          resource_version: number;
+          audit_success: number;
+          outbox: number;
+          idempotency_records: number;
+        }>
+      >(
+        `SELECT revision.status::text AS status,
+                batch.resource_version,
+                (SELECT count(*)::int FROM audit_logs WHERE operation_id = $3 AND result = 'SUCCESS') AS audit_success,
+                (SELECT count(*)::int FROM outbox_events WHERE aggregate_id = $2 AND event_type = 'uph.test-batch.pm-confirmed') AS outbox,
+                (SELECT count(*)::int FROM api_idempotency_records WHERE actor_id = $4 AND operation = $3 AND idempotency_key = $5) AS idempotency_records
+           FROM project_uph_test_batch_revisions revision
+           JOIN project_uph_test_batches batch ON batch.id = revision.batch_id
+          WHERE revision.id = $1 AND batch.id = $2`,
+        deferredCreated.revisionId,
+        deferredCreated.batchId,
+        deferredOperation,
+        fixture.pmActor.id,
+        deferredKey
+      )
+    ).resolves.toEqual(deferredBefore);
   });
 
   it("accepts only eligible revision evidence, hides denied restricted metadata, and audits authorized sensitive reads", async () => {

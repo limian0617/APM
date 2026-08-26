@@ -532,6 +532,32 @@ describe("APM-081 PostgreSQL migration contract", () => {
     expect(rootGuard).toContain('NEW."batch_number" IS DISTINCT FROM OLD."batch_number"');
     expect(revisionInsertGuard).toContain("NEW.\"status\" <> 'DRAFT'");
     expect(sampleGuard).toContain("MANUAL_ENTRY_CORRECTION");
+    expect(sampleGuard).toContain(
+      "UPH sample capture responsibility snapshot/checksum must be immutable"
+    );
+    expect(sampleGuard).toContain('successor."supersedes_revision_id"');
+    expect(sampleGuard).toContain('predecessor."batch_id" = successor."batch_id"');
+    expect(sampleGuard).toContain(
+      'successor."revision_number" = predecessor."revision_number" + 1'
+    );
+    expect(sampleGuard).toContain(
+      'predecessor_binding."project_module_id" = successor_binding."project_module_id"'
+    );
+    for (const frozenCaptureFact of [
+      'predecessor_sample."recorded_at" IS NOT DISTINCT FROM NEW."recorded_at"',
+      'predecessor_sample."captured_by_membership_id" IS NOT DISTINCT FROM NEW."captured_by_membership_id"',
+      'predecessor_sample."captured_by_user_id" IS NOT DISTINCT FROM NEW."captured_by_user_id"',
+      'predecessor_sample."captured_by_role" IS NOT DISTINCT FROM NEW."captured_by_role"',
+      'predecessor_sample."captured_by_snapshot_json" IS NOT DISTINCT FROM NEW."captured_by_snapshot_json"',
+      'predecessor_sample."captured_by_checksum" IS NOT DISTINCT FROM NEW."captured_by_checksum"',
+      'predecessor_sample."cycle_duration_seconds" IS NOT DISTINCT FROM NEW."cycle_duration_seconds"',
+      'predecessor_sample."observed_at" IS NOT DISTINCT FROM NEW."observed_at"',
+      'predecessor_sample."source_event_id" IS NOT DISTINCT FROM NEW."source_event_id"'
+    ]) {
+      expect(sampleGuard).toContain(frozenCaptureFact);
+    }
+    expect(sampleGuard).toContain('member."left_at" IS NULL');
+    expect(sampleGuard).toContain("actor.\"status\" = 'ACTIVE'");
     expect(sampleGuard).toContain('NEW."correction_of_sample_id" IS NOT NULL');
     expect(sampleGuard).toContain("manual correction must append next ordinal");
     expect(sampleGuard).toContain(

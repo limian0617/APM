@@ -200,7 +200,7 @@ describe("APM-081 UPH test batch service safety regressions", () => {
     expect(serviceSource).toContain("AND project_id = ${projectId} FOR UPDATE");
   });
 
-  it("releases non-deferrable current indexes before successor promotion and maps raw unique violations", () => {
+  it("releases non-deferrable current indexes before successor promotion and validates only APM-081 deferred constraints before an outer commit", () => {
     const lock = serviceFunction("lockUphTestBatch", "replaceUphTestBatchRevision");
     const replace = serviceFunction("replaceUphTestBatchRevision", "");
     const correction = serviceSource.slice(
@@ -217,6 +217,28 @@ describe("APM-081 UPH test batch service safety regressions", () => {
     expect(serviceSource).toContain("revision.currentLockedRevisionId");
     expect(serviceSource).toContain("WITH RECURSIVE lineage AS");
     expect(serviceSource).toContain('"23505"');
+    expect(serviceSource).toContain("function isApm081DeferredConstraintError");
+    expect(serviceSource).toContain('String(code) !== "23514"');
+    expect(serviceSource).toContain("UPH_CONSTRAINT_VIOLATION");
+    expect(serviceSource).toContain("async function validateDeferredUphConstraints");
+    for (const constraint of [
+      "project_uph_test_batch_binding_guard",
+      "project_uph_test_batch_revision_checksum_guard",
+      "project_uph_test_batch_sample_append_guard",
+      "project_uph_test_batch_pointer_commit_guard",
+      "project_uph_test_batch_revision_successor_guard"
+    ]) {
+      expect(serviceSource).toContain(`"${constraint}"`);
+    }
+    expect(serviceSource).toContain("const result = await operation(client);");
+    const commandSource = serviceSource.slice(
+      serviceSource.indexOf("async function command"),
+      serviceSource.indexOf("async function responseForRevision")
+    );
+    expect(commandSource).toContain("if (transaction) {");
+    expect(serviceSource.indexOf("await validateDeferredUphConstraints(client)")).toBeGreaterThan(
+      serviceSource.indexOf("const result = await operation(client);")
+    );
     expect(replace).toContain("supersedesRevisionId: predecessor.revisionId");
     expect(replace).toContain("successorRevisionId: successorId");
     expect(replace).toContain("reason,");

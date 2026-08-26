@@ -1072,10 +1072,43 @@ async function writeCommandFacts(
   return { auditId: audit.id, outboxEventId: outbox.id };
 }
 
+function isApm081DeferredConstraintError(error: unknown): boolean {
+  const candidate = error as {
+    code?: unknown;
+    message?: unknown;
+    meta?: { code?: unknown; message?: unknown };
+  };
+  const code = candidate?.meta?.code ?? candidate?.code;
+  if (String(code) !== "23514") return false;
+  const message = [candidate?.meta?.message, candidate?.message]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return /(?:UPH|PM_CONFIRM|rebuild confirmed input|rebuild statistics)/u.test(message);
+}
+
+async function validateDeferredUphConstraints(client: Client): Promise<void> {
+  await client.$executeRaw(
+    Prisma.sql`SET CONSTRAINTS
+      "project_uph_test_batch_binding_guard",
+      "project_uph_test_batch_revision_checksum_guard",
+      "project_uph_test_batch_sample_append_guard",
+      "project_uph_test_batch_pointer_commit_guard",
+      "project_uph_test_batch_revision_successor_guard"
+      IMMEDIATE`
+  );
+}
+
 function mapDatabaseError(error: unknown): never {
   if (error instanceof UphTestBatchServiceError) throw error;
   const candidate = error as { code?: unknown; meta?: { code?: unknown } };
   const code = candidate?.meta?.code ?? candidate?.code;
+  if (isApm081DeferredConstraintError(error)) {
+    throw new UphTestBatchServiceError(
+      "UPH_CONSTRAINT_VIOLATION",
+      "UPH测试批次事实未满足提交约束。",
+      422
+    );
+  }
   if (["23505", "40P01", "55P03", "P2002", "P2034"].includes(String(code))) {
     throw new UphTestBatchServiceError(
       "RESOURCE_VERSION_CONFLICT",
@@ -1091,7 +1124,13 @@ async function command<T>(
   operation: (client: Client) => Promise<T>
 ): Promise<T> {
   try {
-    return await inTransaction(transaction, operation);
+    return await inTransaction(transaction, async (client) => {
+      const result = await operation(client);
+      if (transaction) {
+        await validateDeferredUphConstraints(client);
+      }
+      return result;
+    });
   } catch (error) {
     return mapDatabaseError(error);
   }

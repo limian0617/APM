@@ -1262,6 +1262,13 @@ BEGIN
     RAISE EXCEPTION 'UPH cycle samples cannot be deleted' USING ERRCODE = '55000';
   END IF;
   IF TG_OP = 'INSERT' THEN
+    IF NEW."captured_by_snapshot_json" IS DISTINCT FROM "uph_test_batch_responsibility_snapshot"(
+      NEW."captured_by_membership_id", NEW."captured_by_user_id", 'ENGINEER'::"ProjectRole", NEW."recorded_at", NULL
+    ) OR NEW."captured_by_checksum" IS DISTINCT FROM "uph_test_batch_responsibility_checksum"(
+      NEW."captured_by_membership_id", NEW."captured_by_user_id", 'ENGINEER'::"ProjectRole", NEW."recorded_at", NULL
+    ) THEN
+      RAISE EXCEPTION 'UPH sample capture responsibility snapshot/checksum must be immutable' USING ERRCODE = '23514';
+    END IF;
     IF NOT EXISTS (
       SELECT 1
       FROM "project_members" member
@@ -1271,10 +1278,75 @@ BEGIN
         AND member."user_id" = NEW."captured_by_user_id"
         AND member."project_role" = 'ENGINEER'
         AND member."left_at" IS NULL
-    ) OR NEW."captured_by_snapshot_json" IS DISTINCT FROM "uph_test_batch_responsibility_snapshot"(
-      NEW."captured_by_membership_id", NEW."captured_by_user_id", 'ENGINEER'::"ProjectRole", NEW."recorded_at", NULL
-    ) OR NEW."captured_by_checksum" IS DISTINCT FROM "uph_test_batch_responsibility_checksum"(
-      NEW."captured_by_membership_id", NEW."captured_by_user_id", 'ENGINEER'::"ProjectRole", NEW."recorded_at", NULL
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM "project_uph_test_batch_revisions" successor
+      JOIN "project_uph_test_batch_revisions" predecessor
+        ON predecessor."id" = successor."supersedes_revision_id"
+       AND predecessor."project_id" = successor."project_id"
+       AND predecessor."batch_id" = successor."batch_id"
+       AND successor."revision_number" = predecessor."revision_number" + 1
+      JOIN "project_uph_test_batch_revision_module_bindings" successor_binding
+        ON successor_binding."id" = NEW."module_binding_id"
+       AND successor_binding."revision_id" = successor."id"
+       AND successor_binding."project_id" = successor."project_id"
+      JOIN "project_uph_test_batch_revision_module_bindings" predecessor_binding
+        ON predecessor_binding."revision_id" = predecessor."id"
+       AND predecessor_binding."project_id" = predecessor."project_id"
+       AND predecessor_binding."project_module_id" = successor_binding."project_module_id"
+       AND predecessor_binding."ct_definition_id" = successor_binding."ct_definition_id"
+       AND predecessor_binding."ct_version_id" = successor_binding."ct_version_id"
+       AND predecessor_binding."ct_source_snapshot_json" IS NOT DISTINCT FROM successor_binding."ct_source_snapshot_json"
+       AND predecessor_binding."ct_source_checksum" IS NOT DISTINCT FROM successor_binding."ct_source_checksum"
+       AND predecessor_binding."ct_source_watermark" IS NOT DISTINCT FROM successor_binding."ct_source_watermark"
+      JOIN "project_uph_module_cycle_samples" predecessor_sample
+        ON predecessor_sample."project_id" = predecessor."project_id"
+       AND predecessor_sample."revision_id" = predecessor."id"
+       AND predecessor_sample."module_binding_id" = predecessor_binding."id"
+       AND predecessor_sample."ordinal" = NEW."ordinal"
+       AND predecessor_sample."source_event_id" IS NOT DISTINCT FROM NEW."source_event_id"
+       AND predecessor_sample."cycle_duration_seconds" IS NOT DISTINCT FROM NEW."cycle_duration_seconds"
+       AND predecessor_sample."observed_at" IS NOT DISTINCT FROM NEW."observed_at"
+       AND predecessor_sample."recorded_at" IS NOT DISTINCT FROM NEW."recorded_at"
+       AND predecessor_sample."capture_method" IS NOT DISTINCT FROM NEW."capture_method"
+       AND predecessor_sample."captured_by_membership_id" IS NOT DISTINCT FROM NEW."captured_by_membership_id"
+       AND predecessor_sample."captured_by_user_id" IS NOT DISTINCT FROM NEW."captured_by_user_id"
+       AND predecessor_sample."captured_by_role" IS NOT DISTINCT FROM NEW."captured_by_role"
+       AND predecessor_sample."captured_by_snapshot_json" IS NOT DISTINCT FROM NEW."captured_by_snapshot_json"
+       AND predecessor_sample."captured_by_checksum" IS NOT DISTINCT FROM NEW."captured_by_checksum"
+       AND predecessor_sample."disposition" IS NOT DISTINCT FROM NEW."disposition"
+       AND predecessor_sample."exclusion_reason_code" IS NOT DISTINCT FROM NEW."exclusion_reason_code"
+      LEFT JOIN "project_uph_module_cycle_samples" predecessor_corrected
+        ON predecessor_corrected."id" = predecessor_sample."correction_of_sample_id"
+       AND predecessor_corrected."project_id" = predecessor_sample."project_id"
+       AND predecessor_corrected."revision_id" = predecessor_sample."revision_id"
+      LEFT JOIN "project_uph_module_cycle_samples" successor_corrected
+        ON successor_corrected."id" = NEW."correction_of_sample_id"
+       AND successor_corrected."project_id" = NEW."project_id"
+       AND successor_corrected."revision_id" = NEW."revision_id"
+       AND successor_corrected."module_binding_id" = NEW."module_binding_id"
+      WHERE successor."id" = NEW."revision_id"
+        AND successor."project_id" = NEW."project_id"
+        AND (
+          (predecessor_sample."correction_of_sample_id" IS NULL AND NEW."correction_of_sample_id" IS NULL)
+          OR (
+            predecessor_sample."correction_of_sample_id" IS NOT NULL
+            AND NEW."correction_of_sample_id" IS NOT NULL
+            AND successor_corrected."ordinal" IS NOT DISTINCT FROM predecessor_corrected."ordinal"
+            AND successor_corrected."source_event_id" IS NOT DISTINCT FROM predecessor_corrected."source_event_id"
+            AND successor_corrected."cycle_duration_seconds" IS NOT DISTINCT FROM predecessor_corrected."cycle_duration_seconds"
+            AND successor_corrected."observed_at" IS NOT DISTINCT FROM predecessor_corrected."observed_at"
+            AND successor_corrected."recorded_at" IS NOT DISTINCT FROM predecessor_corrected."recorded_at"
+            AND successor_corrected."capture_method" IS NOT DISTINCT FROM predecessor_corrected."capture_method"
+            AND successor_corrected."captured_by_membership_id" IS NOT DISTINCT FROM predecessor_corrected."captured_by_membership_id"
+            AND successor_corrected."captured_by_user_id" IS NOT DISTINCT FROM predecessor_corrected."captured_by_user_id"
+            AND successor_corrected."captured_by_role" IS NOT DISTINCT FROM predecessor_corrected."captured_by_role"
+            AND successor_corrected."captured_by_snapshot_json" IS NOT DISTINCT FROM predecessor_corrected."captured_by_snapshot_json"
+            AND successor_corrected."captured_by_checksum" IS NOT DISTINCT FROM predecessor_corrected."captured_by_checksum"
+            AND successor_corrected."disposition" IS NOT DISTINCT FROM predecessor_corrected."disposition"
+            AND successor_corrected."exclusion_reason_code" IS NOT DISTINCT FROM predecessor_corrected."exclusion_reason_code"
+          )
+        )
     ) THEN
       RAISE EXCEPTION 'UPH sample must freeze an active same-project ENGINEER capture membership' USING ERRCODE = '23514';
     END IF;
