@@ -318,6 +318,7 @@ model FileObject {
   projectAssetDerivationsTarget    ProjectAssetDerivation[]               @relation("ProjectAssetDerivationTargetFile")
   issueCaptureVoices               IssueCapture[]                         @relation("IssueCaptureVoiceFile")
   issueCaptureAttachments          IssueCaptureAttachment[]               @relation("IssueCaptureAttachmentFile")
+  uphTestBatchRevisionEvidence     ProjectUphTestBatchRevisionEvidence[]  @relation("UphTestBatchEvidenceFile")
 
   @@unique([id, projectId])
   @@index([projectId, status, createdAt])
@@ -520,6 +521,46 @@ enum UphTopologyNodeRelation {
 enum UphTopologySourceType {
   DELIVERY_UNIT
   PROJECT_MODULE
+}
+
+enum UphTestBatchScope {
+  TOPOLOGY_ROOT
+}
+
+enum UphTestBatchRevisionStatus {
+  DRAFT
+  PM_CONFIRMED
+  LOCKED
+  SUPERSEDED
+}
+
+enum UphTestBatchSampleCaptureMethod {
+  DEVICE_EVENT
+  MANUAL_ENTRY
+}
+
+enum UphTestBatchSampleDisposition {
+  INCLUDED
+  EXCLUDED
+}
+
+enum UphTestBatchExclusionReasonCode {
+  SETUP_OR_CHANGEOVER
+  EXTERNAL_WAITING
+  UPSTREAM_MATERIAL_STARVATION
+  DOWNSTREAM_BLOCKAGE
+  SAFETY_INTERLOCK
+  CAPTURE_DEVICE_FAULT
+  OBSERVATION_INTERRUPTED
+  MANUAL_ENTRY_CORRECTION
+}
+
+enum UphTestBatchEvidencePurpose {
+  ROOT_PRODUCTION
+  MODULE_QUALITY
+  CYCLE_SAMPLE
+  PROTOCOL
+  OBSERVATION_WINDOW
 }
 
 enum ProcurementMode {
@@ -1515,6 +1556,16 @@ enum AuditAction {
   UPH_COMMISSIONING_SIGNED
   UPH_DEFINITION_PUBLISHED
   UPH_DRAFT_REPLACED
+  UPH_TEST_BATCH_CREATED
+  UPH_TEST_BATCH_REVISION_METADATA_UPDATED
+  UPH_CYCLE_SAMPLE_APPENDED
+  UPH_CYCLE_SAMPLE_CORRECTED
+  UPH_TEST_BATCH_PRODUCTION_COUNT_UPDATED
+  UPH_TEST_BATCH_MODULE_QUALITY_COUNT_UPDATED
+  UPH_TEST_BATCH_EVIDENCE_REFERENCED
+  UPH_TEST_BATCH_PM_CONFIRMED
+  UPH_TEST_BATCH_LOCKED
+  UPH_TEST_BATCH_REVISION_REPLACED
   PROJECT_MEMBER_ADDED
   PROJECT_MEMBER_ENDED
   AUDIT_LOG_READ
@@ -1776,6 +1827,10 @@ enum AuditObjectType {
   UPH_CT_DEFINITION_VERSION
   UPH_FORMULA
   UPH_FORMULA_VERSION
+  UPH_TEST_BATCH
+  UPH_TEST_BATCH_REVISION
+  UPH_MODULE_CYCLE_SAMPLE
+  UPH_TEST_BATCH_EVIDENCE
   PROJECT_CAPABILITY
   RESPONSIBILITY_PACKAGE
   WBS_NODE
@@ -2058,6 +2113,11 @@ model User {
   uphFormulasUpdated                      ProjectUphFormula[]                    @relation("UphFormulaUpdatedBy")
   uphFormulaVersionsCreated               ProjectUphFormulaVersion[]             @relation("UphFormulaVersionCreatedBy")
   uphFormulaVersionsPublished             ProjectUphFormulaVersion[]             @relation("UphFormulaVersionPublishedBy")
+  uphTestBatchProcessOwnerRevisions       ProjectUphTestBatchRevision[]          @relation("UphTestBatchProcessOwnerUser")
+  uphTestBatchPmConfirmerRevisions        ProjectUphTestBatchRevision[]          @relation("UphTestBatchPmConfirmerUser")
+  uphTestBatchQualityLockerRevisions      ProjectUphTestBatchRevision[]          @relation("UphTestBatchQualityLockerUser")
+  uphTestBatchCapturedSamples             ProjectUphModuleCycleSample[]          @relation("UphTestBatchSampleCaptureUser")
+  uphTestBatchCreatedRevisions            ProjectUphTestBatchRevision[]          @relation("UphTestBatchRevisionCreatedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -2268,6 +2328,12 @@ model Project {
   uphCtDefinitionVersions ProjectUphCtDefinitionVersion[]
   uphFormulas             ProjectUphFormula?
   uphFormulaVersions      ProjectUphFormulaVersion[]
+  uphTestBatches          ProjectUphTestBatch[]
+  uphTestBatchRevisions   ProjectUphTestBatchRevision[]
+  uphTestBatchBindings    ProjectUphTestBatchRevisionModuleBinding[]
+  uphTestBatchCounts      ProjectUphTestBatchRevisionProductionCount[]
+  uphModuleCycleSamples   ProjectUphModuleCycleSample[]
+  uphTestBatchEvidence    ProjectUphTestBatchRevisionEvidence[]
 
   @@unique([mainControlStageId, mainControlStageProjectId])
   @@unique([finalArchiveVersionId, id])
@@ -4944,6 +5010,7 @@ model ProjectModule {
   projectAssetUsages           ProjectAssetUsage[]                  @relation("ProjectAssetUsageModule")
   uphCtDefinitions             ProjectUphCtDefinition[]
   uphTopologyNodes             ProjectUphTopologyNode[]
+  uphTestBatchModuleBindings   ProjectUphTestBatchRevisionModuleBinding[]
 
   @@unique([projectId, code])
   @@unique([id, projectId])
@@ -6336,6 +6403,7 @@ model ProjectUphTopologyVersion {
   supersedes                   ProjectUphTopologyVersion?  @relation("UphTopologyVersionSupersedes", fields: [supersedesVersionId, projectId], references: [id, projectId], onDelete: Restrict)
   successors                   ProjectUphTopologyVersion[] @relation("UphTopologyVersionSupersedes")
   nodes                        ProjectUphTopologyNode[]    @relation("UphTopologyVersionNodes")
+  testBatchRevisions           ProjectUphTestBatchRevision[] @relation("UphTestBatchTopologyVersion")
   createdBy                    User                        @relation("UphTopologyVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   commissioningMembership      ProjectMember?              @relation("UphTopologyVersionCommissioningMembership", fields: [commissioningMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
   processOwnerMembership       ProjectMember               @relation("UphTopologyVersionProcessOwnerMembership", fields: [processOwnerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
@@ -6371,6 +6439,7 @@ model ProjectUphTopologyNode {
   projectModule     ProjectModule?            @relation(fields: [projectModuleId, projectId], references: [id, projectId], onDelete: Restrict)
   parent            ProjectUphTopologyNode?   @relation("UphTopologyNodeParent", fields: [parentNodeId, topologyVersionId], references: [id, topologyVersionId], onDelete: Restrict)
   children          ProjectUphTopologyNode[]  @relation("UphTopologyNodeParent")
+  testBatchRootRevisions ProjectUphTestBatchRevision[] @relation("UphTestBatchTopologyRoot")
 
   @@unique([id, projectId])
   @@unique([id, topologyVersionId])
@@ -6446,6 +6515,7 @@ model ProjectUphCtDefinitionVersion {
   currentPublishedFor          ProjectUphCtDefinition?         @relation("UphCtCurrentPublished")
   supersedes                   ProjectUphCtDefinitionVersion?  @relation("UphCtVersionSupersedes", fields: [supersedesVersionId, projectId], references: [id, projectId], onDelete: Restrict)
   successors                   ProjectUphCtDefinitionVersion[] @relation("UphCtVersionSupersedes")
+  testBatchBindings            ProjectUphTestBatchRevisionModuleBinding[] @relation("UphTestBatchBindingCtVersion")
   createdBy                    User                            @relation("UphCtVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   processOwnerMembership       ProjectMember                   @relation("UphCtVersionProcessOwnerMembership", fields: [processOwnerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
   commissioningMembership      ProjectMember?                  @relation("UphCtVersionCommissioningMembership", fields: [commissioningMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
@@ -6455,6 +6525,7 @@ model ProjectUphCtDefinitionVersion {
 
   @@unique([ctDefinitionId, revision])
   @@unique([id, projectId])
+  @@unique([id, ctDefinitionId, projectId])
   @@index([projectId, status])
   @@map("project_uph_ct_definition_versions")
 }
@@ -6516,11 +6587,213 @@ model ProjectUphFormulaVersion {
   processOwnerMembership       ProjectMember              @relation("UphFormulaVersionProcessOwnerMembership", fields: [processOwnerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
   qualityPublisherMembership   ProjectMember?             @relation("UphFormulaVersionQualityMembership", fields: [qualityPublisherMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
   publishedBy                  User?                      @relation("UphFormulaVersionPublishedBy", fields: [qualityPublisherUserId], references: [id], onDelete: Restrict)
+  testBatchRevisions           ProjectUphTestBatchRevision[] @relation("UphTestBatchFormulaVersion")
 
   @@unique([formulaId, revision])
   @@unique([id, projectId])
   @@index([projectId, status])
   @@map("project_uph_formula_versions")
+}
+
+model ProjectUphTestBatch {
+  id                      String                        @id @default(cuid())
+  projectId               String                        @map("project_id")
+  batchNumber             String                        @map("batch_number")
+  scope                   UphTestBatchScope             @default(TOPOLOGY_ROOT)
+  currentWorkRevisionId   String?                       @map("current_work_revision_id")
+  currentLockedRevisionId String?                       @map("current_locked_revision_id")
+  resourceVersion         Int                           @default(1) @map("resource_version")
+  createdAt               DateTime                      @default(now()) @db.Timestamptz(3) @map("created_at")
+  updatedAt               DateTime                      @updatedAt @db.Timestamptz(3) @map("updated_at")
+  project                 Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  currentWork             ProjectUphTestBatchRevision?  @relation("UphTestBatchCurrentWork", fields: [currentWorkRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  currentLocked           ProjectUphTestBatchRevision?  @relation("UphTestBatchCurrentLocked", fields: [currentLockedRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  revisions               ProjectUphTestBatchRevision[] @relation("UphTestBatchRevisions")
+
+  @@unique([id, projectId])
+  @@unique([projectId, batchNumber])
+  @@map("project_uph_test_batches")
+}
+
+model ProjectUphTestBatchRevision {
+  id                         String                                      @id @default(cuid())
+  projectId                  String                                      @map("project_id")
+  batchId                    String                                      @map("batch_id")
+  revisionNumber             Int                                         @map("revision_number")
+  supersedesRevisionId       String?                                     @map("supersedes_revision_id")
+  status                     UphTestBatchRevisionStatus                  @default(DRAFT)
+  resourceVersion            Int                                         @default(1) @map("resource_version")
+  topologyVersionId          String                                      @map("topology_version_id")
+  topologyRootNodeId         String                                      @map("topology_root_node_id")
+  formulaVersionId           String                                      @map("formula_version_id")
+  planDeclarationReason      String                                      @map("plan_declaration_reason")
+  plannedProductionSeconds   BigInt                                      @map("planned_production_seconds")
+  planSnapshotJson           Json                                        @map("plan_snapshot_json")
+  planChecksum               String                                      @map("plan_checksum")
+  planDeclaredAt             DateTime                                    @default(now()) @db.Timestamptz(3) @map("plan_declared_at")
+  observationStartedAt       DateTime                                    @db.Timestamptz(3) @map("observation_started_at")
+  observationEndedAt         DateTime?                                   @db.Timestamptz(3) @map("observation_ended_at")
+  timezone                   String
+  testProtocolCode           String                                      @map("test_protocol_code")
+  testProtocolVersion        Int                                         @map("test_protocol_version")
+  protocolSnapshotJson       Json                                        @map("protocol_snapshot_json")
+  protocolChecksum           String                                      @map("protocol_checksum")
+  sourceBindingSnapshotJson  Json                                        @map("source_binding_snapshot_json")
+  sourceWatermark            String                                      @map("source_watermark")
+  sourceChecksum             String                                      @map("source_checksum")
+  processOwnerMembershipId   String                                      @map("process_owner_membership_id")
+  processOwnerUserId         String                                      @map("process_owner_user_id")
+  processOwnerRole           ProjectRole                                 @map("process_owner_role")
+  processOwnerSnapshotJson   Json                                        @map("process_owner_snapshot_json")
+  processOwnerChecksum       String                                      @map("process_owner_checksum")
+  pmConfirmerMembershipId    String?                                     @map("pm_confirmer_membership_id")
+  pmConfirmerUserId          String?                                     @map("pm_confirmer_user_id")
+  pmConfirmerRole            ProjectRole?                                @map("pm_confirmer_role")
+  pmConfirmerSnapshotJson    Json?                                       @map("pm_confirmer_snapshot_json")
+  pmConfirmerChecksum        String?                                     @map("pm_confirmer_checksum")
+  pmConfirmedAt              DateTime?                                   @db.Timestamptz(3) @map("pm_confirmed_at")
+  qualityLockerMembershipId  String?                                     @map("quality_locker_membership_id")
+  qualityLockerUserId        String?                                     @map("quality_locker_user_id")
+  qualityLockerRole          ProjectRole?                                @map("quality_locker_role")
+  qualityLockerSnapshotJson  Json?                                       @map("quality_locker_snapshot_json")
+  qualityLockerChecksum      String?                                     @map("quality_locker_checksum")
+  lockedAt                   DateTime?                                   @db.Timestamptz(3) @map("locked_at")
+  confirmedInputSnapshotJson Json?                                       @map("confirmed_input_snapshot_json")
+  confirmedInputChecksum     String?                                     @map("confirmed_input_checksum")
+  statisticsSnapshotJson     Json?                                       @map("statistics_snapshot_json")
+  statisticsChecksum         String?                                     @map("statistics_checksum")
+  lockedSnapshotJson         Json?                                       @map("locked_snapshot_json")
+  lockedChecksum             String?                                     @map("locked_checksum")
+  createdById                String                                      @map("created_by_id")
+  createdAt                  DateTime                                    @default(now()) @db.Timestamptz(3) @map("created_at")
+  project                    Project                                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy                  User                                        @relation("UphTestBatchRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  batch                      ProjectUphTestBatch                         @relation("UphTestBatchRevisions", fields: [batchId, projectId], references: [id, projectId], onDelete: Restrict)
+  currentWorkFor             ProjectUphTestBatch[]                       @relation("UphTestBatchCurrentWork")
+  currentLockedFor           ProjectUphTestBatch[]                       @relation("UphTestBatchCurrentLocked")
+  supersedes                 ProjectUphTestBatchRevision?                @relation("UphTestBatchRevisionSupersedes", fields: [supersedesRevisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  successors                 ProjectUphTestBatchRevision[]               @relation("UphTestBatchRevisionSupersedes")
+  topologyVersion            ProjectUphTopologyVersion                   @relation("UphTestBatchTopologyVersion", fields: [topologyVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  topologyRoot               ProjectUphTopologyNode                      @relation("UphTestBatchTopologyRoot", fields: [topologyRootNodeId, topologyVersionId], references: [id, topologyVersionId], onDelete: Restrict)
+  formulaVersion             ProjectUphFormulaVersion                    @relation("UphTestBatchFormulaVersion", fields: [formulaVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  moduleBindings             ProjectUphTestBatchRevisionModuleBinding[]  @relation("UphTestBatchRevisionBindings")
+  productionCount            ProjectUphTestBatchRevisionProductionCount?
+  samples                    ProjectUphModuleCycleSample[]               @relation("UphTestBatchRevisionSamples")
+  evidence                   ProjectUphTestBatchRevisionEvidence[]       @relation("UphTestBatchRevisionEvidence")
+  processOwnerMembership     ProjectMember                               @relation("UphTestBatchProcessOwnerMembership", fields: [processOwnerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  pmConfirmerMembership      ProjectMember?                              @relation("UphTestBatchPmConfirmerMembership", fields: [pmConfirmerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  qualityLockerMembership    ProjectMember?                              @relation("UphTestBatchQualityLockerMembership", fields: [qualityLockerMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  processOwnerUser           User                                        @relation("UphTestBatchProcessOwnerUser", fields: [processOwnerUserId], references: [id], onDelete: Restrict)
+  pmConfirmerUser            User?                                       @relation("UphTestBatchPmConfirmerUser", fields: [pmConfirmerUserId], references: [id], onDelete: Restrict)
+  qualityLockerUser          User?                                       @relation("UphTestBatchQualityLockerUser", fields: [qualityLockerUserId], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@unique([batchId, revisionNumber, projectId])
+  @@unique([supersedesRevisionId])
+  @@index([projectId, batchId, status])
+  @@map("project_uph_test_batch_revisions")
+}
+
+model ProjectUphTestBatchRevisionModuleBinding {
+  id                          String                        @id @default(cuid())
+  projectId                   String                        @map("project_id")
+  revisionId                  String                        @map("revision_id")
+  projectModuleId             String                        @map("project_module_id")
+  ctDefinitionId              String                        @map("ct_definition_id")
+  ctVersionId                 String                        @map("ct_version_id")
+  ctSourceSnapshotJson        Json                          @map("ct_source_snapshot_json")
+  ctSourceChecksum            String                        @map("ct_source_checksum")
+  ctSourceWatermark           String                        @map("ct_source_watermark")
+  qualityInputCount           BigInt?                       @map("quality_input_count")
+  firstPassGoodCount          BigInt?                       @map("first_pass_good_count")
+  firstPassNonconformingCount BigInt?                       @map("first_pass_nonconforming_count")
+  reworkInputCount            BigInt?                       @map("rework_input_count")
+  reworkRecoveredGoodCount    BigInt?                       @map("rework_recovered_good_count")
+  validSampleCount            Int?                          @map("valid_sample_count")
+  excludedSampleCount         Int?                          @map("excluded_sample_count")
+  arithmeticMeanSeconds       Decimal?                      @map("arithmetic_mean_seconds") @db.Decimal(20, 6)
+  p50Seconds                  Decimal?                      @map("p50_seconds") @db.Decimal(20, 6)
+  p90Seconds                  Decimal?                      @map("p90_seconds") @db.Decimal(20, 6)
+  maxSeconds                  Decimal?                      @map("max_seconds") @db.Decimal(20, 6)
+  spreadP90MinusP50Seconds    Decimal?                      @map("spread_p90_minus_p50_seconds") @db.Decimal(20, 6)
+  project                     Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  revision                    ProjectUphTestBatchRevision   @relation("UphTestBatchRevisionBindings", fields: [revisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  projectModule               ProjectModule                 @relation(fields: [projectModuleId, projectId], references: [id, projectId], onDelete: Restrict)
+  ctVersion                   ProjectUphCtDefinitionVersion @relation("UphTestBatchBindingCtVersion", fields: [ctVersionId, ctDefinitionId, projectId], references: [id, ctDefinitionId, projectId], onDelete: Restrict)
+  samples                     ProjectUphModuleCycleSample[] @relation("UphTestBatchBindingSamples")
+
+  @@unique([id, revisionId, projectId])
+  @@unique([revisionId, projectModuleId, projectId])
+  @@index([projectId, projectModuleId])
+  @@map("project_uph_test_batch_revision_module_bindings")
+}
+
+model ProjectUphTestBatchRevisionProductionCount {
+  id                     String                      @id @default(cuid())
+  projectId              String                      @map("project_id")
+  revisionId             String                      @map("revision_id")
+  actualGrossOutputCount BigInt                      @map("actual_gross_output_count")
+  finalGoodOutputCount   BigInt                      @map("final_good_output_count")
+  project                Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  revision               ProjectUphTestBatchRevision @relation(fields: [revisionId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([revisionId, projectId])
+  @@map("project_uph_test_batch_revision_production_counts")
+}
+
+model ProjectUphModuleCycleSample {
+  id                   String                                   @id @default(cuid())
+  projectId            String                                   @map("project_id")
+  revisionId           String                                   @map("revision_id")
+  moduleBindingId      String                                   @map("module_binding_id")
+  ordinal              Int
+  correctionOfSampleId String?                                  @map("correction_of_sample_id")
+  sourceEventId        String?                                  @map("source_event_id")
+  cycleDurationSeconds Decimal                                  @map("cycle_duration_seconds") @db.Decimal(20, 6)
+  observedAt           DateTime                                 @db.Timestamptz(3) @map("observed_at")
+  recordedAt           DateTime                                 @default(now()) @db.Timestamptz(3) @map("recorded_at")
+  captureMethod        UphTestBatchSampleCaptureMethod          @map("capture_method")
+  capturedByMembershipId String                                 @map("captured_by_membership_id")
+  capturedByUserId     String                                   @map("captured_by_user_id")
+  capturedByRole       ProjectRole                              @map("captured_by_role")
+  capturedBySnapshotJson Json                                   @map("captured_by_snapshot_json")
+  capturedByChecksum   String                                   @map("captured_by_checksum")
+  disposition          UphTestBatchSampleDisposition            @map("disposition")
+  exclusionReasonCode  UphTestBatchExclusionReasonCode?         @map("exclusion_reason_code")
+  project              Project                                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  revision             ProjectUphTestBatchRevision              @relation("UphTestBatchRevisionSamples", fields: [revisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  moduleBinding        ProjectUphTestBatchRevisionModuleBinding @relation("UphTestBatchBindingSamples", fields: [moduleBindingId, revisionId, projectId], references: [id, revisionId, projectId], onDelete: Restrict)
+  evidence             ProjectUphTestBatchRevisionEvidence[]    @relation("UphTestBatchEvidenceSample")
+  correctionOf         ProjectUphModuleCycleSample?             @relation("UphTestBatchSampleCorrection", fields: [correctionOfSampleId, revisionId, projectId], references: [id, revisionId, projectId], onDelete: Restrict)
+  correctionReplacement ProjectUphModuleCycleSample[]           @relation("UphTestBatchSampleCorrection")
+  capturedByMembership ProjectMember                             @relation("UphTestBatchSampleCaptureMembership", fields: [capturedByMembershipId, projectId], references: [id, projectId], onDelete: Restrict)
+  capturedByUser       User                                      @relation("UphTestBatchSampleCaptureUser", fields: [capturedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([id, revisionId, projectId])
+  @@unique([moduleBindingId, ordinal, projectId])
+  @@unique([correctionOfSampleId])
+  @@index([revisionId, projectId])
+  @@map("project_uph_module_cycle_samples")
+}
+
+model ProjectUphTestBatchRevisionEvidence {
+  id           String                       @id @default(cuid())
+  projectId    String                       @map("project_id")
+  revisionId   String                       @map("revision_id")
+  fileObjectId String                       @map("file_object_id")
+  sampleId     String?                      @map("sample_id")
+  purpose      UphTestBatchEvidencePurpose?
+  fileSha256   String                       @map("file_sha256")
+  sensitivity  FileSensitivity
+  createdAt    DateTime                     @default(now()) @db.Timestamptz(3) @map("created_at")
+  project      Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  revision     ProjectUphTestBatchRevision  @relation("UphTestBatchRevisionEvidence", fields: [revisionId, projectId], references: [id, projectId], onDelete: Restrict)
+  sample       ProjectUphModuleCycleSample? @relation("UphTestBatchEvidenceSample", fields: [sampleId, revisionId, projectId], references: [id, revisionId, projectId], onDelete: Restrict)
+  fileObject   FileObject                   @relation("UphTestBatchEvidenceFile", fields: [fileObjectId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([revisionId, fileObjectId])
+  @@index([projectId, revisionId])
+  @@map("project_uph_test_batch_revision_evidence")
 }
 
 model ProjectMember {
@@ -6564,6 +6837,10 @@ model ProjectMember {
   uphCtQualityVersions            ProjectUphCtDefinitionVersion[]     @relation("UphCtVersionQualityMembership")
   uphFormulaProcessOwnerVersions  ProjectUphFormulaVersion[]          @relation("UphFormulaVersionProcessOwnerMembership")
   uphFormulaQualityVersions       ProjectUphFormulaVersion[]          @relation("UphFormulaVersionQualityMembership")
+  uphTestBatchProcessOwnerRevisions ProjectUphTestBatchRevision[]      @relation("UphTestBatchProcessOwnerMembership")
+  uphTestBatchPmConfirmerRevisions ProjectUphTestBatchRevision[]       @relation("UphTestBatchPmConfirmerMembership")
+  uphTestBatchQualityLockerRevisions ProjectUphTestBatchRevision[]     @relation("UphTestBatchQualityLockerMembership")
+  uphTestBatchCapturedSamples      ProjectUphModuleCycleSample[]      @relation("UphTestBatchSampleCaptureMembership")
 
   @@unique([id, projectId])
   @@index([projectId, leftAt])

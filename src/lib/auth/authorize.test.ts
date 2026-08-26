@@ -27,6 +27,64 @@ function grant(permission: PermissionCode, scope: PermissionScope, systemRole: s
 }
 
 describe("decideAuthorization", () => {
+  it.each([
+    [
+      PERMISSIONS.PROJECT_UPH_BATCH_MANAGE,
+      PROJECT_ROLES.ENGINEER,
+      PROJECT_ROLES.PROJECT_MANAGER,
+      SYSTEM_ROLES.ENGINEER
+    ],
+    [
+      PERMISSIONS.PROJECT_UPH_BATCH_CONFIRM,
+      PROJECT_ROLES.PROJECT_MANAGER,
+      PROJECT_ROLES.QUALITY,
+      SYSTEM_ROLES.PROJECT_MANAGER
+    ],
+    [
+      PERMISSIONS.PROJECT_UPH_BATCH_LOCK,
+      PROJECT_ROLES.QUALITY,
+      PROJECT_ROLES.ENGINEER,
+      SYSTEM_ROLES.QUALITY
+    ]
+  ] as const)(
+    "enforces the dedicated %s project role and default-deny boundaries",
+    (permission, allowedRole, wrongRole, systemRole) => {
+      const granted = actor({
+        systemRoles: [systemRole],
+        grants: [grant(permission, PERMISSION_SCOPES.PROJECT, systemRole)]
+      });
+
+      expect(
+        decideAuthorization(granted, permission, {
+          projectId: "project-uph-081",
+          requireProjectMembership: true,
+          memberRoles: [allowedRole]
+        })
+      ).toMatchObject({ allowed: true, scope: "PROJECT" });
+      expect(
+        decideAuthorization(granted, permission, {
+          projectId: "project-uph-081",
+          requireProjectMembership: true,
+          memberRoles: [wrongRole]
+        })
+      ).toEqual({ allowed: false, reason: "PROJECT_ROLE_NOT_ALLOWED" });
+      expect(
+        decideAuthorization(actor(), permission, {
+          projectId: "project-uph-081",
+          requireProjectMembership: true,
+          memberRoles: [allowedRole]
+        })
+      ).toEqual({ allowed: false, reason: "PERMISSION_NOT_GRANTED" });
+      expect(
+        decideAuthorization(granted, permission, {
+          projectId: "project-uph-081",
+          requireProjectMembership: true,
+          memberRoles: []
+        })
+      ).toEqual({ allowed: false, reason: "PROJECT_MEMBERSHIP_REQUIRED" });
+    }
+  );
+
   it("exposes dedicated retrospective and knowledge permissions", () => {
     expect(PERMISSIONS.PROJECT_RETROSPECTIVE_MANAGE).toBe("PROJECT_RETROSPECTIVE_MANAGE");
     expect(PERMISSIONS.PROJECT_RETROSPECTIVE_REVIEW).toBe("PROJECT_RETROSPECTIVE_REVIEW");
