@@ -1,7 +1,6 @@
 node_modules/
 .next/
 coverage/
-.worktrees/
 *.tsbuildinfo
 .env
 .env.local

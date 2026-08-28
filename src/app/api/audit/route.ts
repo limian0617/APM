@@ -6,13 +6,12 @@ import {
   parseAuditQuery,
   queryAuditLogs
 } from "@/modules/audit/application/query-audit";
-import { withRequestObservability } from "@/modules/observability/application/request-observer";
 
 function errorResponse(status: number, code: string, message: string): Response {
   return Response.json({ error: { code, message } }, { status });
 }
 
-async function listAudit(request: Request) {
+export async function GET(request: Request) {
   const identity = readRequestIdentity(request);
   if (!identity.authenticated) {
     return errorResponse(401, "UNAUTHENTICATED", "需要有效的用户身份。");
@@ -34,5 +33,3 @@ async function listAudit(request: Request) {
     throw error;
   }
 }
-
-export const GET = withRequestObservability({ module: "audit", operation: "list" }, listAudit);

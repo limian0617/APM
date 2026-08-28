@@ -1,8 +1,5 @@
 import { Prisma } from "@prisma/client";
 
-import { currentObservabilityContext } from "@/modules/observability/application/context";
-import { normalizeTraceId } from "@/modules/observability/domain/correlation";
-
 import type { OutboxEventInput } from "../contracts/jobs";
 import { payloadHash } from "../domain/idempotency";
 
@@ -29,10 +26,6 @@ export async function appendOutboxEvent(client: OutboxWriteClient, input: Outbox
   const aggregateType = stableText(input.aggregateType, "aggregateType");
   const idempotencyKey = stableText(input.idempotencyKey, "idempotencyKey");
   const aggregateId = input.aggregateId?.trim().slice(0, 191) || null;
-  const suppliedTraceId =
-    input.traceId === undefined ? currentObservabilityContext()?.traceId : input.traceId;
-  const traceId = suppliedTraceId ? normalizeTraceId(suppliedTraceId) : null;
-  if (suppliedTraceId && !traceId) throw new TypeError("traceId 必须是有效的 W3C trace id。");
   const canonical = payloadHash(input.payload);
 
   const event = await client.outboxEvent.upsert({
@@ -43,8 +36,7 @@ export async function appendOutboxEvent(client: OutboxWriteClient, input: Outbox
       aggregateId,
       payload: canonical.value as Prisma.InputJsonValue,
       payloadHash: canonical.hash,
-      idempotencyKey,
-      traceId
+      idempotencyKey
     },
     update: {}
   });
