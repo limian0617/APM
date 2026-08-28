@@ -32,18 +32,4 @@ describe("readRequestIdentity", () => {
       userId: "user-1"
     });
   });
-
-  it("accepts the disposable browser fixture cookie only outside production", () => {
-    const request = new Request("http://localhost/api", {
-      headers: { cookie: "apm-dev-user-id=fixture-user" }
-    });
-    expect(readRequestIdentity(request, { NODE_ENV: "test" })).toEqual({
-      authenticated: true,
-      userId: "fixture-user"
-    });
-    expect(readRequestIdentity(request, { NODE_ENV: "production" })).toEqual({
-      authenticated: false,
-      reason: "IDENTITY_MISSING"
-    });
-  });
 });

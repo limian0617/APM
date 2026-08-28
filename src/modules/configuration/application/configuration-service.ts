@@ -1,6 +1,4 @@
-import { Prisma } from "@prisma/client";
-
-import { db, inTransaction } from "@/lib/db";
+import { db } from "@/lib/db";
 import {
   AUDIT_ACTIONS,
   AUDIT_OBJECT_TYPES,
@@ -44,16 +42,13 @@ export async function getConfiguration() {
   };
 }
 
-export async function updateSystemSetting(
-  command: UpdateSettingCommand,
-  transaction?: Prisma.TransactionClient
-) {
+export async function updateSystemSetting(command: UpdateSettingCommand) {
   const value = validateRuntimeSettingValue(command.key, command.value);
   const expectedVersion = validateVersion(command.version);
   const reason = validateReason(command.reason);
 
-  return inTransaction(transaction, async (client) => {
-    const current = await client.systemSetting.findUnique({ where: { key: command.key } });
+  return db.$transaction(async (transaction) => {
+    const current = await transaction.systemSetting.findUnique({ where: { key: command.key } });
     if (!current || !isRuntimeSettingKey(current.key)) {
       throw new ConfigurationValidationError("UNKNOWN_SETTING", "运行配置键不存在。", 404);
     }
@@ -66,7 +61,7 @@ export async function updateSystemSetting(
     }
 
     const nextVersion = expectedVersion + 1;
-    const updated = await client.systemSetting.updateMany({
+    const updated = await transaction.systemSetting.updateMany({
       where: { key: current.key, version: expectedVersion },
       data: { value, version: nextVersion }
     });
@@ -78,10 +73,10 @@ export async function updateSystemSetting(
       );
     }
 
-    const setting = await client.systemSetting.findUniqueOrThrow({
+    const setting = await transaction.systemSetting.findUniqueOrThrow({
       where: { key: current.key }
     });
-    await client.systemSettingRevision.create({
+    await transaction.systemSettingRevision.create({
       data: {
         settingKey: setting.key,
         version: setting.version,
@@ -93,7 +88,7 @@ export async function updateSystemSetting(
     });
 
     const context = { ...command.auditContext, actorId: command.actorId, reason };
-    const audit = await writeAudit(client, {
+    const audit = await writeAudit(transaction, {
       action: AUDIT_ACTIONS.CONFIGURATION_SETTING_CHANGED,
       objectType: AUDIT_OBJECT_TYPES.SYSTEM_SETTING,
       objectId: setting.key,
@@ -117,7 +112,7 @@ export async function updateSystemSetting(
         allowedFields: SYSTEM_SETTING_AUDIT_FIELDS
       }
     });
-    const event = await appendOutboxEvent(client, {
+    const event = await appendOutboxEvent(transaction, {
       eventType: "configuration.setting.changed",
       aggregateType: "SYSTEM_SETTING",
       aggregateId: setting.key,
@@ -134,10 +129,7 @@ export async function updateSystemSetting(
   });
 }
 
-export async function updateCompanyCapability(
-  command: UpdateCapabilityCommand,
-  transaction?: Prisma.TransactionClient
-) {
+export async function updateCompanyCapability(command: UpdateCapabilityCommand) {
   if (!isCapabilityCode(command.code)) {
     throw new ConfigurationValidationError("UNKNOWN_CAPABILITY", "公司能力代码不存在。", 404);
   }
@@ -148,8 +140,8 @@ export async function updateCompanyCapability(
   const expectedVersion = validateVersion(command.version);
   const reason = validateReason(command.reason);
 
-  return inTransaction(transaction, async (client) => {
-    const current = await client.companyCapability.findUnique({
+  return db.$transaction(async (transaction) => {
+    const current = await transaction.companyCapability.findUnique({
       where: { code: command.code }
     });
     if (!current) {
@@ -157,7 +149,7 @@ export async function updateCompanyCapability(
     }
 
     const nextVersion = expectedVersion + 1;
-    const updated = await client.companyCapability.updateMany({
+    const updated = await transaction.companyCapability.updateMany({
       where: { code: command.code, version: expectedVersion },
       data: { enabled, version: nextVersion }
     });
@@ -169,10 +161,10 @@ export async function updateCompanyCapability(
       );
     }
 
-    const capability = await client.companyCapability.findUniqueOrThrow({
+    const capability = await transaction.companyCapability.findUniqueOrThrow({
       where: { code: command.code }
     });
-    await client.companyCapabilityRevision.create({
+    await transaction.companyCapabilityRevision.create({
       data: {
         capabilityCode: capability.code,
         version: capability.version,
@@ -183,7 +175,7 @@ export async function updateCompanyCapability(
     });
 
     const context = { ...command.auditContext, actorId: command.actorId, reason };
-    const audit = await writeAudit(client, {
+    const audit = await writeAudit(transaction, {
       action: AUDIT_ACTIONS.COMPANY_CAPABILITY_CHANGED,
       objectType: AUDIT_OBJECT_TYPES.COMPANY_CAPABILITY,
       objectId: capability.code,
@@ -201,7 +193,7 @@ export async function updateCompanyCapability(
         allowedFields: COMPANY_CAPABILITY_AUDIT_FIELDS
       }
     });
-    const event = await appendOutboxEvent(client, {
+    const event = await appendOutboxEvent(transaction, {
       eventType: "configuration.company-capability.changed",
       aggregateType: "COMPANY_CAPABILITY",
       aggregateId: capability.code,

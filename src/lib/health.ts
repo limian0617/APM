@@ -1,10 +1,10 @@
-export type LivenessStatus = {
+export type HealthStatus = {
   service: "apm";
   status: "ok";
   timestamp: string;
 };
 
-export function createHealthStatus(now = new Date()): LivenessStatus {
+export function createHealthStatus(now = new Date()): HealthStatus {
   return {
     service: "apm",
     status: "ok",

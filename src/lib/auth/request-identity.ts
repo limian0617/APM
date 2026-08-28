@@ -17,25 +17,11 @@ function secretsMatch(expected: string, actual: string): boolean {
   );
 }
 
-function readCookie(request: Request, name: string): string | null {
-  const value = request.headers.get("cookie");
-  if (!value) return null;
-  for (const entry of value.split(";")) {
-    const [key, ...parts] = entry.trim().split("=");
-    if (key === name) return parts.join("=").trim() || null;
-  }
-  return null;
-}
-
 export function readRequestIdentity(
   request: Request,
   environment: IdentityEnvironment = process.env
 ): RequestIdentityResult {
-  const userId =
-    request.headers.get("x-apm-user-id")?.trim() ??
-    (environment.NODE_ENV === "development" || environment.NODE_ENV === "test"
-      ? readCookie(request, "apm-dev-user-id")
-      : null);
+  const userId = request.headers.get("x-apm-user-id")?.trim();
   if (!userId) {
     return { authenticated: false, reason: "IDENTITY_MISSING" };
   }

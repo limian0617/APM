@@ -2,7 +2,7 @@ import { JobStatus, Prisma } from "@prisma/client";
 
 import { decideAuthorization, type AuthorizationActor } from "@/lib/auth/authorize";
 import { PERMISSIONS } from "@/lib/auth/permissions";
-import { db, inTransaction } from "@/lib/db";
+import { db } from "@/lib/db";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
   AUDIT_ACTIONS,
@@ -40,15 +40,12 @@ async function databaseNow(transaction: Prisma.TransactionClient): Promise<Date>
   return clock.now;
 }
 
-export async function replayDeadLetterJob(
-  input: {
-    jobId: string;
-    actor: AuthorizationActor;
-    reason: unknown;
-    auditContext: AuditContext;
-  },
-  transaction?: Prisma.TransactionClient
-) {
+export async function replayDeadLetterJob(input: {
+  jobId: string;
+  actor: AuthorizationActor;
+  reason: unknown;
+  auditContext: AuditContext;
+}) {
   const decision = decideAuthorization(input.actor, PERMISSIONS.JOB_REPLAY);
   if (!decision.allowed) {
     await writeAudit(db, {
@@ -66,14 +63,14 @@ export async function replayDeadLetterJob(
   }
 
   const reason = replayReason(input.reason);
-  return inTransaction(transaction, async (client) => {
-    const now = await databaseNow(client);
-    const job = await client.persistentJob.findUnique({ where: { id: input.jobId } });
+  return db.$transaction(async (transaction) => {
+    const now = await databaseNow(transaction);
+    const job = await transaction.persistentJob.findUnique({ where: { id: input.jobId } });
     if (!job) {
       throw new ReplayJobError("JOB_NOT_FOUND", "持久作业不存在。", 404);
     }
 
-    const changed = await client.persistentJob.updateMany({
+    const changed = await transaction.persistentJob.updateMany({
       where: { id: job.id, status: JobStatus.DEAD_LETTER },
       data: {
         status: JobStatus.PENDING,
@@ -93,7 +90,7 @@ export async function replayDeadLetterJob(
       );
     }
 
-    const attempt = await client.jobAttempt.create({
+    const attempt = await transaction.jobAttempt.create({
       data: {
         jobId: job.id,
         attemptNumber: job.attemptCount + 1,
@@ -103,7 +100,7 @@ export async function replayDeadLetterJob(
         replayReason: reason
       }
     });
-    const audit = await writeAudit(client, {
+    const audit = await writeAudit(transaction, {
       action: AUDIT_ACTIONS.JOB_REPLAYED,
       objectType: AUDIT_OBJECT_TYPES.PERSISTENT_JOB,
       objectId: job.id,

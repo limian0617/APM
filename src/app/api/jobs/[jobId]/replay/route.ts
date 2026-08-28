@@ -3,25 +3,10 @@ import { authorizeSystemRequest } from "@/lib/auth/system-guard";
 import { auditContextFromRequest } from "@/modules/audit/application/context";
 import { AUDIT_OBJECT_TYPES } from "@/modules/audit/domain/vocabulary";
 import { replayDeadLetterJob, ReplayJobError } from "@/modules/governance/application/replay-job";
-import { withRequestObservability } from "@/modules/observability/application/request-observer";
-import { idempotentCommandResponse } from "@/modules/platform-api/application/idempotent-command";
-import {
-  parseIdempotencyHeaders,
-  parseJsonBody,
-  parsePath
-} from "@/modules/platform-api/contracts/dto";
-import {
-  apiContractErrorResponse,
-  apiErrorResponse
-} from "@/modules/platform-api/contracts/errors";
-import {
-  jobPathSchema,
-  replayJobBodySchema
-} from "@/modules/platform-api/contracts/internal-routes";
 
 type RouteContext = { params: Promise<{ jobId: string }> };
 
-async function replayJob(request: Request, context: RouteContext) {
+export async function POST(request: Request, context: RouteContext) {
   const { jobId } = await context.params;
   const guard = await authorizeSystemRequest(
     request,
@@ -34,39 +19,37 @@ async function replayJob(request: Request, context: RouteContext) {
   }
 
   try {
-    const path = parsePath(jobPathSchema, { jobId });
-    const input = await parseJsonBody(request, replayJobBodySchema);
-    const { idempotencyKey } = parseIdempotencyHeaders(request);
+    const body = await request.json();
+    const input =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : {};
     const auditContext = auditContextFromRequest(request, {
       actorId: guard.actor.id,
-      reason: input.reason
+      reason: typeof input.reason === "string" ? input.reason : null
     });
-    return await idempotentCommandResponse({
-      actorId: guard.actor.id,
-      operation: "governance.job.replay",
-      idempotencyKey,
-      request: { path, body: input },
-      execute: async (transaction) => ({
-        status: 202,
-        body: await replayDeadLetterJob(
-          {
-            jobId: path.jobId,
-            actor: guard.actor,
-            reason: input.reason,
-            auditContext
-          },
-          transaction
-        )
-      })
-    });
+    return Response.json(
+      await replayDeadLetterJob({
+        jobId,
+        actor: guard.actor,
+        reason: input.reason,
+        auditContext
+      }),
+      { status: 202 }
+    );
   } catch (error) {
-    const contractResponse = apiContractErrorResponse(error);
-    if (contractResponse) return contractResponse;
     if (error instanceof ReplayJobError) {
-      return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
+      return Response.json(
+        { error: { code: error.code, message: error.message } },
+        { status: error.status }
+      );
+    }
+    if (error instanceof SyntaxError) {
+      return Response.json(
+        { error: { code: "INVALID_JSON", message: "请求体不是有效 JSON。" } },
+        { status: 400 }
+      );
     }
     throw error;
   }
 }
-
-export const POST = withRequestObservability({ module: "jobs", operation: "replay" }, replayJob);

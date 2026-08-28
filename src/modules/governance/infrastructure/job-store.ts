@@ -16,7 +16,6 @@ type LockedOutboxRow = {
   payload: Prisma.JsonValue;
   payload_hash: string;
   idempotency_key: string;
-  trace_id: string | null;
 };
 
 type LockedJobRow = {
@@ -25,7 +24,6 @@ type LockedJobRow = {
   payload: Prisma.JsonValue;
   payload_hash: string;
   idempotency_key: string;
-  trace_id: string | null;
   max_attempts: number;
   attempt_count: number;
   cycle_attempt_count: number;
@@ -52,7 +50,6 @@ function errorText(value: string, maximum: number): string {
 }
 
 async function databaseNow(transaction: Prisma.TransactionClient): Promise<Date> {
-  await transaction.$executeRawUnsafe("SET LOCAL TIME ZONE 'UTC'");
   const [clock] = await transaction.$queryRaw<DatabaseClock[]>`
     SELECT CURRENT_TIMESTAMP AS "now"
   `;
@@ -63,26 +60,18 @@ async function databaseNow(transaction: Prisma.TransactionClient): Promise<Date>
 }
 
 export async function materializeOutboxEvents(
-  input: { limit: number; maxAttempts: number; eventTypes?: readonly string[] },
+  input: { limit: number; maxAttempts: number },
   database: Database = db
 ) {
   const limit = positiveInteger(input.limit, "limit", 500);
   const maxAttempts = positiveInteger(input.maxAttempts, "maxAttempts", 100);
-  const eventTypes = input.eventTypes
-    ? [...new Set(input.eventTypes.map((value) => value.trim()).filter(Boolean))]
-    : null;
-  if (eventTypes && eventTypes.length === 0) return [];
-  const eventTypeFilter = eventTypes
-    ? Prisma.sql`AND "event_type" IN (${Prisma.join(eventTypes)})`
-    : Prisma.empty;
 
   return database.$transaction(async (transaction) => {
     const now = await databaseNow(transaction);
     const events = await transaction.$queryRaw<LockedOutboxRow[]>(Prisma.sql`
-      SELECT "id", "event_type", "payload", "payload_hash", "idempotency_key", "trace_id"
+      SELECT "id", "event_type", "payload", "payload_hash", "idempotency_key"
       FROM "outbox_events"
       WHERE "dispatched_at" IS NULL
-        ${eventTypeFilter}
       ORDER BY "occurred_at", "id"
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
@@ -118,7 +107,6 @@ export async function materializeOutboxEvents(
               payload: event.payload as Prisma.InputJsonValue,
               payloadHash: event.payload_hash,
               idempotencyKey: event.idempotency_key,
-              traceId: event.trace_id,
               maxAttempts,
               nextRunAt: now,
               attempts: {
@@ -144,19 +132,14 @@ async function recoverExpiredLeases(
   transaction: Prisma.TransactionClient,
   now: Date,
   policy: WorkerPolicy,
-  limit: number,
-  jobTypes: readonly string[] | null
+  limit: number
 ) {
-  const jobTypeFilter = jobTypes
-    ? Prisma.sql`AND "job_type" IN (${Prisma.join(jobTypes)})`
-    : Prisma.empty;
   const expired = await transaction.$queryRaw<LockedJobRow[]>(Prisma.sql`
-    SELECT "id", "job_type", "payload", "payload_hash", "idempotency_key", "trace_id",
+    SELECT "id", "job_type", "payload", "payload_hash", "idempotency_key",
            "max_attempts", "attempt_count", "cycle_attempt_count"
     FROM "persistent_jobs"
     WHERE "status" = 'RUNNING'::"JobStatus"
       AND "lease_expires_at" <= ${now}
-      ${jobTypeFilter}
     ORDER BY "lease_expires_at", "id"
     LIMIT ${limit}
     FOR UPDATE SKIP LOCKED
@@ -211,7 +194,7 @@ async function recoverExpiredLeases(
 }
 
 export async function claimJobs(
-  input: { workerId: string; policy: WorkerPolicy; jobTypes?: readonly string[] },
+  input: { workerId: string; policy: WorkerPolicy },
   database: Database = db
 ): Promise<JobExecution[]> {
   const workerId = input.workerId.trim().slice(0, 191);
@@ -222,25 +205,17 @@ export async function claimJobs(
   const leaseSeconds = positiveInteger(input.policy.leaseSeconds, "leaseSeconds", 3600);
   positiveInteger(input.policy.retryBaseSeconds, "retryBaseSeconds", 3600);
   positiveInteger(input.policy.retryMaxSeconds, "retryMaxSeconds", 86400);
-  const jobTypes = input.jobTypes
-    ? [...new Set(input.jobTypes.map((value) => value.trim()).filter(Boolean))]
-    : null;
-  if (jobTypes && jobTypes.length === 0) return [];
-  const jobTypeFilter = jobTypes
-    ? Prisma.sql`AND "job_type" IN (${Prisma.join(jobTypes)})`
-    : Prisma.empty;
 
   return database.$transaction(async (transaction) => {
     const now = await databaseNow(transaction);
-    await recoverExpiredLeases(transaction, now, input.policy, limit, jobTypes);
+    await recoverExpiredLeases(transaction, now, input.policy, limit);
 
     const jobs = await transaction.$queryRaw<LockedJobRow[]>(Prisma.sql`
-      SELECT "id", "job_type", "payload", "payload_hash", "idempotency_key", "trace_id",
+      SELECT "id", "job_type", "payload", "payload_hash", "idempotency_key",
              "max_attempts", "attempt_count", "cycle_attempt_count"
       FROM "persistent_jobs"
       WHERE "status" IN ('PENDING'::"JobStatus", 'RETRY_SCHEDULED'::"JobStatus")
         AND "next_run_at" <= ${now}
-        ${jobTypeFilter}
       ORDER BY "next_run_at", "created_at", "id"
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
@@ -292,11 +267,8 @@ export async function claimJobs(
         payload: job.payload as JsonValue,
         payloadHash: job.payload_hash,
         idempotencyKey: job.idempotency_key,
-        traceId: job.trace_id,
         attemptId: attempt.id,
         attemptNumber: attempt.attemptNumber,
-        maxAttempts: job.max_attempts,
-        isReplay: attempt.isReplay,
         workerId
       });
     }

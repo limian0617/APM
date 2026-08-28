@@ -10,7 +10,6 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    fileParallelism: process.env.RUN_DATABASE_INTEGRATION !== "1",
     include: ["src/**/*.test.ts"]
   }
 });

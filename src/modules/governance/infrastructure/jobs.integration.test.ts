@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import { JobAttemptStatus, JobStatus, Prisma, PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { JobAttemptStatus, JobStatus } from "@prisma/client";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { loadAuthorizationActor } from "@/lib/auth/repository";
 import { db } from "@/lib/db";
@@ -37,22 +37,6 @@ const policy = {
   retryMaxSeconds: 30,
   defaultMaxAttempts: 3
 };
-
-let shanghaiDatabase: PrismaClient | null = null;
-
-function createShanghaiDatabaseClient(): PrismaClient {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error("DATABASE_URL is required for the timezone lease regression.");
-
-  const url = new URL(databaseUrl);
-  url.searchParams.set("connection_limit", "1");
-  return new PrismaClient({ datasources: { db: { url: url.toString() } } });
-}
-
-function shanghaiDatabaseClient(): PrismaClient {
-  if (!shanghaiDatabase) throw new Error("Asia/Shanghai test database client was not initialized.");
-  return shanghaiDatabase;
-}
 
 function context(actorId: string, operationId: string, reason: string | null = null): AuditContext {
   return {
@@ -103,14 +87,6 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
         }
       ]
     });
-    shanghaiDatabase = createShanghaiDatabaseClient();
-    await shanghaiDatabase.$connect();
-    await shanghaiDatabase.$executeRawUnsafe("SET TIME ZONE 'Asia/Shanghai'");
-  });
-
-  afterAll(async () => {
-    await shanghaiDatabase?.$disconnect();
-    shanghaiDatabase = null;
   });
 
   it("rolls business state, success audit and Outbox back together", async () => {
@@ -224,7 +200,7 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
     const effects: string[] = [];
     await runJobBatch({
       workerId: `configuration-worker-${suffix}`,
-      policy: { ...policy, claimBatchSize: 500 },
+      policy,
       handlers: {
         "configuration.setting.changed": async (job) => {
           effects.push(job.idempotencyKey);
@@ -234,35 +210,23 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
         }
       }
     });
-    const expectedEffects = [
-      `${setting.key}:v${settingResult.setting.version}`,
-      `${capability.code}:v${capabilityResult.capability.version}`
-    ];
-    expect(effects).toEqual(expect.arrayContaining(expectedEffects));
-    for (const expectedEffect of expectedEffects) {
-      expect(effects.filter((effect) => effect === expectedEffect)).toHaveLength(1);
-    }
+    expect(effects).toHaveLength(2);
   });
 
   it("uses SKIP LOCKED so concurrent workers never claim the same job", async () => {
-    const eventType = `test.concurrent.${suffix}`;
     const event = await appendOutboxEvent(db, {
-      eventType,
+      eventType: `test.concurrent.${suffix}`,
       aggregateType: "TEST",
       aggregateId: suffix,
       idempotencyKey: `concurrent-${suffix}`,
       payload: { suffix }
     });
-    const [jobId] = await materializeOutboxEvents({
-      limit: 20,
-      maxAttempts: 3,
-      eventTypes: [eventType]
-    });
+    const [jobId] = await materializeOutboxEvents({ limit: 20, maxAttempts: 3 });
     expect(jobId).toBeTruthy();
 
     const [first, second] = await Promise.all([
-      claimJobs({ workerId: `worker-a-${suffix}`, policy, jobTypes: [eventType] }),
-      claimJobs({ workerId: `worker-b-${suffix}`, policy, jobTypes: [eventType] })
+      claimJobs({ workerId: `worker-a-${suffix}`, policy }),
+      claimJobs({ workerId: `worker-b-${suffix}`, policy })
     ]);
     const claims = [...first, ...second].filter(
       ({ idempotencyKey }) => idempotencyKey === event.idempotencyKey
@@ -270,107 +234,6 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
     expect(claims).toHaveLength(1);
     expect(new Set(claims.map(({ id }) => id)).size).toBe(1);
     await completeClaimedJob(claims[0]!);
-  });
-
-  it("keeps leases stable in an Asia/Shanghai session and still recovers genuinely expired work", async () => {
-    const timezoneDb = shanghaiDatabaseClient();
-    const [timeZone] = await timezoneDb.$queryRaw<{ TimeZone: string }[]>`SHOW TimeZone`;
-    expect(timeZone?.TimeZone).toBe("Asia/Shanghai");
-
-    const immediateEventType = `test.timezone-immediate.${suffix}`;
-    const immediateEvent = await appendOutboxEvent(timezoneDb, {
-      eventType: immediateEventType,
-      aggregateType: "TEST",
-      aggregateId: suffix,
-      idempotencyKey: `timezone-immediate-${suffix}`,
-      payload: { timeZone: "Asia/Shanghai" }
-    });
-    await materializeOutboxEvents(
-      { limit: 20, maxAttempts: 3, eventTypes: [immediateEventType] },
-      timezoneDb
-    );
-
-    const [first, second] = await Promise.all([
-      claimJobs(
-        { workerId: `timezone-worker-a-${suffix}`, policy, jobTypes: [immediateEventType] },
-        timezoneDb
-      ),
-      claimJobs(
-        { workerId: `timezone-worker-b-${suffix}`, policy, jobTypes: [immediateEventType] },
-        timezoneDb
-      )
-    ]);
-    const claims = [...first, ...second].filter(
-      ({ idempotencyKey }) => idempotencyKey === immediateEvent.idempotencyKey
-    );
-    expect(claims).toHaveLength(1);
-    await expect(completeClaimedJob(claims[0]!, timezoneDb)).resolves.toBeUndefined();
-
-    const expiredEventType = `test.timezone-expired.${suffix}`;
-    const expiredEvent = await appendOutboxEvent(timezoneDb, {
-      eventType: expiredEventType,
-      aggregateType: "TEST",
-      aggregateId: suffix,
-      idempotencyKey: `timezone-expired-${suffix}`,
-      payload: { timeZone: "Asia/Shanghai", expired: true }
-    });
-    await materializeOutboxEvents(
-      { limit: 20, maxAttempts: 3, eventTypes: [expiredEventType] },
-      timezoneDb
-    );
-    const expiredClaim = (
-      await claimJobs(
-        { workerId: `timezone-expired-owner-${suffix}`, policy, jobTypes: [expiredEventType] },
-        timezoneDb
-      )
-    ).find(({ idempotencyKey }) => idempotencyKey === expiredEvent.idempotencyKey);
-    expect(expiredClaim).toBeTruthy();
-
-    await timezoneDb.$transaction(async (transaction) => {
-      await transaction.$executeRawUnsafe("SET LOCAL TIME ZONE 'UTC'");
-      await transaction.$executeRaw(Prisma.sql`
-        UPDATE "persistent_jobs"
-        SET "lease_expires_at" = CURRENT_TIMESTAMP - INTERVAL '1 minute'
-        WHERE "id" = ${expiredClaim!.id}
-      `);
-    });
-    const recovered = await claimJobs(
-      { workerId: `timezone-expired-recovery-${suffix}`, policy, jobTypes: [expiredEventType] },
-      timezoneDb
-    );
-    expect(recovered).toEqual([]);
-    await expect(
-      timezoneDb.jobAttempt.findMany({
-        where: { jobId: expiredClaim!.id },
-        orderBy: { attemptNumber: "asc" }
-      })
-    ).resolves.toMatchObject([
-      { attemptNumber: 1, status: JobAttemptStatus.FAILED, errorCode: "LEASE_EXPIRED" },
-      { attemptNumber: 2, status: JobAttemptStatus.QUEUED }
-    ]);
-
-    await timezoneDb.$transaction(async (transaction) => {
-      await transaction.$executeRawUnsafe("SET LOCAL TIME ZONE 'UTC'");
-      await transaction.$executeRaw(Prisma.sql`
-        UPDATE "persistent_jobs"
-        SET "next_run_at" = CURRENT_TIMESTAMP - INTERVAL '1 minute'
-        WHERE "id" = ${expiredClaim!.id}
-      `);
-      await transaction.$executeRaw(Prisma.sql`
-        UPDATE "job_attempts"
-        SET "available_at" = CURRENT_TIMESTAMP - INTERVAL '1 minute'
-        WHERE "job_id" = ${expiredClaim!.id}
-          AND "status" = 'QUEUED'::"JobAttemptStatus"
-      `);
-    });
-    const retry = (
-      await claimJobs(
-        { workerId: `timezone-expired-retry-${suffix}`, policy, jobTypes: [expiredEventType] },
-        timezoneDb
-      )
-    ).find(({ id }) => id === expiredClaim!.id);
-    expect(retry).toMatchObject({ attemptNumber: 2, workerId: `timezone-expired-retry-${suffix}` });
-    await expect(completeClaimedJob(retry!, timezoneDb)).resolves.toBeUndefined();
   });
 
   it("deduplicates repeated event consumption and invokes the effect once", async () => {
@@ -406,26 +269,25 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
   });
 
   it("recovers an expired lease before another worker executes the retry", async () => {
-    const eventType = `test.lease.${suffix}`;
     const eventKey = `lease-${suffix}`;
     await appendOutboxEvent(db, {
-      eventType,
+      eventType: `test.lease.${suffix}`,
       aggregateType: "TEST",
       aggregateId: suffix,
       idempotencyKey: eventKey,
       payload: { lease: true }
     });
-    await materializeOutboxEvents({ limit: 20, maxAttempts: 2, eventTypes: [eventType] });
-    const first = (
-      await claimJobs({ workerId: `lease-worker-a-${suffix}`, policy, jobTypes: [eventType] })
-    ).find(({ idempotencyKey }) => idempotencyKey === eventKey);
+    await materializeOutboxEvents({ limit: 20, maxAttempts: 2 });
+    const first = (await claimJobs({ workerId: `lease-worker-a-${suffix}`, policy })).find(
+      ({ idempotencyKey }) => idempotencyKey === eventKey
+    );
     expect(first).toBeTruthy();
     await db.persistentJob.update({
       where: { id: first!.id },
       data: { leaseExpiresAt: new Date(Date.now() - 1000) }
     });
 
-    await claimJobs({ workerId: `lease-recovery-${suffix}`, policy, jobTypes: [eventType] });
+    await claimJobs({ workerId: `lease-recovery-${suffix}`, policy });
     await expect(
       db.jobAttempt.findUniqueOrThrow({ where: { id: first!.attemptId } })
     ).resolves.toMatchObject({ status: JobAttemptStatus.FAILED, errorCode: "LEASE_EXPIRED" });
@@ -438,9 +300,9 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
         data: { availableAt: due }
       })
     ]);
-    const recovered = (
-      await claimJobs({ workerId: `lease-worker-b-${suffix}`, policy, jobTypes: [eventType] })
-    ).find(({ id }) => id === first!.id);
+    const recovered = (await claimJobs({ workerId: `lease-worker-b-${suffix}`, policy })).find(
+      ({ id }) => id === first!.id
+    );
     expect(recovered).toMatchObject({ attemptNumber: 2, workerId: `lease-worker-b-${suffix}` });
     await completeClaimedJob(recovered!);
   });
@@ -455,11 +317,11 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
       idempotencyKey: eventKey,
       payload: { shouldFail: true }
     });
-    await materializeOutboxEvents({ limit: 20, maxAttempts: 2, eventTypes: [eventType] });
+    await materializeOutboxEvents({ limit: 20, maxAttempts: 2 });
 
-    const first = (
-      await claimJobs({ workerId: `failure-worker-${suffix}`, policy, jobTypes: [eventType] })
-    ).find(({ idempotencyKey }) => idempotencyKey === eventKey);
+    const first = (await claimJobs({ workerId: `failure-worker-${suffix}`, policy })).find(
+      ({ idempotencyKey }) => idempotencyKey === eventKey
+    );
     expect(first).toBeTruthy();
     const firstFailure = await failClaimedJob(
       first!,
@@ -477,9 +339,9 @@ describeDatabase("APM-004 PostgreSQL Outbox and persistent jobs", () => {
         data: { availableAt: due }
       })
     ]);
-    const second = (
-      await claimJobs({ workerId: `failure-worker-${suffix}`, policy, jobTypes: [eventType] })
-    ).find(({ id }) => id === first!.id);
+    const second = (await claimJobs({ workerId: `failure-worker-${suffix}`, policy })).find(
+      ({ id }) => id === first!.id
+    );
     expect(second?.attemptNumber).toBe(2);
     const secondFailure = await failClaimedJob(
       second!,

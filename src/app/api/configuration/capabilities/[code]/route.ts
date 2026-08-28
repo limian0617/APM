@@ -7,25 +7,10 @@ import {
   ConfigurationValidationError,
   isCapabilityCode
 } from "@/modules/configuration/domain/definitions";
-import { withRequestObservability } from "@/modules/observability/application/request-observer";
-import { idempotentCommandResponse } from "@/modules/platform-api/application/idempotent-command";
-import {
-  parseIdempotencyHeaders,
-  parseJsonBody,
-  parsePath
-} from "@/modules/platform-api/contracts/dto";
-import {
-  apiContractErrorResponse,
-  apiErrorResponse
-} from "@/modules/platform-api/contracts/errors";
-import {
-  capabilityBodySchema,
-  capabilityPathSchema
-} from "@/modules/platform-api/contracts/internal-routes";
 
 type RouteContext = { params: Promise<{ code: string }> };
 
-async function updateCapability(request: Request, context: RouteContext) {
+export async function PUT(request: Request, context: RouteContext) {
   const { code } = await context.params;
   const guard = await authorizeSystemRequest(
     request,
@@ -38,48 +23,41 @@ async function updateCapability(request: Request, context: RouteContext) {
   }
 
   try {
-    const path = parsePath(capabilityPathSchema, { code });
-    if (!isCapabilityCode(path.code)) {
+    if (!isCapabilityCode(code)) {
       throw new ConfigurationValidationError("UNKNOWN_CAPABILITY", "公司能力代码不存在。", 404);
     }
-    const capabilityCode = path.code;
-    const input = await parseJsonBody(request, capabilityBodySchema);
-    const { idempotencyKey } = parseIdempotencyHeaders(request);
+    const body = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new ConfigurationValidationError("INVALID_VALUE", "请求体必须是 JSON 对象。", 422);
+    }
+    const input = body as Record<string, unknown>;
     const auditContext = auditContextFromRequest(request, {
       actorId: guard.actor.id,
-      reason: input.reason
+      reason: typeof input.reason === "string" ? input.reason : null
     });
-    return await idempotentCommandResponse({
-      actorId: guard.actor.id,
-      operation: "configuration.capability.update",
-      idempotencyKey,
-      request: { path, body: input },
-      execute: async (transaction) => ({
-        status: 200,
-        body: await updateCompanyCapability(
-          {
-            code: capabilityCode,
-            enabled: input.enabled,
-            version: input.version,
-            reason: input.reason,
-            actorId: guard.actor.id,
-            auditContext
-          },
-          transaction
-        )
+    return Response.json(
+      await updateCompanyCapability({
+        code,
+        enabled: input.enabled,
+        version: input.version,
+        reason: input.reason,
+        actorId: guard.actor.id,
+        auditContext
       })
-    });
+    );
   } catch (error) {
-    const contractResponse = apiContractErrorResponse(error);
-    if (contractResponse) return contractResponse;
     if (error instanceof ConfigurationValidationError) {
-      return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
+      return Response.json(
+        { error: { code: error.code, message: error.message } },
+        { status: error.status }
+      );
+    }
+    if (error instanceof SyntaxError) {
+      return Response.json(
+        { error: { code: "INVALID_JSON", message: "请求体不是有效 JSON。" } },
+        { status: 400 }
+      );
     }
     throw error;
   }
 }
-
-export const PUT = withRequestObservability(
-  { module: "configuration", operation: "update-capability" },
-  updateCapability
-);
