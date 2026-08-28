@@ -1,0 +1,3 @@
+# Prisma migration SQL is checksum-bearing source.  Keep its checkout bytes
+# stable across Windows and POSIX so migration replays and text contracts agree.
+prisma/migrations/**/migration.sql text eol=lf

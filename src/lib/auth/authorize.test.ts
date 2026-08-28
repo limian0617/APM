@@ -27,6 +27,60 @@ function grant(permission: PermissionCode, scope: PermissionScope, systemRole: s
 }
 
 describe("decideAuthorization", () => {
+  it("exposes dedicated retrospective and knowledge permissions", () => {
+    expect(PERMISSIONS.PROJECT_RETROSPECTIVE_MANAGE).toBe("PROJECT_RETROSPECTIVE_MANAGE");
+    expect(PERMISSIONS.PROJECT_RETROSPECTIVE_REVIEW).toBe("PROJECT_RETROSPECTIVE_REVIEW");
+    expect(PERMISSIONS.PROJECT_RETROSPECTIVE_READ).toBe("PROJECT_RETROSPECTIVE_READ");
+    expect(PERMISSIONS.KNOWLEDGE_REVIEW).toBe("KNOWLEDGE_REVIEW");
+    expect(PERMISSIONS.KNOWLEDGE_READ).toBe("KNOWLEDGE_READ");
+    expect(PERMISSIONS.KNOWLEDGE_REUSE_CONFIRM).toBe("KNOWLEDGE_REUSE_CONFIRM");
+  });
+
+  it("applies the recovery permission scopes without granting source facts to a global knowledge reviewer", () => {
+    const sourceManager = actor({
+      systemRoles: [SYSTEM_ROLES.PROJECT_MANAGER],
+      grants: [
+        grant(
+          PERMISSIONS.PROJECT_RETROSPECTIVE_MANAGE,
+          PERMISSION_SCOPES.PROJECT,
+          SYSTEM_ROLES.PROJECT_MANAGER
+        )
+      ]
+    });
+    const quality = actor({
+      systemRoles: [SYSTEM_ROLES.QUALITY],
+      grants: [
+        grant(
+          PERMISSIONS.PROJECT_RETROSPECTIVE_REVIEW,
+          PERMISSION_SCOPES.PROJECT,
+          SYSTEM_ROLES.QUALITY
+        )
+      ]
+    });
+    const knowledgeReviewer = actor({
+      systemRoles: [SYSTEM_ROLES.DEPARTMENT_LEAD],
+      grants: [
+        grant(PERMISSIONS.KNOWLEDGE_REVIEW, PERMISSION_SCOPES.ALL, SYSTEM_ROLES.DEPARTMENT_LEAD)
+      ]
+    });
+
+    expect(
+      decideAuthorization(sourceManager, PERMISSIONS.PROJECT_RETROSPECTIVE_MANAGE, {
+        projectId: "source-project",
+        memberRoles: [PROJECT_ROLES.PROJECT_MANAGER]
+      })
+    ).toMatchObject({ allowed: true });
+    expect(
+      decideAuthorization(quality, PERMISSIONS.PROJECT_RETROSPECTIVE_REVIEW, {
+        projectId: "source-project",
+        memberRoles: [PROJECT_ROLES.QUALITY]
+      })
+    ).toMatchObject({ allowed: true });
+    expect(decideAuthorization(knowledgeReviewer, PERMISSIONS.PROJECT_RETROSPECTIVE_READ)).toEqual({
+      allowed: false,
+      reason: "PERMISSION_NOT_GRANTED"
+    });
+  });
   it("allows an administrator with company-wide member management", () => {
     const decision = decideAuthorization(
       actor({
