@@ -1,6 +1,6 @@
 import { Prisma, ProjectRole, UserStatus } from "@prisma/client";
 
-import { db } from "@/lib/db";
+import { inTransaction } from "@/lib/db";
 import { PROJECT_ROLE_VALUES, type ProjectRoleCode } from "@/lib/auth/permissions";
 import type { AuditContext } from "@/modules/audit/contracts/audit";
 import {
@@ -90,15 +90,18 @@ export function parseIfMatchVersion(header: string | null): number {
   return version;
 }
 
-export async function addProjectMember(input: {
-  projectId: string;
-  actorId: string;
-  member: AddProjectMemberInput;
-  auditContext: AuditContext;
-}) {
+export async function addProjectMember(
+  input: {
+    projectId: string;
+    actorId: string;
+    member: AddProjectMemberInput;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
   try {
-    return await db.$transaction(async (transaction) => {
-      const targetUser = await transaction.user.findFirst({
+    return await inTransaction(transaction, async (client) => {
+      const targetUser = await client.user.findFirst({
         where: { id: input.member.userId, status: UserStatus.ACTIVE },
         select: { id: true, name: true, email: true, departmentId: true }
       });
@@ -106,7 +109,7 @@ export async function addProjectMember(input: {
         throw new ProjectMemberError("USER_NOT_FOUND", "目标用户不存在或已停用。", 404);
       }
 
-      const projectUpdate = await transaction.project.updateMany({
+      const projectUpdate = await client.project.updateMany({
         where: { id: input.projectId, version: input.member.projectVersion },
         data: { version: { increment: 1 } }
       });
@@ -114,7 +117,7 @@ export async function addProjectMember(input: {
         throw new ProjectMemberError("VERSION_CONFLICT", "项目成员已发生变化，请刷新后重试。", 409);
       }
 
-      const activeMembership = await transaction.projectMember.findFirst({
+      const activeMembership = await client.projectMember.findFirst({
         where: {
           projectId: input.projectId,
           userId: input.member.userId,
@@ -126,7 +129,7 @@ export async function addProjectMember(input: {
         throw new ProjectMemberError("MEMBER_ALREADY_ACTIVE", "该用户已拥有相同的项目角色。", 409);
       }
 
-      const membership = await transaction.projectMember.create({
+      const membership = await client.projectMember.create({
         data: {
           projectId: input.projectId,
           userId: input.member.userId,
@@ -141,7 +144,7 @@ export async function addProjectMember(input: {
         }
       });
 
-      const audit = await writeAudit(transaction, {
+      const audit = await writeAudit(client, {
         action: AUDIT_ACTIONS.PROJECT_MEMBER_ADDED,
         objectType: AUDIT_OBJECT_TYPES.PROJECT_MEMBER,
         objectId: membership.id,
@@ -173,15 +176,18 @@ export async function addProjectMember(input: {
   }
 }
 
-export async function endProjectMembership(input: {
-  projectId: string;
-  membershipId: string;
-  actorId: string;
-  projectVersion: number;
-  auditContext: AuditContext;
-}) {
-  return db.$transaction(async (transaction) => {
-    const membership = await transaction.projectMember.findFirst({
+export async function endProjectMembership(
+  input: {
+    projectId: string;
+    membershipId: string;
+    actorId: string;
+    projectVersion: number;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
+  return inTransaction(transaction, async (client) => {
+    const membership = await client.projectMember.findFirst({
       where: { id: input.membershipId, projectId: input.projectId, leftAt: null }
     });
     if (!membership) {
@@ -189,7 +195,7 @@ export async function endProjectMembership(input: {
     }
 
     if (membership.projectRole === ProjectRole.PROJECT_MANAGER) {
-      const activeProjectManagerCount = await transaction.projectMember.count({
+      const activeProjectManagerCount = await client.projectMember.count({
         where: {
           projectId: input.projectId,
           projectRole: ProjectRole.PROJECT_MANAGER,
@@ -205,7 +211,7 @@ export async function endProjectMembership(input: {
       }
     }
 
-    const projectUpdate = await transaction.project.updateMany({
+    const projectUpdate = await client.project.updateMany({
       where: { id: input.projectId, version: input.projectVersion },
       data: { version: { increment: 1 } }
     });
@@ -214,7 +220,7 @@ export async function endProjectMembership(input: {
     }
 
     const leftAt = new Date();
-    const endedMembership = await transaction.projectMember.update({
+    const endedMembership = await client.projectMember.update({
       where: { id: membership.id },
       data: {
         leftAt,
@@ -223,7 +229,7 @@ export async function endProjectMembership(input: {
       }
     });
 
-    const audit = await writeAudit(transaction, {
+    const audit = await writeAudit(client, {
       action: AUDIT_ACTIONS.PROJECT_MEMBER_ENDED,
       objectType: AUDIT_OBJECT_TYPES.PROJECT_MEMBER,
       objectId: membership.id,
