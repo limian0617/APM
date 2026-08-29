@@ -4,6 +4,21 @@ import { PERMISSIONS } from "@/lib/auth/permissions";
 import { authorizeProjectRequest } from "@/lib/auth/project-guard";
 import { db } from "@/lib/db";
 import { auditContextFromRequest } from "@/modules/audit/application/context";
+import { withRequestObservability } from "@/modules/observability/application/request-observer";
+import { idempotentCommandResponse } from "@/modules/platform-api/application/idempotent-command";
+import {
+  parseIdempotencyHeaders,
+  parseJsonBody,
+  parsePath
+} from "@/modules/platform-api/contracts/dto";
+import {
+  apiContractErrorResponse,
+  apiErrorResponse
+} from "@/modules/platform-api/contracts/errors";
+import {
+  addProjectMemberBodySchema,
+  projectPathSchema
+} from "@/modules/platform-api/contracts/internal-routes";
 import {
   addProjectMember,
   parseAddProjectMemberInput,
@@ -13,13 +28,10 @@ import {
 type RouteContext = { params: Promise<{ projectId: string }> };
 
 function memberErrorResponse(error: ProjectMemberError): Response {
-  return Response.json(
-    { error: { code: error.code, message: error.message } },
-    { status: error.status }
-  );
+  return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
 }
 
-export async function GET(request: Request, context: RouteContext) {
+async function listMembers(request: Request, context: RouteContext) {
   const { projectId } = await context.params;
   const guard = await authorizeProjectRequest(request, projectId, PERMISSIONS.PROJECT_MEMBER_READ);
   if (!guard.authorized) {
@@ -59,7 +71,7 @@ export async function GET(request: Request, context: RouteContext) {
   });
 }
 
-export async function POST(request: Request, context: RouteContext) {
+async function addMember(request: Request, context: RouteContext) {
   const { projectId } = await context.params;
   const guard = await authorizeProjectRequest(
     request,
@@ -70,41 +82,59 @@ export async function POST(request: Request, context: RouteContext) {
     return guard.response;
   }
 
-  if (
-    guard.project.status === ProjectStatus.CLOSED ||
-    guard.project.status === ProjectStatus.CANCELED
-  ) {
-    return Response.json(
-      { error: { code: "PROJECT_READ_ONLY", message: "已结项或已取消的项目禁止修改成员。" } },
-      { status: 409 }
-    );
-  }
-
   try {
-    const body = await request.json();
+    const path = parsePath(projectPathSchema, { projectId });
+    const body = await parseJsonBody(request, addProjectMemberBodySchema);
+    const { idempotencyKey } = parseIdempotencyHeaders(request);
     const member = parseAddProjectMemberInput(body);
+    if (
+      guard.project.status === ProjectStatus.CLOSED ||
+      guard.project.status === ProjectStatus.CANCELED
+    ) {
+      return apiErrorResponse({
+        status: 409,
+        code: "PROJECT_READ_ONLY",
+        message: "已结项或已取消的项目禁止修改成员。"
+      });
+    }
     const auditContext = auditContextFromRequest(request, {
       actorId: guard.actor.id,
-      projectId,
+      projectId: path.projectId,
       departmentId: guard.project.departmentId
     });
-    const result = await addProjectMember({
-      projectId,
+    return await idempotentCommandResponse({
       actorId: guard.actor.id,
-      member,
-      auditContext
+      operation: "projects.member.add",
+      idempotencyKey,
+      request: { path, body },
+      execute: async (transaction) => ({
+        status: 201,
+        body: await addProjectMember(
+          {
+            projectId: path.projectId,
+            actorId: guard.actor.id,
+            member,
+            auditContext
+          },
+          transaction
+        )
+      })
     });
-    return Response.json(result, { status: 201 });
   } catch (error) {
+    const contractResponse = apiContractErrorResponse(error);
+    if (contractResponse) return contractResponse;
     if (error instanceof ProjectMemberError) {
       return memberErrorResponse(error);
-    }
-    if (error instanceof SyntaxError) {
-      return Response.json(
-        { error: { code: "INVALID_JSON", message: "请求体不是有效 JSON。" } },
-        { status: 400 }
-      );
     }
     throw error;
   }
 }
+
+export const GET = withRequestObservability(
+  { module: "projects", operation: "list-members" },
+  listMembers
+);
+export const POST = withRequestObservability(
+  { module: "projects", operation: "add-member" },
+  addMember
+);

@@ -1,0 +1,1498 @@
+import { GateCheckStatus, GateScope, Prisma } from "@prisma/client";
+
+import { db, inTransaction } from "@/lib/db";
+import type { AuditContext } from "@/modules/audit/contracts/audit";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_OBJECT_TYPES,
+  GATE_CHECK_SNAPSHOT_AUDIT_FIELDS,
+  PROJECT_GATE_INSTANCE_AUDIT_FIELDS
+} from "@/modules/audit/domain/vocabulary";
+import { writeAudit } from "@/modules/audit/infrastructure/write-audit";
+import {
+  resolveGateChecker,
+  type GateChecker,
+  type GateCheckerResultStatus
+} from "@/modules/governance/domain/gate-checker-registry";
+import { payloadHash, type JsonValue } from "@/modules/governance/domain/idempotency";
+import { appendOutboxEvent } from "@/modules/governance/infrastructure/outbox";
+import { readProcurementGateFacts } from "@/modules/procurement/application/readiness-service";
+import {
+  buildProjectArchiveManifest,
+  type ArchiveManifestSourceInput
+} from "@/modules/archives/application/archive-manifest-service";
+import {
+  readProjectArchiveSources,
+  type ArchiveSourceClient
+} from "@/modules/archives/application/archive-source-reader";
+import { readClosureGateFacts } from "./closure-gate-facts-reader";
+import {
+  CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION,
+  buildClosurePolicyVersionFacts
+} from "../domain/project-closure-policy";
+import type { ProjectStageExecutionStatus } from "@/modules/projects/domain/project-stage";
+
+const GATE_SCOPES = ["PROJECT", "DELIVERY_UNIT", "MODULE"] as const;
+
+export type GateScopeCode = (typeof GATE_SCOPES)[number];
+
+export type FrozenGateCheckerBinding = {
+  code: string;
+  version: number;
+};
+
+export type GateScopeTarget = {
+  scope: GateScopeCode;
+  deliveryUnitId: string | null;
+  moduleId: string | null;
+};
+
+export type GateCheckResultFact = {
+  position: number;
+  checkerCode: string;
+  checkerVersion: number;
+  status: GateCheckerResultStatus;
+  failureCode: string | null;
+  message: string;
+  evidence: JsonValue;
+  evidenceChecksum: string;
+};
+
+export class GateServiceError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status = 409
+  ) {
+    super(message);
+    this.name = "GateServiceError";
+  }
+}
+
+export type ExecutableGateAuthority = {
+  definitionId: string;
+  closurePolicyVersionId: string | null;
+  closurePolicyChecksum: string | null;
+  archiveSourceFormulaVersion: "ARCHIVE.SOURCE@2" | null;
+};
+
+type ExecutableDefinition = {
+  id: string;
+  projectId: string;
+  code: string;
+  checkerBindingsJson?: unknown;
+};
+type ExecutablePolicyVersion = {
+  id: string;
+  status: string;
+  sourceGateDefinitionId: string;
+  archiveCheckerCode: string;
+  archiveCheckerVersion: number;
+  retrospectiveCheckerCode: string;
+  retrospectiveCheckerVersion: number;
+  archiveSourceFormulaVersion: string;
+  bindingChecksum: string;
+  policyChecksum: string;
+  sourceTemplateSnapshotId: string;
+  selfReferenceExclusionVersion: string;
+};
+type ExecutablePolicy = {
+  id: string;
+  projectId: string;
+  status: string;
+  currentVersionId: string | null;
+  currentVersion: ExecutablePolicyVersion | null;
+};
+type ExecutableInstance = {
+  id: string;
+  closurePolicyVersionId: string | null;
+  archiveSourceFormulaVersion: string | null;
+  closurePolicyChecksum: string | null;
+};
+type ExecutableGateClient = {
+  $queryRaw: Prisma.TransactionClient["$queryRaw"];
+  projectGateDefinition: { findFirst(input: unknown): Promise<unknown> };
+  projectClosurePolicy: { findUnique(input: unknown): Promise<unknown> };
+  projectGateInstance?: { findFirst(input: unknown): Promise<unknown> };
+};
+
+function assertInteractiveTransactionClient(client: ExecutableGateClient) {
+  if ("$transaction" in client) {
+    throw new GateServiceError(
+      "GATE_TRANSACTION_REQUIRED",
+      "G9 关项策略校验必须在交互事务中执行。",
+      500
+    );
+  }
+}
+
+type G9AuthorityValidation =
+  | { valid: true; authority: ExecutableGateAuthority }
+  | {
+      valid: false;
+      code:
+        | "CLOSURE_POLICY_VERSION_REQUIRED"
+        | "CLOSURE_POLICY_STALE"
+        | "CLOSURE_POLICY_BINDING_MISMATCH";
+      message: string;
+    };
+
+function validateG9Authority(
+  definition: ExecutableDefinition,
+  policy: ExecutablePolicy | null
+): G9AuthorityValidation {
+  const version = policy?.currentVersion;
+  if (!policy || policy.status !== "ACTIVE" || !policy.currentVersionId || !version) {
+    return {
+      valid: false,
+      code: "CLOSURE_POLICY_VERSION_REQUIRED",
+      message: "该 G9 没有可执行的关项策略版本。"
+    };
+  }
+  if (
+    policy.projectId !== definition.projectId ||
+    policy.currentVersionId !== version.id ||
+    version.status !== "ACTIVE" ||
+    version.sourceGateDefinitionId !== definition.id ||
+    version.archiveCheckerCode !== "CLOSURE.ARCHIVE.G9" ||
+    version.archiveCheckerVersion !== 2 ||
+    version.retrospectiveCheckerCode !== "CLOSURE.RETROSPECTIVE.G9" ||
+    version.retrospectiveCheckerVersion !== 1 ||
+    version.archiveSourceFormulaVersion !== "V2"
+  ) {
+    return {
+      valid: false,
+      code: "CLOSURE_POLICY_STALE",
+      message: "该 G9 仅保留为历史记录，必须使用当前关项策略定义。"
+    };
+  }
+  try {
+    const checkerBindings = parseFrozenCheckerBindings(definition.checkerBindingsJson);
+    const expectedFacts = buildClosurePolicyVersionFacts({
+      projectId: definition.projectId,
+      sourceTemplateSnapshotId: version.sourceTemplateSnapshotId,
+      sourceGateDefinitionId: definition.id,
+      checkerBindings
+    });
+    if (
+      expectedFacts.bindingChecksum !== version.bindingChecksum ||
+      expectedFacts.policyChecksum !== version.policyChecksum ||
+      version.selfReferenceExclusionVersion !== CLOSURE_POLICY_SELF_REFERENCE_EXCLUSION
+    ) {
+      throw new Error("policy checksum mismatch");
+    }
+  } catch {
+    return {
+      valid: false,
+      code: "CLOSURE_POLICY_BINDING_MISMATCH",
+      message: "G9 定义与冻结关项策略绑定不一致。"
+    };
+  }
+  return {
+    valid: true,
+    authority: {
+      definitionId: definition.id,
+      closurePolicyVersionId: version.id,
+      closurePolicyChecksum: version.policyChecksum,
+      archiveSourceFormulaVersion: "ARCHIVE.SOURCE@2"
+    }
+  };
+}
+
+async function lockClosurePolicyAuthority(client: ExecutableGateClient, projectId: string) {
+  const [policy] = await client.$queryRaw<Array<{ id: string; currentVersionId: string | null }>>`
+    SELECT "id", "current_version_id" AS "currentVersionId"
+    FROM "project_closure_policies"
+    WHERE "project_id" = ${projectId}
+    FOR UPDATE
+  `;
+  if (policy?.currentVersionId) {
+    await client.$queryRaw`
+      SELECT "id"
+      FROM "project_closure_policy_versions"
+      WHERE "id" = ${policy.currentVersionId} AND "project_id" = ${projectId}
+      FOR UPDATE
+    `;
+  }
+}
+
+/**
+ * G9 is revisioned. Its policy's exact source definition, not its code or
+ * maximum revision, is the only executable authority after an APM-104 upgrade.
+ */
+export async function assertExecutableGateDefinition(
+  client: ExecutableGateClient,
+  input: { projectId: string; definitionId: string; instanceId?: string }
+): Promise<ExecutableGateAuthority> {
+  const definition = (await client.projectGateDefinition.findFirst({
+    where: { id: input.definitionId, projectId: input.projectId },
+    select: { id: true, projectId: true, code: true, checkerBindingsJson: true }
+  })) as ExecutableDefinition | null;
+  if (!definition) {
+    throw new GateServiceError("GATE_DEFINITION_NOT_FOUND", "项目 Gate 定义不存在。", 404);
+  }
+  if (definition.code !== "G9") {
+    return {
+      definitionId: definition.id,
+      closurePolicyVersionId: null,
+      closurePolicyChecksum: null,
+      archiveSourceFormulaVersion: null
+    };
+  }
+  assertInteractiveTransactionClient(client);
+  await lockClosurePolicyAuthority(client, input.projectId);
+  const policy = (await client.projectClosurePolicy.findUnique({
+    where: { projectId: input.projectId },
+    include: { currentVersion: true }
+  })) as ExecutablePolicy | null;
+  const validation = validateG9Authority(definition, policy);
+  if (!validation.valid) {
+    throw new GateServiceError(validation.code, validation.message, 409);
+  }
+  const authority = validation.authority;
+  const version = policy?.currentVersion;
+  if (!version) {
+    throw new GateServiceError(
+      "CLOSURE_POLICY_VERSION_REQUIRED",
+      "该 G9 没有可执行的关项策略版本。",
+      409
+    );
+  }
+  if (input.instanceId) {
+    const instance = (await client.projectGateInstance?.findFirst({
+      where: { id: input.instanceId, projectId: input.projectId, gateDefinitionId: definition.id },
+      select: {
+        id: true,
+        closurePolicyVersionId: true,
+        archiveSourceFormulaVersion: true,
+        closurePolicyChecksum: true
+      }
+    })) as ExecutableInstance | null | undefined;
+    if (!instance || instance.closurePolicyVersionId !== version.id) {
+      throw new GateServiceError("CLOSURE_POLICY_STALE", "G9 实例未绑定当前关项策略。", 409);
+    }
+    if (
+      instance.archiveSourceFormulaVersion !== "V2" ||
+      instance.closurePolicyChecksum !== version.policyChecksum
+    ) {
+      throw new GateServiceError(
+        "CLOSURE_POLICY_BINDING_MISMATCH",
+        "G9 实例的冻结关项策略绑定不一致。",
+        409
+      );
+    }
+  }
+  return authority;
+}
+
+function stableText(value: unknown, field: string, maximumLength = 191): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized || normalized.length > maximumLength) {
+    throw new GateServiceError(
+      "GATE_INVALID_INPUT",
+      `${field} 必须是 1 到 ${maximumLength} 个字符。`,
+      422
+    );
+  }
+  return normalized;
+}
+
+function positiveVersion(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new GateServiceError("GATE_VERSION_INVALID", "version 必须是正整数。", 422);
+  }
+  return value as number;
+}
+
+function commandReason(value: unknown): string {
+  return stableText(value, "reason", 1024);
+}
+
+function isGateScope(value: unknown): value is GateScopeCode {
+  return typeof value === "string" && GATE_SCOPES.includes(value as GateScopeCode);
+}
+
+export function validateGateInstanceScopeTarget(input: {
+  scope: unknown;
+  deliveryUnitId?: unknown;
+  moduleId?: unknown;
+}): GateScopeTarget {
+  if (!isGateScope(input.scope)) {
+    throw new GateServiceError("GATE_SCOPE_INVALID", "Gate 范围无效。", 422);
+  }
+  const deliveryUnitId =
+    input.deliveryUnitId === null || input.deliveryUnitId === undefined
+      ? null
+      : stableText(input.deliveryUnitId, "deliveryUnitId");
+  const moduleId =
+    input.moduleId === null || input.moduleId === undefined
+      ? null
+      : stableText(input.moduleId, "moduleId");
+
+  if (input.scope === "PROJECT") {
+    throw new GateServiceError(
+      "GATE_PROJECT_INSTANCE_MANUAL_FORBIDDEN",
+      "项目范围 Gate 实例只能在项目创建时物化。",
+      409
+    );
+  }
+  if (input.scope === "DELIVERY_UNIT" && deliveryUnitId !== null && moduleId === null) {
+    return { scope: input.scope, deliveryUnitId, moduleId };
+  }
+  if (input.scope === "MODULE" && deliveryUnitId !== null && moduleId !== null) {
+    return { scope: input.scope, deliveryUnitId, moduleId };
+  }
+  throw new GateServiceError(
+    "GATE_SCOPE_TARGET_INVALID",
+    "Gate 范围与交付单元/模块目标不匹配。",
+    422
+  );
+}
+
+export function resolveGateStageStatus(input: {
+  scope: GateScopeCode;
+  projectStageStatus: ProjectStageExecutionStatus;
+  deliveryUnitStageStatus: ProjectStageExecutionStatus;
+}): ProjectStageExecutionStatus {
+  return input.scope === "PROJECT" ? input.projectStageStatus : input.deliveryUnitStageStatus;
+}
+
+function evidenceObject(value: unknown): JsonValue {
+  const canonical = payloadHash(value).value;
+  return canonical !== null && !Array.isArray(canonical) && typeof canonical === "object"
+    ? canonical
+    : { value: canonical };
+}
+
+function failedCheck(input: {
+  position: number;
+  checkerCode: string;
+  checkerVersion: number;
+  failureCode: string;
+  message: string;
+  evidence: unknown;
+}): GateCheckResultFact {
+  const evidence = evidenceObject(input.evidence);
+  return {
+    position: input.position,
+    checkerCode: input.checkerCode,
+    checkerVersion: input.checkerVersion,
+    status: "HARD_FAILED",
+    failureCode: input.failureCode,
+    message: input.message,
+    evidence,
+    evidenceChecksum: payloadHash(evidence).hash
+  };
+}
+
+export function evaluateFrozenGateCheckers(
+  input: {
+    projectId: string;
+    gateCode: string;
+    stageCode: string;
+    stageStatus: ProjectStageExecutionStatus;
+    scope: GateScopeCode;
+    checkerBindings: readonly FrozenGateCheckerBinding[];
+    checkerFacts?: Readonly<Record<string, JsonValue>>;
+  },
+  resolver: (code: string, version: number) => GateChecker | undefined = resolveGateChecker
+): GateCheckResultFact[] {
+  if (input.checkerBindings.length === 0) {
+    return [
+      failedCheck({
+        position: 0,
+        checkerCode: "GATE.BINDINGS",
+        checkerVersion: 1,
+        failureCode: "CHECKER_BINDINGS_EMPTY",
+        message: "Gate 未冻结任何可执行检查器。",
+        evidence: { gateCode: input.gateCode }
+      })
+    ];
+  }
+  return input.checkerBindings.map((binding, position) => {
+    const checker = resolver(binding.code, binding.version);
+    if (!checker) {
+      return failedCheck({
+        position,
+        checkerCode: binding.code,
+        checkerVersion: binding.version,
+        failureCode: "CHECKER_NOT_REGISTERED",
+        message: "冻结的 Gate 检查器版本未在当前服务注册。",
+        evidence: { checkerCode: binding.code, checkerVersion: binding.version }
+      });
+    }
+    if (!checker.supportedScopes.includes(input.scope)) {
+      return failedCheck({
+        position,
+        checkerCode: binding.code,
+        checkerVersion: binding.version,
+        failureCode: "CHECKER_SCOPE_UNSUPPORTED",
+        message: "冻结的 Gate 检查器不支持此实例范围。",
+        evidence: {
+          checkerCode: binding.code,
+          checkerVersion: binding.version,
+          scope: input.scope,
+          supportedScopes: [...checker.supportedScopes]
+        }
+      });
+    }
+    try {
+      const result = checker.evaluate({
+        projectId: input.projectId,
+        gateCode: input.gateCode,
+        stageCode: input.stageCode,
+        stageStatus: input.stageStatus,
+        scope: input.scope,
+        facts: input.checkerFacts ?? null
+      });
+      const evidence = evidenceObject(result.evidence);
+      return {
+        position,
+        checkerCode: binding.code,
+        checkerVersion: binding.version,
+        status: result.status,
+        failureCode: result.status === "HARD_FAILED" ? result.code : null,
+        message: result.message,
+        evidence,
+        evidenceChecksum: payloadHash(evidence).hash
+      };
+    } catch {
+      return failedCheck({
+        position,
+        checkerCode: binding.code,
+        checkerVersion: binding.version,
+        failureCode: "CHECKER_EVALUATION_FAILED",
+        message: "冻结的 Gate 检查器执行失败。",
+        evidence: { checkerCode: binding.code, checkerVersion: binding.version }
+      });
+    }
+  });
+}
+
+function aggregateGateCheckStatus(results: readonly GateCheckResultFact[]): GateCheckStatus {
+  if (results.some((result) => result.status === "HARD_FAILED")) return "HARD_FAILED";
+  if (results.some((result) => result.status === "WARNING")) return "WARNING";
+  return "PASSED";
+}
+
+export function buildGateCheckRun(input: {
+  projectId: string;
+  instanceId: string;
+  definition: {
+    code: string;
+    name: string;
+    projectStageId: string;
+    definitionJson: unknown;
+  };
+  scope: GateScopeTarget;
+  stage: { code: string; status: ProjectStageExecutionStatus };
+  checkerBindings: readonly FrozenGateCheckerBinding[];
+  checkerFacts?: Readonly<Record<string, JsonValue>>;
+  reason: string;
+}) {
+  const definitionSnapshot = payloadHash({
+    code: input.definition.code,
+    name: input.definition.name,
+    projectStageId: input.definition.projectStageId,
+    definitionJson: input.definition.definitionJson
+  }).value;
+  const scopeSnapshot = payloadHash({
+    projectId: input.projectId,
+    gateInstanceId: input.instanceId,
+    scope: input.scope.scope,
+    deliveryUnitId: input.scope.deliveryUnitId,
+    moduleId: input.scope.moduleId
+  }).value;
+  const checkerBindings = payloadHash(input.checkerBindings).value;
+  const checkerFacts = payloadHash(input.checkerFacts ?? {}).value;
+  const results = evaluateFrozenGateCheckers({
+    projectId: input.projectId,
+    gateCode: input.definition.code,
+    stageCode: input.stage.code,
+    stageStatus: input.stage.status,
+    scope: input.scope.scope,
+    checkerBindings: input.checkerBindings,
+    checkerFacts: checkerFacts as Readonly<Record<string, JsonValue>>
+  });
+  const inputChecksum = payloadHash({
+    definitionSnapshot,
+    scopeSnapshot,
+    checkerBindings,
+    checkerFacts,
+    stage: input.stage,
+    reason: input.reason
+  }).hash;
+  const resultChecksum = payloadHash(
+    results.map(({ evidenceChecksum, ...result }) => ({ ...result, evidenceChecksum }))
+  ).hash;
+  return {
+    definitionSnapshot,
+    scopeSnapshot,
+    checkerBindings,
+    checkerFacts,
+    results,
+    overallStatus: aggregateGateCheckStatus(results),
+    inputChecksum,
+    resultChecksum
+  };
+}
+
+function needsProcurementFacts(bindings: readonly FrozenGateCheckerBinding[]) {
+  return bindings.some(
+    (binding) => binding.code === "PROCUREMENT.READINESS" && binding.version === 1
+  );
+}
+
+function needsProjectArchiveFacts(bindings: readonly FrozenGateCheckerBinding[]) {
+  return bindings.some((binding) => binding.code === "CLOSURE.ARCHIVE.G9" && binding.version === 1);
+}
+
+function needsClosureV2Facts(bindings: readonly FrozenGateCheckerBinding[]) {
+  return bindings.some(
+    (binding) =>
+      (binding.code === "CLOSURE.ARCHIVE.G9" && binding.version === 2) ||
+      (binding.code === "CLOSURE.RETROSPECTIVE.G9" && binding.version === 1)
+  );
+}
+
+function acceptanceIssueBinding(bindings: readonly FrozenGateCheckerBinding[]) {
+  const binding = bindings.find(
+    (candidate) =>
+      candidate.version === 1 &&
+      (candidate.code === "ACCEPTANCE.FAT.ISSUES" || candidate.code === "ACCEPTANCE.SAT.ISSUES")
+  );
+  if (!binding) return null;
+  return binding.code === "ACCEPTANCE.FAT.ISSUES" ? ("FAT" as const) : ("SAT" as const);
+}
+
+function acceptanceConfirmationBinding(bindings: readonly FrozenGateCheckerBinding[]) {
+  const binding = bindings.find(
+    (candidate) =>
+      candidate.version === 1 &&
+      (candidate.code === "ACCEPTANCE.FAT.CONFIRMATION" ||
+        candidate.code === "ACCEPTANCE.SAT.CONFIRMATION")
+  );
+  if (!binding) return null;
+  return binding.code === "ACCEPTANCE.FAT.CONFIRMATION" ? ("FAT" as const) : ("SAT" as const);
+}
+
+function reportIssueIds(snapshot: Prisma.JsonValue): string[] {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return [];
+  const issues = (snapshot as Record<string, unknown>).issues;
+  if (!Array.isArray(issues)) return [];
+  return [
+    ...new Set(
+      issues.flatMap((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+        const issueId = (entry as Record<string, unknown>).issueId;
+        return typeof issueId === "string" && issueId.trim() ? [issueId] : [];
+      })
+    )
+  ].sort();
+}
+
+/**
+ * An acceptance batch uses MACHINE for its smallest scope, while a Gate
+ * instance names that same project object MODULE. Keep this translation in
+ * one place so confirmation checks never accidentally treat valid machine
+ * reports as unavailable facts.
+ */
+export function resolveAcceptanceConfirmationScope(input: {
+  projectId: string;
+  scope: GateScopeTarget;
+}): { scopeType: "PROJECT" | "DELIVERY_UNIT" | "MACHINE"; scopeId: string } | null {
+  if (input.scope.scope === "PROJECT") {
+    return { scopeType: "PROJECT", scopeId: input.projectId };
+  }
+  if (input.scope.scope === "DELIVERY_UNIT" && input.scope.deliveryUnitId) {
+    return { scopeType: "DELIVERY_UNIT", scopeId: input.scope.deliveryUnitId };
+  }
+  if (input.scope.scope === "MODULE" && input.scope.moduleId) {
+    return { scopeType: "MACHINE", scopeId: input.scope.moduleId };
+  }
+  return null;
+}
+
+async function freezeAcceptanceConfirmationCheckerFacts(input: {
+  client: Prisma.TransactionClient;
+  projectId: string;
+  scope: GateScopeTarget;
+  acceptanceType: "FAT" | "SAT";
+}): Promise<Readonly<Record<string, JsonValue>>> {
+  const acceptanceScope = resolveAcceptanceConfirmationScope({
+    projectId: input.projectId,
+    scope: input.scope
+  });
+  if (!acceptanceScope) {
+    return {
+      acceptanceConfirmation: {
+        acceptanceType: input.acceptanceType,
+        factsAvailable: false
+      } as unknown as JsonValue
+    };
+  }
+  const report = await input.client.acceptanceReport.findFirst({
+    where: {
+      projectId: input.projectId,
+      acceptanceType: input.acceptanceType,
+      scopeType: acceptanceScope.scopeType,
+      scopeId: acceptanceScope.scopeId,
+      status: { in: ["READY", "PUBLISHED"] }
+    },
+    orderBy: [{ generatedAt: "desc" }, { reportVersion: "desc" }],
+    include: {
+      confirmations: {
+        where: { status: "ACTIVE" },
+        orderBy: { recordedAt: "desc" },
+        take: 1
+      }
+    }
+  });
+  if (!report) {
+    return {
+      acceptanceConfirmation: {
+        acceptanceType: input.acceptanceType,
+        factsAvailable: true,
+        reportId: null,
+        reportChecksum: null,
+        reportStatus: null,
+        confirmationId: null,
+        confirmationChecksum: null,
+        confirmationDecision: null,
+        hasUnresolvedHardIssue: false,
+        reservationResidualItemIds: [],
+        reservationsFullyGoverned: false
+      } as unknown as JsonValue
+    };
+  }
+  const issueIds = reportIssueIds(report.snapshotJson);
+  const issues = issueIds.length
+    ? await input.client.issue.findMany({
+        where: { projectId: input.projectId, id: { in: issueIds } },
+        select: { id: true, category: true, severity: true, status: true }
+      })
+    : [];
+  const openIssues = issues.filter((issue) => issue.status !== "CLOSED");
+  const hasUnresolvedHardIssue = openIssues.some(
+    (issue) =>
+      issue.category === "SAFETY" ||
+      issue.category === "FUNCTION" ||
+      issue.severity === "HIGH" ||
+      issue.severity === "CRITICAL"
+  );
+  const warningIssueIds = openIssues
+    .filter(
+      (issue) =>
+        ["PERFORMANCE", "APPEARANCE", "DELIVERY_COMPLETENESS"].includes(issue.category) &&
+        ["LOW", "MEDIUM"].includes(issue.severity)
+    )
+    .map((issue) => issue.id);
+  const residuals = warningIssueIds.length
+    ? await input.client.residualItem.findMany({
+        where: {
+          projectId: input.projectId,
+          issueId: { in: warningIssueIds },
+          status: { in: ["OPEN", "IN_PROGRESS", "AWAITING_VERIFICATION"] }
+        },
+        select: { id: true, issueId: true }
+      })
+    : [];
+  const residualIssueIds = new Set(
+    residuals.flatMap((item) => (item.issueId ? [item.issueId] : []))
+  );
+  const confirmation = report.confirmations[0] ?? null;
+  return {
+    acceptanceConfirmation: {
+      acceptanceType: input.acceptanceType,
+      factsAvailable: true,
+      reportId: report.id,
+      reportChecksum: report.snapshotChecksum,
+      reportStatus: report.status,
+      confirmationId: confirmation?.id ?? null,
+      confirmationChecksum: confirmation?.confirmationChecksum ?? null,
+      confirmationDecision: confirmation?.decision ?? null,
+      hasUnresolvedHardIssue,
+      reservationResidualItemIds: residuals.map((item) => item.id).sort(),
+      reservationsFullyGoverned:
+        warningIssueIds.length > 0 &&
+        warningIssueIds.every((issueId) => residualIssueIds.has(issueId))
+    } as unknown as JsonValue
+  };
+}
+
+async function freezeAcceptanceIssueCheckerFacts(input: {
+  client: Prisma.TransactionClient;
+  projectId: string;
+  scope: GateScopeTarget;
+  acceptanceType: "FAT" | "SAT";
+}): Promise<Readonly<Record<string, JsonValue>>> {
+  const scopeType =
+    input.scope.scope === "PROJECT"
+      ? "PROJECT"
+      : input.scope.scope === "DELIVERY_UNIT"
+        ? "DELIVERY_UNIT"
+        : null;
+  const scopeId =
+    input.scope.scope === "PROJECT"
+      ? input.projectId
+      : input.scope.scope === "DELIVERY_UNIT"
+        ? input.scope.deliveryUnitId
+        : null;
+  if (!scopeType || !scopeId) {
+    return {
+      acceptanceIssues: {
+        acceptanceType: input.acceptanceType,
+        factsAvailable: false,
+        sourceChecksum: "unavailable",
+        requiredResultMissing: false,
+        results: [],
+        issues: [],
+        retestPassRevisionIds: []
+      } as unknown as JsonValue
+    };
+  }
+  const batches = await input.client.acceptanceBatch.findMany({
+    where: {
+      projectId: input.projectId,
+      acceptanceType: input.acceptanceType,
+      scopeType,
+      scopeId,
+      status: "LOCKED"
+    },
+    orderBy: [{ lockedAt: "desc" }, { id: "desc" }],
+    include: {
+      templateVersion: { include: { items: { orderBy: { position: "asc" } } } },
+      results: {
+        include: { revisions: { orderBy: { revisionNo: "desc" }, take: 1 } }
+      }
+    }
+  });
+  const latest = batches[0];
+  if (!latest) {
+    return {
+      acceptanceIssues: {
+        acceptanceType: input.acceptanceType,
+        factsAvailable: false,
+        sourceChecksum: payloadHash({ projectId: input.projectId, scopeType, scopeId }).hash,
+        requiredResultMissing: false,
+        results: [],
+        issues: [],
+        retestPassRevisionIds: []
+      } as unknown as JsonValue
+    };
+  }
+  const byId = new Map(batches.map((batch) => [batch.id, batch]));
+  const chain: string[] = [];
+  let cursor: typeof latest | undefined = latest;
+  while (cursor) {
+    chain.push(cursor.id);
+    cursor = cursor.retestOfBatchId ? byId.get(cursor.retestOfBatchId) : undefined;
+  }
+  const latestByItem = new Map(
+    latest.results.map((result) => [result.itemId, result.revisions[0] ?? null])
+  );
+  const requiredResultMissing = latest.templateVersion.items.some(
+    (item) => item.required && !latestByItem.get(item.id)
+  );
+  const revisionIds = latest.templateVersion.items
+    .map((item) => latestByItem.get(item.id)?.id)
+    .filter((id): id is string => Boolean(id));
+  const relations =
+    revisionIds.length === 0
+      ? []
+      : await input.client.issueRelation.findMany({
+          where: {
+            projectId: input.projectId,
+            relationType: "TEST_RESULT",
+            status: "ACTIVE",
+            targetId: { in: revisionIds }
+          },
+          select: { targetId: true, issueId: true }
+        });
+  const issueIds = [...new Set(relations.map((relation) => relation.issueId))];
+  const issueRows =
+    issueIds.length === 0
+      ? []
+      : await input.client.issue.findMany({
+          where: { projectId: input.projectId, id: { in: issueIds } },
+          select: {
+            id: true,
+            category: true,
+            severity: true,
+            status: true,
+            ownerMembershipId: true,
+            verifierMembershipId: true,
+            dueDate: true
+          }
+        });
+  const issueById = new Map(issueRows.map((issue) => [issue.id, issue]));
+  const issueLinks = new Map<string, string[]>();
+  for (const relation of relations) {
+    const ids = issueLinks.get(relation.targetId) ?? [];
+    ids.push(relation.issueId);
+    issueLinks.set(relation.targetId, ids);
+  }
+  const retestPassRevisionIds = latest.retestOfBatchId
+    ? latest.templateVersion.items
+        .map((item) => {
+          const current = latestByItem.get(item.id);
+          return current?.decision === "PASS" ? current.id : null;
+        })
+        .filter((id): id is string => Boolean(id))
+    : [];
+  const results = latest.templateVersion.items.map((item) => {
+    const revision = latestByItem.get(item.id);
+    return {
+      resultRevisionId: revision?.id ?? `missing:${latest.id}:${item.id}`,
+      itemCode: item.code,
+      decision: revision?.decision ?? null,
+      issueIds: [...(revision ? (issueLinks.get(revision.id) ?? []) : [])].sort()
+    };
+  });
+  const issues = issueRows.map((issue) => ({
+    issueId: issue.id,
+    category: issue.category,
+    severity: issue.severity,
+    status: issue.status,
+    ownerMembershipId: issue.ownerMembershipId,
+    verifierMembershipId: issue.verifierMembershipId,
+    dueDate: issue.dueDate?.toISOString().slice(0, 10) ?? null,
+    verificationPlan: issue.verifierMembershipId ? "ASSIGNED_VERIFIER" : null
+  }));
+  const sourceChecksum = payloadHash({
+    projectId: input.projectId,
+    acceptanceType: input.acceptanceType,
+    scopeType,
+    scopeId,
+    lockedBatchChain: chain,
+    templateVersionId: latest.templateVersionId,
+    templateChecksum: latest.templateVersion.snapshotChecksum,
+    results,
+    issues,
+    requiredResultMissing
+  }).hash;
+  return {
+    acceptanceIssues: {
+      acceptanceType: input.acceptanceType,
+      factsAvailable: true,
+      sourceChecksum,
+      requiredResultMissing,
+      lockedBatchId: latest.id,
+      lockedBatchChain: chain,
+      templateVersionId: latest.templateVersionId,
+      templateChecksum: latest.templateVersion.snapshotChecksum,
+      results,
+      issues,
+      retestPassRevisionIds
+    } as unknown as JsonValue
+  };
+}
+
+async function freezeProcurementCheckerFacts(input: {
+  projectId: string;
+  scope: GateScopeTarget;
+  gateThreshold?: JsonValue;
+}): Promise<Readonly<Record<string, JsonValue>>> {
+  const gateFacts = await readProcurementGateFacts({ projectId: input.projectId });
+  const scopeId =
+    input.scope.scope === "PROJECT"
+      ? input.projectId
+      : input.scope.scope === "DELIVERY_UNIT"
+        ? input.scope.deliveryUnitId
+        : input.scope.moduleId;
+  const scopeType =
+    input.scope.scope === "PROJECT"
+      ? "PROJECT"
+      : input.scope.scope === "DELIVERY_UNIT"
+        ? "DELIVERY_UNIT"
+        : "MODULE";
+  const readiness = gateFacts.scopes.find(
+    (fact) => fact.scopeType === scopeType && fact.scopeId === scopeId
+  );
+  const affectedRequirementIds = gateFacts.scopes
+    .filter((fact) => fact.scopeType === "REQUIREMENT" && fact.status !== "READY")
+    .map((fact) => fact.scopeId)
+    .sort((left, right) => left.localeCompare(right));
+  return {
+    procurementReadiness: {
+      readinessResultId: readiness?.id ?? null,
+      policyVersion: readiness?.policyVersionId ?? gateFacts.policyVersion,
+      formulaVersion: readiness?.formulaVersion ?? gateFacts.formulaVersion,
+      inputWatermark: readiness?.inputWatermark ?? gateFacts.inputWatermark,
+      calculatedAt: readiness?.calculatedAt ?? gateFacts.calculatedAt,
+      status: readiness?.status ?? "NOT_CALCULATED",
+      criticalGapLines: readiness?.blockingCriticalLines ?? gateFacts.criticalGapLines,
+      gapLines: readiness?.gapLines ?? gateFacts.gapLines,
+      affectedRequirementIds,
+      wrongDrawingVersionRequirementIds: [...gateFacts.wrongDrawingVersionRequirementIds],
+      unresolvedMajorChangeRequirementIds: [...gateFacts.unresolvedMajorChangeRequirementIds],
+      changeFactsAvailability: gateFacts.changeFactsAvailability,
+      gateThreshold: input.gateThreshold ?? frozenGateThreshold(gateFacts.gateThreshold) ?? null
+    }
+  };
+}
+
+async function freezeProjectArchiveCheckerFacts(input: {
+  client: Prisma.TransactionClient;
+  projectId: string;
+  scope: GateScopeTarget;
+}): Promise<Readonly<Record<string, JsonValue>>> {
+  const unavailable = (reason: string) => ({
+    closureArchive: {
+      factsAvailable: false,
+      projectId: input.projectId,
+      archiveVersionId: null,
+      archiveStatus: null,
+      manifestChecksum: null,
+      sourceWatermark: null,
+      integrityCheckId: null,
+      integrityStatus: null,
+      sourceFactsCurrent: false,
+      openResidualItemIds: [],
+      reason
+    } as unknown as JsonValue
+  });
+  if (input.scope.scope !== "PROJECT") return unavailable("PROJECT_SCOPE_REQUIRED");
+  const archive = await input.client.projectArchive.findUnique({
+    where: { projectId: input.projectId },
+    include: {
+      versions: {
+        where: { status: "READY" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 1,
+        include: { integrityChecks: { orderBy: { sequence: "desc" }, take: 1 } }
+      }
+    }
+  });
+  const version = archive?.versions[0];
+  if (!version) return unavailable("READY_ARCHIVE_REQUIRED");
+  const residuals = await input.client.residualItem.findMany({
+    where: { projectId: input.projectId, status: { not: "CLOSED" } },
+    select: { id: true }
+  });
+  let sourceFactsCurrent = false;
+  try {
+    const current = await buildProjectArchiveManifest({
+      projectId: input.projectId,
+      readSources: (projectId) =>
+        readProjectArchiveSources({
+          projectId,
+          client: input.client as unknown as ArchiveSourceClient
+        }) as Promise<readonly ArchiveManifestSourceInput[]>
+    });
+    sourceFactsCurrent = current.sourceWatermark === version.sourceWatermark;
+  } catch {
+    return unavailable("SOURCE_FACTS_UNAVAILABLE");
+  }
+  const integrity = version.integrityChecks[0] ?? null;
+  return {
+    closureArchive: {
+      factsAvailable: true,
+      projectId: input.projectId,
+      archiveVersionId: version.id,
+      archiveStatus: version.status,
+      manifestChecksum: version.manifestChecksum,
+      sourceWatermark: version.sourceWatermark,
+      integrityCheckId: integrity?.id ?? null,
+      integrityStatus: integrity?.status ?? null,
+      sourceFactsCurrent,
+      openResidualItemIds: residuals.map((item) => item.id).sort()
+    } as unknown as JsonValue
+  };
+}
+
+function frozenGateThreshold(value: unknown): JsonValue | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const nested = record.gateThreshold ?? record.procurementGateThreshold;
+  if (nested !== undefined) return frozenGateThreshold(nested);
+  const warningGapLines = record.warningGapLines;
+  const hardFailureGapLines = record.hardFailureGapLines;
+  const validThreshold = (candidate: unknown): candidate is number | null =>
+    candidate === null || (Number.isSafeInteger(candidate) && (candidate as number) >= 0);
+  if (!validThreshold(warningGapLines) || !validThreshold(hardFailureGapLines)) return undefined;
+  return { warningGapLines, hardFailureGapLines };
+}
+
+function parseFrozenCheckerBindings(value: unknown): FrozenGateCheckerBinding[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const parsed = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const code = (entry as Record<string, unknown>).code;
+    const version = (entry as Record<string, unknown>).version;
+    if (
+      typeof code !== "string" ||
+      !/^[A-Z][A-Z0-9_.-]{1,99}$/u.test(code) ||
+      !Number.isSafeInteger(version) ||
+      (version as number) < 1
+    ) {
+      return [];
+    }
+    return [{ code, version: version as number }];
+  });
+  return parsed.length === value.length ? parsed : [];
+}
+
+async function databaseNow(client: Prisma.TransactionClient): Promise<Date> {
+  const [clock] = await client.$queryRaw<Array<{ now: Date }>>`
+    SELECT CURRENT_TIMESTAMP AS "now"
+  `;
+  if (!clock) throw new Error("无法读取数据库时间。");
+  return clock.now;
+}
+
+function assertProjectWritable(project: { initializationStatus: string; status: string }) {
+  if (project.initializationStatus !== "READY") {
+    throw new GateServiceError("GATE_PROJECT_NOT_READY", "项目模板快照尚未准备完成。", 409);
+  }
+  if (project.status === "CLOSED" || project.status === "CANCELED") {
+    throw new GateServiceError("GATE_PROJECT_READ_ONLY", "已关闭项目不能创建或检查 Gate。", 409);
+  }
+}
+
+function auditContextFor(
+  input: { actorId: string; auditContext: AuditContext },
+  project: { id: string; departmentId: string | null },
+  reason: string
+): AuditContext {
+  return {
+    ...input.auditContext,
+    actorId: input.actorId,
+    projectId: project.id,
+    departmentId: project.departmentId,
+    reason
+  };
+}
+
+function gateInstanceAuditValue(value: {
+  id: string;
+  projectId: string;
+  gateDefinitionId: string;
+  projectStageId: string;
+  scope: string;
+  deliveryUnitId: string | null;
+  moduleId: string | null;
+  version: number;
+}) {
+  return {
+    projectId: value.projectId,
+    gateInstanceId: value.id,
+    gateDefinitionId: value.gateDefinitionId,
+    projectStageId: value.projectStageId,
+    scope: value.scope,
+    deliveryUnitId: value.deliveryUnitId,
+    moduleId: value.moduleId,
+    version: value.version
+  };
+}
+
+function gateSnapshotAuditValue(value: {
+  id: string;
+  projectId: string;
+  gateInstanceId: string;
+  sequence: number;
+  status: string;
+  inputChecksum: string;
+  resultChecksum: string;
+}) {
+  return {
+    projectId: value.projectId,
+    gateInstanceId: value.gateInstanceId,
+    gateCheckSnapshotId: value.id,
+    sequence: value.sequence,
+    status: value.status,
+    inputChecksum: value.inputChecksum,
+    resultChecksum: value.resultChecksum
+  };
+}
+
+async function assertScopeTargetRelations(
+  client: Prisma.TransactionClient,
+  projectId: string,
+  target: GateScopeTarget
+) {
+  const deliveryUnit = await client.deliveryUnit.findFirst({
+    where: { id: target.deliveryUnitId ?? undefined, projectId },
+    select: { id: true }
+  });
+  if (!deliveryUnit) {
+    throw new GateServiceError("GATE_SCOPE_TARGET_INVALID", "Gate 目标不属于当前项目。", 409);
+  }
+  if (target.scope !== "MODULE") return;
+  const projectModule = await client.projectModule.findFirst({
+    where: { id: target.moduleId ?? undefined, projectId },
+    select: { id: true, deliveryUnitId: true }
+  });
+  if (!projectModule || projectModule.deliveryUnitId !== target.deliveryUnitId) {
+    throw new GateServiceError(
+      "GATE_SCOPE_TARGET_INVALID",
+      "模块必须归属指定的同项目交付单元。",
+      409
+    );
+  }
+}
+
+function mapDatabaseError(error: unknown): never {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2002") {
+      throw new GateServiceError("GATE_INSTANCE_CONFLICT", "Gate 实例或检查序列已存在。", 409);
+    }
+    if (error.code === "P2003" || error.code === "P2004") {
+      throw new GateServiceError(
+        "GATE_SCOPE_TARGET_INVALID",
+        "Gate 对象关系未通过数据库约束。",
+        409
+      );
+    }
+  }
+  throw error;
+}
+
+export async function createGateInstance(
+  input: {
+    projectId: string;
+    gateDefinitionId: string;
+    scope: GateScopeCode;
+    deliveryUnitId?: string | null;
+    moduleId?: string | null;
+    actorId: string;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
+  const target = validateGateInstanceScopeTarget(input);
+  try {
+    return await inTransaction(transaction, async (client) => {
+      const project = await client.project.findUnique({ where: { id: input.projectId } });
+      if (!project) throw new GateServiceError("GATE_PROJECT_NOT_FOUND", "项目不存在。", 404);
+      assertProjectWritable(project);
+      const definition = await client.projectGateDefinition.findFirst({
+        where: { id: input.gateDefinitionId, projectId: input.projectId }
+      });
+      if (!definition) {
+        throw new GateServiceError("GATE_DEFINITION_NOT_FOUND", "项目 Gate 定义不存在。", 404);
+      }
+      if (definition.scope !== target.scope) {
+        throw new GateServiceError(
+          "GATE_SCOPE_TARGET_INVALID",
+          "Gate 实例范围必须匹配冻结定义。",
+          422
+        );
+      }
+      await assertExecutableGateDefinition(client, {
+        projectId: input.projectId,
+        definitionId: definition.id
+      });
+      await assertScopeTargetRelations(client, input.projectId, target);
+      const instance = await client.projectGateInstance.create({
+        data: {
+          projectId: input.projectId,
+          gateDefinitionId: definition.id,
+          projectStageId: definition.projectStageId,
+          scope: target.scope as GateScope,
+          deliveryUnitId: target.deliveryUnitId,
+          moduleId: target.moduleId,
+          createdById: input.actorId,
+          updatedById: input.actorId
+        }
+      });
+      const auditValue = gateInstanceAuditValue(instance);
+      const audit = await writeAudit(client, {
+        action: AUDIT_ACTIONS.GATE_INSTANCE_CREATED,
+        objectType: AUDIT_OBJECT_TYPES.PROJECT_GATE_INSTANCE,
+        objectId: instance.id,
+        context: auditContextFor(input, project, "创建范围 Gate 实例"),
+        after: { value: auditValue, allowedFields: PROJECT_GATE_INSTANCE_AUDIT_FIELDS }
+      });
+      const outbox = await appendOutboxEvent(client, {
+        eventType: "gate.instance.created",
+        aggregateType: "PROJECT_GATE_INSTANCE",
+        aggregateId: instance.id,
+        idempotencyKey: `${instance.id}:created`,
+        payload: auditValue
+      });
+      return {
+        gateInstance: instance,
+        resourceVersion: instance.version,
+        auditId: audit.id,
+        outboxEventId: outbox.id
+      };
+    });
+  } catch (error) {
+    if (error instanceof GateServiceError) throw error;
+    mapDatabaseError(error);
+  }
+}
+
+type ProjectGateListingDefinition = ExecutableDefinition & {
+  scope: string;
+  revision: number;
+};
+
+export function buildProjectGateListing(input: {
+  definitions: readonly ProjectGateListingDefinition[];
+  policy: ExecutablePolicy | null;
+}) {
+  const candidate = input.policy?.currentVersion?.sourceGateDefinitionId
+    ? (input.definitions.find(
+        (definition) => definition.id === input.policy?.currentVersion?.sourceGateDefinitionId
+      ) ?? null)
+    : null;
+  const validation = candidate ? validateG9Authority(candidate, input.policy) : null;
+  const activeG9DefinitionId = validation?.valid ? validation.authority.definitionId : null;
+  const toView = (
+    definition: ProjectGateListingDefinition,
+    executionState: "ACTIVE" | "LEGACY_HISTORY"
+  ) => ({
+    ...definition,
+    executionState,
+    allowedActions:
+      executionState === "ACTIVE"
+        ? [
+            ...(definition.scope === "PROJECT" ? [] : ["CREATE_INSTANCE"]),
+            "RUN_CHECKS",
+            "SUBMIT",
+            "RESUBMIT",
+            "APPROVE"
+          ]
+        : ([] as string[])
+  });
+  const activeDefinitions = input.definitions
+    .filter((definition) => definition.code !== "G9" || definition.id === activeG9DefinitionId)
+    .map((definition) => toView(definition, "ACTIVE"));
+  const legacyDefinitions = input.definitions
+    .filter((definition) => definition.code === "G9" && definition.id !== activeG9DefinitionId)
+    .map((definition) => toView(definition, "LEGACY_HISTORY"));
+  return { activeDefinitions, legacyDefinitions };
+}
+
+export async function listProjectGates(projectId: string) {
+  const [definitions, policy] = await Promise.all([
+    db.projectGateDefinition.findMany({
+      where: { projectId },
+      orderBy: [{ code: "asc" }, { revision: "asc" }],
+      include: {
+        instances: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            checkSnapshots: {
+              orderBy: { sequence: "desc" },
+              include: { results: { orderBy: { position: "asc" } } }
+            }
+          }
+        }
+      }
+    }),
+    db.projectClosurePolicy.findUnique({
+      where: { projectId },
+      include: { currentVersion: true }
+    })
+  ]);
+  return buildProjectGateListing({ definitions, policy });
+}
+
+export async function runGateChecks(
+  input: {
+    projectId: string;
+    gateInstanceId: string;
+    version: number;
+    reason: string;
+    actorId: string;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
+  const version = positiveVersion(input.version);
+  const reason = commandReason(input.reason);
+  try {
+    return await inTransaction(transaction, async (client) => {
+      const instance = await client.projectGateInstance.findFirst({
+        where: { id: input.gateInstanceId, projectId: input.projectId },
+        include: { gateDefinition: true, projectStage: true }
+      });
+      if (!instance) {
+        throw new GateServiceError("GATE_INSTANCE_NOT_FOUND", "项目 Gate 实例不存在。", 404);
+      }
+      const authority = await assertExecutableGateDefinition(client, {
+        projectId: input.projectId,
+        definitionId: instance.gateDefinitionId,
+        instanceId: instance.id
+      });
+      const project = await client.project.findUnique({ where: { id: input.projectId } });
+      if (!project) throw new GateServiceError("GATE_PROJECT_NOT_FOUND", "项目不存在。", 404);
+      assertProjectWritable(project);
+      const deliveryUnitStage =
+        instance.scope === "PROJECT"
+          ? null
+          : await client.deliveryUnitStage.findFirst({
+              where: {
+                projectId: input.projectId,
+                deliveryUnitId: instance.deliveryUnitId ?? undefined,
+                projectStageId: instance.projectStageId
+              },
+              select: { status: true }
+            });
+      if (instance.scope !== "PROJECT" && !deliveryUnitStage) {
+        throw new GateServiceError(
+          "GATE_DELIVERY_UNIT_STAGE_NOT_FOUND",
+          "Gate 目标缺少对应的交付单元阶段事实。",
+          409
+        );
+      }
+      const stageStatus = resolveGateStageStatus({
+        scope: instance.scope as GateScopeCode,
+        projectStageStatus: instance.projectStage.status,
+        deliveryUnitStageStatus: deliveryUnitStage?.status ?? instance.projectStage.status
+      });
+      if (stageStatus !== "AWAITING_GATE") {
+        throw new GateServiceError(
+          "GATE_STAGE_NOT_AWAITING",
+          "关联阶段尚未进入等待 Gate 检查状态。",
+          409
+        );
+      }
+      const checkerBindings = parseFrozenCheckerBindings(
+        instance.gateDefinition.checkerBindingsJson
+      );
+      const checkerScope = {
+        scope: instance.scope as GateScopeCode,
+        deliveryUnitId: instance.deliveryUnitId,
+        moduleId: instance.moduleId
+      };
+      const checkerFacts = {
+        ...(needsProcurementFacts(checkerBindings)
+          ? await freezeProcurementCheckerFacts({
+              projectId: input.projectId,
+              scope: checkerScope,
+              gateThreshold: frozenGateThreshold(instance.gateDefinition.definitionJson)
+            })
+          : {}),
+        ...(needsProjectArchiveFacts(checkerBindings)
+          ? await freezeProjectArchiveCheckerFacts({
+              client,
+              projectId: input.projectId,
+              scope: checkerScope
+            })
+          : {}),
+        ...(needsClosureV2Facts(checkerBindings)
+          ? await readClosureGateFacts({
+              projectId: input.projectId,
+              client: client as never
+            })
+          : {}),
+        ...(acceptanceIssueBinding(checkerBindings)
+          ? await freezeAcceptanceIssueCheckerFacts({
+              client,
+              projectId: input.projectId,
+              scope: checkerScope,
+              acceptanceType: acceptanceIssueBinding(checkerBindings)!
+            })
+          : {}),
+        ...(acceptanceConfirmationBinding(checkerBindings)
+          ? await freezeAcceptanceConfirmationCheckerFacts({
+              client,
+              projectId: input.projectId,
+              scope: checkerScope,
+              acceptanceType: acceptanceConfirmationBinding(checkerBindings)!
+            })
+          : {})
+      };
+      const run = buildGateCheckRun({
+        projectId: input.projectId,
+        instanceId: instance.id,
+        definition: {
+          code: instance.gateDefinition.code,
+          name: instance.gateDefinition.name,
+          projectStageId: instance.gateDefinition.projectStageId,
+          definitionJson: instance.gateDefinition.definitionJson
+        },
+        scope: checkerScope,
+        stage: { code: instance.projectStage.code, status: stageStatus },
+        checkerBindings,
+        checkerFacts,
+        reason
+      });
+      const updated = await client.projectGateInstance.updateMany({
+        where: {
+          id: instance.id,
+          projectId: input.projectId,
+          version,
+          checkRunSequence: instance.checkRunSequence
+        },
+        data: {
+          checkRunSequence: { increment: 1 },
+          version: { increment: 1 },
+          updatedById: input.actorId
+        }
+      });
+      if (updated.count !== 1) {
+        throw new GateServiceError("GATE_VERSION_CONFLICT", "Gate 实例已变化，请刷新后重试。", 409);
+      }
+      const checkedAt = await databaseNow(client);
+      const snapshot = await client.gateCheckSnapshot.create({
+        data: {
+          projectId: input.projectId,
+          gateInstanceId: instance.id,
+          sequence: instance.checkRunSequence + 1,
+          status: run.overallStatus,
+          definitionSnapshot: run.definitionSnapshot as Prisma.InputJsonValue,
+          scopeSnapshot: run.scopeSnapshot as Prisma.InputJsonValue,
+          checkerBindingsJson: run.checkerBindings as Prisma.InputJsonValue,
+          reason,
+          inputChecksum: run.inputChecksum,
+          resultChecksum: run.resultChecksum,
+          checkedById: input.actorId,
+          checkedAt,
+          closurePolicyVersionId: authority.closurePolicyVersionId,
+          archiveSourceFormulaVersion:
+            authority.archiveSourceFormulaVersion === "ARCHIVE.SOURCE@2" ? "V2" : null,
+          closurePolicyChecksum: authority.closurePolicyChecksum
+        }
+      });
+      await client.gateCheckResult.createMany({
+        data: run.results.map((result) => ({
+          projectId: input.projectId,
+          gateCheckSnapshotId: snapshot.id,
+          position: result.position,
+          checkerCode: result.checkerCode,
+          checkerVersion: result.checkerVersion,
+          status: result.status,
+          failureCode: result.failureCode,
+          message: result.message,
+          evidenceJson: result.evidence as Prisma.InputJsonValue,
+          evidenceChecksum: result.evidenceChecksum
+        }))
+      });
+      const gateInstance = await client.projectGateInstance.findUniqueOrThrow({
+        where: { id: instance.id }
+      });
+      const auditValue = gateSnapshotAuditValue(snapshot);
+      const audit = await writeAudit(client, {
+        action: AUDIT_ACTIONS.GATE_CHECK_RUN_COMPLETED,
+        objectType: AUDIT_OBJECT_TYPES.GATE_CHECK_SNAPSHOT,
+        objectId: snapshot.id,
+        context: auditContextFor(input, project, reason),
+        after: { value: auditValue, allowedFields: GATE_CHECK_SNAPSHOT_AUDIT_FIELDS }
+      });
+      const outbox = await appendOutboxEvent(client, {
+        eventType: "gate.check-run.completed",
+        aggregateType: "GATE_CHECK_SNAPSHOT",
+        aggregateId: snapshot.id,
+        idempotencyKey: `${instance.id}:check:${snapshot.sequence}`,
+        payload: auditValue
+      });
+      return {
+        gateCheckSnapshot: snapshot,
+        results: run.results,
+        resourceVersion: gateInstance.version,
+        auditId: audit.id,
+        outboxEventId: outbox.id
+      };
+    });
+  } catch (error) {
+    if (error instanceof GateServiceError) throw error;
+    mapDatabaseError(error);
+  }
+}
