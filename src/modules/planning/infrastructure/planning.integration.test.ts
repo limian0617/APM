@@ -933,7 +933,7 @@ describeDatabase("APM-020 PostgreSQL WBS and planning tasks", () => {
     );
     await expect(
       db.$executeRawUnsafe('TRUNCATE TABLE "planning_tasks", "wbs_nodes", "task_dependencies"')
-    ).rejects.toThrow(/closed instead of removed|cannot truncate a table referenced/u);
+    ).rejects.toMatchObject({ meta: { code: "0A000" } });
 
     await expect(
       createPlanningTask({
