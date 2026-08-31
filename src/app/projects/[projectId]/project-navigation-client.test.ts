@@ -20,11 +20,22 @@ describe("ProjectNavigationContent", () => {
     expect(markup).toContain('href="/projects/project%207/procurement?view=overview"');
     expect(markup).toContain('href="/projects/project%207/issues"');
     expect(markup).toContain('href="/projects/project%207/acceptance"');
+    expect(markup).toContain('href="/projects/project%207/uph"');
     expect(markup).toContain('href="/projects/project%207/governance"');
     expect(markup).toContain('aria-current="page"');
     expect(markup).toContain('aria-disabled="true"');
     expect(markup).toContain("尚未开放");
     expect(markup).not.toContain('href="/projects/project%207/responsibility-packages"');
     expect(markup).not.toContain('href="/projects/project%207/changes"');
+  });
+
+  it("marks nested UPH paths as the active project navigation item", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ProjectNavigationContent, {
+        projectId: "project 7",
+        pathname: "/projects/project%207/uph/test-batches/batch-1"
+      })
+    );
+    expect(markup).toContain('href="/projects/project%207/uph" aria-current="page"');
   });
 });
