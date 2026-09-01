@@ -404,7 +404,9 @@ function AnalysisDetail({ analysis }: { analysis: AnalysisView }) {
               {analysis.moduleFpy.map((item) => (
                 <li key={item.moduleId}>
                   <span className="uph-breakable">{item.moduleId}</span>
-                  <strong>{displayValue(item.fpy)}</strong>
+                  <strong className="uph-fpy-value uph-fpy-value-nowrap">
+                    {displayValue(item.fpy)}
+                  </strong>
                 </li>
               ))}
             </ul>

@@ -333,6 +333,19 @@ describe("UPH page states", () => {
     expect(markup).toContain(longPath);
   });
 
+  it("keeps FPY value cells constrained on narrow screens", () => {
+    const markup = render({
+      kind: "populated",
+      batches,
+      selectedBatchId: "batch-1",
+      revision,
+      analyses: [snapshot],
+      selectedAnalysisId: "analysis-1",
+      analysis: toAnalysisView(snapshot)
+    });
+    expect(markup).toContain('class="uph-fpy-value uph-fpy-value-nowrap"');
+  });
+
   it("renders missing and corrupt snapshot fields as 无数据", () => {
     const corrupt = {
       ...snapshot,

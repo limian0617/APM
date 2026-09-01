@@ -1055,9 +1055,23 @@ a {
   list-style: none;
 }
 .uph-fpy-list li {
+  min-width: 0;
   justify-content: space-between;
   border-bottom: 1px solid #edf0f2;
   padding: 10px 0;
+}
+.uph-fpy-list li > span {
+  flex: 1 1 auto;
+}
+.uph-fpy-value {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  text-align: right;
+}
+.uph-fpy-value-nowrap {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .uph-fpy-list li:last-child {
   border-bottom: 0;
