@@ -32,6 +32,7 @@ describe("project navigation manifest", () => {
     const overview = navigation.primary.find((entry) => entry.id === "overview");
     const procurement = navigation.primary.find((entry) => entry.id === "procurement");
     const issues = navigation.primary.find((entry) => entry.id === "issues");
+    const uph = navigation.primary.find((entry) => entry.id === "uph");
     const acceptance = navigation.primary.find((entry) => entry.id === "acceptance");
     const governance = navigation.more.find((entry) => entry.id === "governance");
 
@@ -63,6 +64,12 @@ describe("project navigation manifest", () => {
       available: true,
       href: "/projects/demo%20project%2F1/acceptance"
     });
+    expect(uph).toEqual({
+      id: "uph",
+      label: "UPH",
+      available: true,
+      href: "/projects/demo%20project%2F1/uph"
+    });
     expect(governance).toEqual({
       id: "governance",
       label: "审批与记录",
@@ -72,7 +79,8 @@ describe("project navigation manifest", () => {
     expect(
       navigation.primary
         .filter(
-          (entry) => !["plan", "overview", "issues", "procurement", "acceptance"].includes(entry.id)
+          (entry) =>
+            !["plan", "overview", "issues", "procurement", "acceptance", "uph"].includes(entry.id)
         )
         .every((entry) => !entry.available)
     ).toBe(true);
@@ -94,6 +102,13 @@ describe("project navigation manifest", () => {
     expect(selectedProjectNavigation("project-7", "/projects/project-7/acceptance")).toBe(
       "acceptance"
     );
+    expect(selectedProjectNavigation("project-7", "/projects/project-7/uph")).toBe("uph");
+    expect(
+      selectedProjectNavigation(
+        "project-7",
+        "/projects/project-7/uph/test-batches/batch-1/revisions/revision-1/analyses"
+      )
+    ).toBe("uph");
     expect(selectedProjectNavigation("project-7", "/projects/project-7/governance")).toBe(
       "governance"
     );
