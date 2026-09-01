@@ -182,6 +182,157 @@ describe("UPH page states", () => {
     expect(markup).toContain("模块 CT 与瓶颈转移");
   });
 
+  it("exposes keyboard-accessible drill-down controls for candidates, module CT and transfers", () => {
+    const interactive = {
+      ...snapshot,
+      inputSnapshot: {
+        bindings: [
+          {
+            projectModuleId: "module-1",
+            intrinsicCtSeconds: "28.000000",
+            p90Seconds: "30.000000",
+            validSampleCount: "10"
+          }
+        ]
+      },
+      resultSnapshot: {
+        ...(snapshot.resultSnapshot as Record<string, unknown>),
+        bottleneck: [
+          {
+            sourceType: "PROJECT_MODULE",
+            sourceId: "module-1",
+            relation: "LEAF",
+            capacityUph: "120.000000",
+            members: []
+          }
+        ],
+        reductionLevels: [
+          {
+            nodeId: "root",
+            topologyPath: "root/parallel",
+            sourceType: "TOPOLOGY_ROOT",
+            sourceId: "line-1",
+            selectedCapacityUph: "240.000000",
+            candidates: [
+              {
+                sourceType: "PARALLEL_GROUP",
+                sourceId: "group-1",
+                relation: "PARALLEL",
+                capacityUph: "240.000000",
+                members: [{ sourceId: "module-1" }, { sourceId: "module-2" }]
+              }
+            ]
+          }
+        ]
+      }
+    };
+    const markup = render({
+      kind: "populated",
+      batches,
+      selectedBatchId: "batch-1",
+      revision,
+      analyses: [interactive],
+      selectedAnalysisId: "analysis-1",
+      analysis: toAnalysisView(interactive)
+    });
+    const detailsCount = (markup.match(/<details/g) ?? []).length;
+    const summaries = markup.match(/<summary/g) ?? [];
+    expect(detailsCount).toBeGreaterThanOrEqual(4);
+    expect(summaries).toHaveLength(detailsCount);
+    expect(markup).toMatch(/<details[^>]*class="uph-candidate-drilldown"/);
+    expect(markup).toMatch(/<details[^>]*class="uph-ct-drilldown"/);
+    expect(markup).toMatch(/<details[^>]*class="uph-transfer-drilldown"/);
+    expect(markup).toContain("瓶颈转移");
+    expect(markup).toContain('aria-label="模块 CT：module-1"');
+  });
+
+  it("marks the page boundary and CT scroller for long snapshot identifiers", () => {
+    const longId = `module-${"x".repeat(96)}`;
+    const longSnapshot = {
+      ...snapshot,
+      lockedChecksum: "a".repeat(128),
+      formulaChecksum: "b".repeat(128),
+      inputSnapshot: {
+        bindings: [
+          {
+            projectModuleId: longId,
+            intrinsicCtSeconds: "28.000000",
+            p90Seconds: "30.000000",
+            validSampleCount: "10"
+          }
+        ]
+      },
+      resultSnapshot: {
+        ...(snapshot.resultSnapshot as Record<string, unknown>),
+        moduleFpy: [{ moduleId: longId, fpy: "0.900000" }],
+        bottleneck: [
+          {
+            sourceType: "PROJECT_MODULE",
+            sourceId: longId,
+            relation: "LEAF",
+            capacityUph: "120.000000",
+            members: []
+          }
+        ]
+      }
+    };
+    const markup = render({
+      kind: "populated",
+      batches,
+      selectedBatchId: "batch-1",
+      revision,
+      analyses: [longSnapshot],
+      selectedAnalysisId: "analysis-1",
+      analysis: toAnalysisView(longSnapshot)
+    });
+    expect(markup).toContain('class="uph-page uph-viewport-safe"');
+    expect(markup).toContain('class="uph-ct-table-wrap uph-inner-scroll"');
+    expect(markup).toContain('class="uph-meta uph-breakable"');
+    expect(markup).toContain('class="uph-detail-list uph-provenance-list uph-breakable-values"');
+    expect(markup).toContain(longId);
+  });
+
+  it("marks reduction paths and transfer identifiers as breakable content", () => {
+    const longPath = `root/parallel/${"segment-".repeat(20)}`;
+    const hierarchical = {
+      ...snapshot,
+      resultSnapshot: {
+        ...(snapshot.resultSnapshot as Record<string, unknown>),
+        reductionLevels: [
+          {
+            nodeId: "root",
+            topologyPath: longPath,
+            sourceType: "TOPOLOGY_ROOT",
+            sourceId: `line-${"x".repeat(80)}`,
+            selectedCapacityUph: "240.000000",
+            candidates: [
+              {
+                sourceType: "PARALLEL_GROUP",
+                sourceId: `group-${"y".repeat(80)}`,
+                relation: "PARALLEL",
+                capacityUph: "240.000000",
+                members: []
+              }
+            ]
+          }
+        ]
+      }
+    };
+    const markup = render({
+      kind: "populated",
+      batches,
+      selectedBatchId: "batch-1",
+      revision,
+      analyses: [hierarchical],
+      selectedAnalysisId: "analysis-1",
+      analysis: toAnalysisView(hierarchical)
+    });
+    expect(markup).toContain('class="uph-reduction-level-summary"');
+    expect(markup).toContain('class="uph-meta uph-breakable uph-reduction-path"');
+    expect(markup).toContain('class="uph-transfer-summary"');
+    expect(markup).toContain(longPath);
+  });
+
   it("renders missing and corrupt snapshot fields as 无数据", () => {
     const corrupt = {
       ...snapshot,

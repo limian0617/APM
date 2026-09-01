@@ -805,8 +805,28 @@ a {
 
 .uph-page {
   width: min(100%, 1240px);
+  min-width: 0;
+  max-width: 100%;
   margin: 0 auto;
   padding: 34px 32px 64px;
+}
+
+.uph-viewport-safe,
+.uph-viewport-safe > *,
+.uph-card,
+.uph-state-panel {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.uph-breakable,
+.uph-breakable-values dd,
+.uph-breakable-values dt,
+.uph-breakable-values span,
+.uph-breakable-values strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .uph-header,
@@ -819,6 +839,20 @@ a {
 .uph-fpy-list li {
   display: flex;
   align-items: center;
+}
+
+.uph-header > div,
+.uph-section-heading > div,
+.uph-revision-card > div,
+.uph-inline-details,
+.uph-inline-details div,
+.uph-fpy-list li > span,
+.uph-fpy-list li > strong,
+.uph-batch-option > strong,
+.uph-batch-option > span,
+.uph-analysis-option > strong,
+.uph-analysis-option > span {
+  min-width: 0;
 }
 
 .uph-header,
@@ -1043,10 +1077,17 @@ a {
   overflow-wrap: anywhere;
 }
 .uph-ct-table-wrap {
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
   margin-top: 16px;
 }
+.uph-inner-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
 .uph-ct-table {
+  min-width: 520px;
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
@@ -1076,29 +1117,119 @@ a {
   font-size: 15px;
 }
 .uph-candidate-list li {
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 8px 14px;
+  display: block;
   border: 1px solid #e0e6eb;
   border-radius: 8px;
+  overflow: hidden;
+}
+.uph-candidate-drilldown summary,
+.uph-transfer-drilldown summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 11px 12px;
+  background: #fff;
+  color: #273746;
+  cursor: pointer;
+  list-style: none;
 }
-.uph-candidate-list li > div {
-  display: grid;
-  gap: 3px;
+.uph-candidate-drilldown summary::-webkit-details-marker,
+.uph-transfer-drilldown summary::-webkit-details-marker,
+.uph-ct-drilldown summary::-webkit-details-marker {
+  display: none;
+}
+.uph-candidate-drilldown summary::before,
+.uph-transfer-drilldown summary::before,
+.uph-ct-drilldown summary::before {
+  content: "+";
+  flex: 0 0 auto;
+  color: #327e86;
+  font-size: 16px;
+  font-weight: 700;
+}
+.uph-candidate-drilldown[open] summary::before,
+.uph-transfer-drilldown[open] summary::before,
+.uph-ct-drilldown[open] summary::before {
+  content: "−";
+}
+.uph-candidate-drilldown summary:hover,
+.uph-candidate-drilldown summary:focus-visible,
+.uph-transfer-drilldown summary:hover,
+.uph-transfer-drilldown summary:focus-visible,
+.uph-ct-drilldown summary:hover,
+.uph-ct-drilldown summary:focus-visible {
+  background: #f2fbfb;
+  outline: 2px solid #b9e4e7;
+  outline-offset: -2px;
+}
+.uph-candidate-drilldown[open] summary,
+.uph-transfer-drilldown[open] summary,
+.uph-ct-drilldown[open] summary {
+  border-bottom: 1px solid #e0e6eb;
+  background: #f8fafc;
+}
+.uph-candidate-summary {
+  display: flex;
   min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
-.uph-candidate-list li span {
+.uph-candidate-summary-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.uph-candidate-summary-main strong,
+.uph-candidate-summary-main span,
+.uph-transfer-drilldown summary span {
+  overflow-wrap: anywhere;
+}
+.uph-candidate-summary-main span,
+.uph-transfer-drilldown summary span:last-child {
+  color: #657382;
+  font-size: 12px;
+}
+.uph-candidate-drilldown-content,
+.uph-transfer-content,
+.uph-ct-drilldown-content {
+  padding: 12px;
+  background: #fff;
+}
+.uph-candidate-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+.uph-candidate-details div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.uph-candidate-details dt {
+  color: #657382;
+  font-size: 11px;
+}
+.uph-candidate-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 700;
+}
+.uph-candidate-members {
+  margin: 10px 0 0;
   color: #657382;
   font-size: 12px;
 }
 .uph-candidate-capacity {
-  color: #176a72 !important;
-  font-weight: 700;
+  flex: 0 0 auto;
 }
-.uph-candidate-list small {
-  flex-basis: 100%;
-  color: #657382;
+.uph-candidate-capacity {
+  color: #176a72;
+  font-weight: 700;
 }
 .uph-reduction-list {
   display: grid;
@@ -1112,12 +1243,24 @@ a {
 }
 .uph-reduction-level summary {
   display: flex;
+  min-width: 0;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
   background: #f8fafc;
   color: #253746;
   cursor: pointer;
+}
+.uph-reduction-level-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.uph-reduction-level-summary span:last-child {
+  flex: 0 1 auto;
+}
+.uph-reduction-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .uph-reduction-level summary span:last-child {
   color: #657382;
@@ -1128,6 +1271,60 @@ a {
 }
 .uph-reduction-content .uph-candidate-section {
   margin-top: 12px;
+}
+.uph-transfer-card {
+  border-top-color: #4faeb6;
+}
+.uph-transfer-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.uph-transfer-drilldown {
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.uph-transfer-drilldown summary span:first-of-type {
+  min-width: 0;
+  flex: 1;
+  font-weight: 700;
+}
+.uph-transfer-summary {
+  min-width: 0;
+}
+.uph-transfer-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.uph-ct-drilldown {
+  display: inline-block;
+  min-width: 140px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  vertical-align: top;
+}
+.uph-ct-drilldown summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  color: #273746;
+  cursor: pointer;
+  list-style: none;
+}
+.uph-ct-drilldown summary::before {
+  font-size: 13px;
+}
+.uph-ct-drilldown[open] {
+  border-color: #d8e0e7;
+}
+.uph-ct-drilldown-content {
+  min-width: 220px;
+  padding: 8px;
+}
+.uph-ct-drilldown-content .uph-candidate-details {
+  grid-template-columns: 1fr;
 }
 .uph-warning-list {
   display: flex;
@@ -1226,6 +1423,18 @@ a {
   .uph-reduction-level summary {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .uph-candidate-drilldown summary,
+  .uph-transfer-drilldown summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .uph-candidate-summary {
+    width: 100%;
+    align-items: flex-start;
+  }
+  .uph-candidate-details {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -248,20 +248,94 @@ function CandidateList({ title, items }: { title: string; items: AnalysisCandida
         <ul className="uph-candidate-list">
           {items.map((item) => (
             <li key={`${item.relation}:${item.sourceType}:${item.sourceId}`}>
-              <div>
-                <strong>{item.sourceId}</strong>
-                <span>
-                  {item.sourceType} · {item.relation}
-                </span>
-              </div>
-              <span className="uph-candidate-capacity">{item.capacityUph} UPH</span>
-              {item.members.length > 1 ? <small>并行成员：{item.members.join("、")}</small> : null}
+              <details className="uph-candidate-drilldown">
+                <summary className="uph-candidate-summary">
+                  <span className="uph-candidate-summary-main">
+                    <strong>{item.sourceId}</strong>
+                    <span>
+                      {item.sourceType} · {item.relation}
+                    </span>
+                  </span>
+                  <span className="uph-candidate-capacity">{item.capacityUph} UPH</span>
+                </summary>
+                <div className="uph-candidate-drilldown-content">
+                  <dl className="uph-candidate-details">
+                    <div>
+                      <dt>来源类型</dt>
+                      <dd>{item.sourceType}</dd>
+                    </div>
+                    <div>
+                      <dt>关系</dt>
+                      <dd>{item.relation}</dd>
+                    </div>
+                    <div>
+                      <dt>能力</dt>
+                      <dd>{item.capacityUph} UPH</dd>
+                    </div>
+                  </dl>
+                  {item.members.length > 0 ? (
+                    <p className="uph-candidate-members">并行成员：{item.members.join("、")}</p>
+                  ) : null}
+                </div>
+              </details>
             </li>
           ))}
         </ul>
       ) : (
         <p className="uph-muted">无数据</p>
       )}
+    </section>
+  );
+}
+
+function TransferDrilldown({ analysis }: { analysis: AnalysisView }) {
+  const transfers = analysis.reductionLevels.flatMap((level) =>
+    level.candidates.map((candidate) => ({ level, candidate }))
+  );
+  if (!transfers.length) return null;
+  return (
+    <section className="uph-card uph-transfer-card" aria-labelledby="uph-transfer-title">
+      <div className="uph-section-heading">
+        <div>
+          <p className="uph-kicker">BOTTLENECK TRANSFER</p>
+          <h2 id="uph-transfer-title">瓶颈转移路径</h2>
+        </div>
+        <span>{transfers.length}项</span>
+      </div>
+      <div className="uph-transfer-list">
+        {transfers.map(({ level, candidate }) => (
+          <details
+            className="uph-transfer-drilldown"
+            key={`${level.nodeId}:${candidate.relation}:${candidate.sourceType}:${candidate.sourceId}`}
+          >
+            <summary className="uph-transfer-summary">
+              <span>{candidate.sourceId}</span>
+              <span>
+                {candidate.relation} · {candidate.capacityUph} UPH
+              </span>
+            </summary>
+            <div className="uph-transfer-content">
+              <dl className="uph-candidate-details">
+                <div>
+                  <dt>来源层级</dt>
+                  <dd>{level.sourceId}</dd>
+                </div>
+                <div>
+                  <dt>拓扑路径</dt>
+                  <dd>{level.topologyPath}</dd>
+                </div>
+                <div>
+                  <dt>来源类型</dt>
+                  <dd>{candidate.sourceType}</dd>
+                </div>
+              </dl>
+              {candidate.members.length > 0 ? (
+                <p className="uph-candidate-members">并行成员：{candidate.members.join("、")}</p>
+              ) : null}
+            </div>
+          </details>
+        ))}
+      </div>
     </section>
   );
 }
@@ -287,14 +361,16 @@ function CapacityDrilldown({ analysis }: { analysis: AnalysisView }) {
       <div className="uph-reduction-list">
         {analysis.reductionLevels.map((level) => (
           <details className="uph-reduction-level" key={level.nodeId} open>
-            <summary>
-              <span>{level.sourceId}</span>
+            <summary className="uph-reduction-level-summary">
+              <span className="uph-breakable">{level.sourceId}</span>
               <span>
                 {level.selectedCapacityUph} UPH · {level.sourceType}
               </span>
             </summary>
             <div className="uph-reduction-content">
-              <p className="uph-meta">路径：{level.topologyPath}</p>
+              <p className="uph-meta uph-breakable uph-reduction-path">
+                路径：{level.topologyPath}
+              </p>
               <CandidateList title="候选与转移" items={level.candidates} />
             </div>
           </details>
@@ -327,7 +403,7 @@ function AnalysisDetail({ analysis }: { analysis: AnalysisView }) {
             <ul className="uph-fpy-list">
               {analysis.moduleFpy.map((item) => (
                 <li key={item.moduleId}>
-                  <span>{item.moduleId}</span>
+                  <span className="uph-breakable">{item.moduleId}</span>
                   <strong>{displayValue(item.fpy)}</strong>
                 </li>
               ))}
@@ -372,7 +448,7 @@ function AnalysisDetail({ analysis }: { analysis: AnalysisView }) {
           <span>来源快照</span>
         </div>
         {analysis.moduleCycleTimes.length ? (
-          <div className="uph-ct-table-wrap">
+          <div className="uph-ct-table-wrap uph-inner-scroll">
             <table className="uph-ct-table">
               <thead>
                 <tr>
@@ -384,7 +460,26 @@ function AnalysisDetail({ analysis }: { analysis: AnalysisView }) {
               <tbody>
                 {analysis.moduleCycleTimes.map((item) => (
                   <tr key={item.moduleId}>
-                    <th scope="row">{item.moduleId}</th>
+                    <th scope="row">
+                      <details
+                        className="uph-ct-drilldown"
+                        aria-label={`模块 CT：${item.moduleId}`}
+                      >
+                        <summary className="uph-breakable">{item.moduleId}</summary>
+                        <div className="uph-ct-drilldown-content">
+                          <dl className="uph-candidate-details">
+                            <div>
+                              <dt>固有 CT（秒）</dt>
+                              <dd>{displayValue(item.intrinsicCtSeconds)}</dd>
+                            </div>
+                            <div>
+                              <dt>P90（秒）</dt>
+                              <dd>{displayValue(item.p90Seconds)}</dd>
+                            </div>
+                          </dl>
+                        </div>
+                      </details>
+                    </th>
                     <td>{displayValue(item.intrinsicCtSeconds)}</td>
                     <td>{displayValue(item.p90Seconds)}</td>
                   </tr>
@@ -410,12 +505,14 @@ function AnalysisDetail({ analysis }: { analysis: AnalysisView }) {
 
       <CapacityDrilldown analysis={analysis} />
 
+      <TransferDrilldown analysis={analysis} />
+
       <section className="uph-card" aria-labelledby="uph-provenance-title">
         <div className="uph-section-heading">
           <h2 id="uph-provenance-title">快照来源</h2>
           <span>不可变记录</span>
         </div>
-        <dl className="uph-detail-list uph-provenance-list">
+        <dl className="uph-detail-list uph-provenance-list uph-breakable-values">
           <div>
             <dt>分析ID</dt>
             <dd>{analysis.id}</dd>
@@ -472,7 +569,7 @@ export function UphAnalysisDashboardContent({
 }) {
   if (state.kind === "loading") {
     return (
-      <main className="uph-page" aria-busy="true" aria-label="UPH数据加载中">
+      <main className="uph-page uph-viewport-safe" aria-busy="true" aria-label="UPH数据加载中">
         <div className="uph-skeleton uph-skeleton-title" />
         <div className="uph-skeleton uph-skeleton-metrics" />
         <div className="uph-skeleton uph-skeleton-panel" />
@@ -481,7 +578,7 @@ export function UphAnalysisDashboardContent({
   }
   if (state.kind === "denied") {
     return (
-      <main className="uph-page uph-state-page">
+      <main className="uph-page uph-state-page uph-viewport-safe">
         <section className="uph-state-panel">
           <p className="uph-kicker">PROJECT UPH</p>
           <h1>无权查看UPH分析</h1>
@@ -492,7 +589,7 @@ export function UphAnalysisDashboardContent({
   }
   if (state.kind === "error") {
     return (
-      <main className="uph-page uph-state-page">
+      <main className="uph-page uph-state-page uph-viewport-safe">
         <section className="uph-state-panel">
           <p className="uph-kicker">PROJECT UPH</p>
           <h1>UPH数据暂不可用</h1>
@@ -508,7 +605,7 @@ export function UphAnalysisDashboardContent({
   }
   if (state.kind === "empty") {
     return (
-      <main className="uph-page uph-state-page">
+      <main className="uph-page uph-state-page uph-viewport-safe">
         <section className="uph-state-panel">
           <p className="uph-kicker">PROJECT UPH</p>
           <h1>暂无测试批次</h1>
@@ -523,7 +620,7 @@ export function UphAnalysisDashboardContent({
   const revision = state.kind === "no-locked" ? null : state.revision;
   const analyses = "analyses" in state ? state.analyses : [];
   return (
-    <main className="uph-page" aria-label="项目UPH分析">
+    <main className="uph-page uph-viewport-safe" aria-label="项目UPH分析">
       <header className="uph-header">
         <div>
           <p className="uph-kicker">PROJECT UPH / READ ONLY</p>
@@ -549,12 +646,16 @@ export function UphAnalysisDashboardContent({
               key={batch.id}
               onClick={() => onSelectBatch?.(batch.id)}
             >
-              <strong>{displayValue(batch.batchNumber)}</strong>
-              <span>{batch.currentLockedRevisionId ? "当前有 LOCKED" : "无 LOCKED 修订"}</span>
+              <strong className="uph-breakable">{displayValue(batch.batchNumber)}</strong>
+              <span className="uph-breakable">
+                {batch.currentLockedRevisionId ? "当前有 LOCKED" : "无 LOCKED 修订"}
+              </span>
             </button>
           ))}
         </div>
-        {selectedBatch ? <p className="uph-meta">批次ID：{selectedBatch.id}</p> : null}
+        {selectedBatch ? (
+          <p className="uph-meta uph-breakable">批次ID：{selectedBatch.id}</p>
+        ) : null}
       </section>
 
       {state.kind === "no-locked" ? (
@@ -570,14 +671,14 @@ export function UphAnalysisDashboardContent({
             <div>
               <p className="uph-kicker">CURRENT REVISION</p>
               <h2>修订 #{displayValue(revision.revisionNumber)}</h2>
-              <p className="uph-meta">
+              <p className="uph-meta uph-breakable">
                 {revision.id} · {statusLabel(revision.status)}
               </p>
             </div>
             <dl className="uph-inline-details">
               <div>
                 <dt>拓扑根</dt>
-                <dd>{revision.topologyRootNodeId}</dd>
+                <dd className="uph-breakable">{revision.topologyRootNodeId}</dd>
               </div>
               <div>
                 <dt>模块数</dt>
@@ -587,7 +688,7 @@ export function UphAnalysisDashboardContent({
               </div>
               <div>
                 <dt>公式版本</dt>
-                <dd>{revision.formulaVersionId}</dd>
+                <dd className="uph-breakable">{revision.formulaVersionId}</dd>
               </div>
             </dl>
           </section>
@@ -627,8 +728,8 @@ export function UphAnalysisDashboardContent({
                   key={snapshot.analysisId}
                   onClick={() => onSelectAnalysis?.(snapshot.analysisId)}
                 >
-                  <strong>{snapshot.analysisId}</strong>
-                  <span>
+                  <strong className="uph-breakable">{snapshot.analysisId}</strong>
+                  <span className="uph-breakable">
                     {statusLabel(snapshot.status)} · {formatAnalysisCreatedAt(snapshot.createdAt)}
                   </span>
                 </button>
