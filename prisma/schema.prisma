@@ -1471,6 +1471,9 @@ enum IssueRelationType {
   DRAWING_VERSION
   TEST_RESULT
   BLOCKED_BY_ISSUE
+  UPH_SOURCE_BATCH
+  UPH_ANALYSIS
+  UPH_RETEST_BATCH
 }
 
 enum IssueRelationStatus {
@@ -1572,6 +1575,10 @@ enum AuditAction {
   UPH_TEST_BATCH_LOCKED
   UPH_TEST_BATCH_REVISION_REPLACED
   UPH_ANALYSIS_SNAPSHOT_CREATED
+  UPH_PERFORMANCE_TARGET_DRAFT_CREATED
+  UPH_PERFORMANCE_TARGET_PUBLISHED
+  UPH_PERFORMANCE_ISSUE_CREATED
+  UPH_RETEST_BATCH_CREATED
   PROJECT_MEMBER_ADDED
   PROJECT_MEMBER_ENDED
   AUDIT_LOG_READ
@@ -1838,6 +1845,8 @@ enum AuditObjectType {
   UPH_MODULE_CYCLE_SAMPLE
   UPH_TEST_BATCH_EVIDENCE
   UPH_ANALYSIS_SNAPSHOT
+  UPH_PERFORMANCE_TARGET
+  UPH_PERFORMANCE_TARGET_VERSION
   PROJECT_CAPABILITY
   RESPONSIBILITY_PACKAGE
   WBS_NODE
@@ -2126,6 +2135,9 @@ model User {
   uphTestBatchCapturedSamples             ProjectUphModuleCycleSample[]          @relation("UphTestBatchSampleCaptureUser")
   uphTestBatchCreatedRevisions            ProjectUphTestBatchRevision[]          @relation("UphTestBatchRevisionCreatedBy")
   uphAnalysisSnapshotsCreated             ProjectUphAnalysisSnapshot[]           @relation("UphAnalysisSnapshotCreatedBy")
+  uphPerformanceTargetsCreated            ProjectUphPerformanceTarget[]          @relation("UphPerformanceTargetCreatedBy")
+  uphPerformanceTargetVersionsCreated     ProjectUphPerformanceTargetVersion[]   @relation("UphPerformanceTargetVersionCreatedBy")
+  uphPerformanceTargetVersionsPublished   ProjectUphPerformanceTargetVersion[]   @relation("UphPerformanceTargetVersionPublishedBy")
 
   @@index([departmentId])
   @@map("users")
@@ -2343,6 +2355,8 @@ model Project {
   uphModuleCycleSamples   ProjectUphModuleCycleSample[]
   uphTestBatchEvidence    ProjectUphTestBatchRevisionEvidence[]
   uphAnalysisSnapshots    ProjectUphAnalysisSnapshot[]
+  uphPerformanceTargets  ProjectUphPerformanceTarget[]
+  uphPerformanceTargetVersions ProjectUphPerformanceTargetVersion[]
 
   @@unique([mainControlStageId, mainControlStageProjectId])
   @@unique([finalArchiveVersionId, id])
@@ -6839,6 +6853,54 @@ model ProjectUphAnalysisSnapshot {
   @@unique([id, projectId])
   @@index([projectId, batchId, revisionId])
   @@map("project_uph_analysis_snapshots")
+}
+
+model ProjectUphPerformanceTarget {
+  id                        String                               @id @default(cuid())
+  projectId                 String                               @map("project_id")
+  topologyRootNodeId        String                               @map("topology_root_node_id")
+  currentPublishedVersionId String?                              @map("current_published_version_id")
+  version                   Int                                  @default(1)
+  createdById               String                               @map("created_by_id")
+  createdAt                 DateTime                             @default(now()) @map("created_at")
+  updatedAt                 DateTime                             @updatedAt @map("updated_at")
+  project                   Project                              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  currentPublished          ProjectUphPerformanceTargetVersion?  @relation("UphTargetCurrentPublished", fields: [currentPublishedVersionId, projectId], references: [id, projectId], onDelete: Restrict)
+  versions                  ProjectUphPerformanceTargetVersion[] @relation("UphTargetVersions")
+  createdBy                 User                                 @relation("UphPerformanceTargetCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, topologyRootNodeId])
+  @@unique([id, projectId])
+  @@unique([currentPublishedVersionId, projectId])
+  @@map("project_uph_performance_targets")
+}
+
+model ProjectUphPerformanceTargetVersion {
+  id              String                       @id @default(cuid())
+  projectId       String                       @map("project_id")
+  targetId        String                       @map("target_id")
+  revision        Int
+  status          UphVersionStatus
+  targetUph       Decimal                      @map("target_uph") @db.Decimal(20, 6)
+  reason          String
+  checksum        String
+  effectiveAt     DateTime                     @map("effective_at")
+  resourceVersion Int                          @default(1) @map("resource_version")
+  createdById     String                       @map("created_by_id")
+  publishedById   String?                      @map("published_by_id")
+  publishedAt     DateTime?                    @map("published_at")
+  createdAt       DateTime                     @default(now()) @map("created_at")
+  project         Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  target          ProjectUphPerformanceTarget  @relation("UphTargetVersions", fields: [targetId, projectId], references: [id, projectId], onDelete: Restrict)
+  currentFor      ProjectUphPerformanceTarget? @relation("UphTargetCurrentPublished")
+  createdBy       User                         @relation("UphPerformanceTargetVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy     User?                        @relation("UphPerformanceTargetVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@unique([targetId, revision])
+  @@index([projectId, targetId, effectiveAt])
+  @@index([projectId, status, effectiveAt])
+  @@map("project_uph_performance_target_versions")
 }
 
 model ProjectMember {

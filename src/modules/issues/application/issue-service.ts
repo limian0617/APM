@@ -675,7 +675,10 @@ const ISSUE_RELATION_TYPES = [
   "GATE_INSTANCE",
   "DRAWING_VERSION",
   "TEST_RESULT",
-  "BLOCKED_BY_ISSUE"
+  "BLOCKED_BY_ISSUE",
+  "UPH_SOURCE_BATCH",
+  "UPH_ANALYSIS",
+  "UPH_RETEST_BATCH"
 ] as const;
 
 type IssueRelationType = (typeof ISSUE_RELATION_TYPES)[number];
@@ -766,6 +769,42 @@ async function assertIssueRelationTarget(
         422
       );
     }
+    return null;
+  }
+  if (relationType === "UPH_SOURCE_BATCH") {
+    const batch = await client.projectUphTestBatch.findFirst({
+      where: { id: targetId, projectId }
+    });
+    if (!batch)
+      throw new IssueServiceError(
+        "ISSUE_RELATION_TARGET_NOT_FOUND",
+        "UPH测试批次不存在或不属于该项目。",
+        404
+      );
+    return null;
+  }
+  if (relationType === "UPH_ANALYSIS") {
+    const analysis = await client.projectUphAnalysisSnapshot.findFirst({
+      where: { id: targetId, projectId }
+    });
+    if (!analysis)
+      throw new IssueServiceError(
+        "ISSUE_RELATION_TARGET_NOT_FOUND",
+        "UPH分析快照不存在或不属于该项目。",
+        404
+      );
+    return null;
+  }
+  if (relationType === "UPH_RETEST_BATCH") {
+    const batch = await client.projectUphTestBatch.findFirst({
+      where: { id: targetId, projectId }
+    });
+    if (!batch)
+      throw new IssueServiceError(
+        "ISSUE_RELATION_TARGET_NOT_FOUND",
+        "UPH复测批次不存在或不属于该项目。",
+        404
+      );
     return null;
   }
   return null;
@@ -1347,6 +1386,17 @@ export async function addProjectIssueRelation(
   const issueId = requiredText(input.issueId, "issueId", 191);
   const expectedVersion = version(input.version);
   const relationType = issueRelationType(input.relationType);
+  if (
+    relationType === "UPH_SOURCE_BATCH" ||
+    relationType === "UPH_ANALYSIS" ||
+    relationType === "UPH_RETEST_BATCH"
+  ) {
+    throw new IssueServiceError(
+      "ISSUE_RELATION_TYPE_RESERVED",
+      "UPH关联必须通过专用性能问题服务创建。",
+      422
+    );
+  }
   const targetId = requiredText(input.targetId, "targetId", 191);
   const reason = requiredText(input.reason, "reason", 1024);
   try {

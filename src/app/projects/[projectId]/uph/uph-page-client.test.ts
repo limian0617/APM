@@ -115,6 +115,19 @@ describe("UPH page states", () => {
     ).toContain("正在读取分析快照");
   });
 
+  it("uses neutral copy for DRAFT no-analysis deep links", () => {
+    const draftRevision = { ...revision, status: "DRAFT" };
+    const markup = render({
+      kind: "no-analysis",
+      batches,
+      selectedBatchId: "batch-1",
+      revision: draftRevision
+    });
+    expect(markup).toContain("该修订尚未生成分析快照");
+    expect(markup).not.toContain("当前 LOCKED 修订还没有分析快照");
+    expect(markup).toContain("仅展示只读修订与已生成的确定性分析快照");
+  });
+
   it("presents populated metrics, FPY, bottleneck and provenance without write controls", () => {
     const markup = render({
       kind: "populated",
@@ -509,5 +522,30 @@ describe("UPH page GET fetch contract", () => {
     expect(fixture.calls[0]?.url).toBe(
       "/api/projects/project-1/uph/test-batches/batch-2?selection=currentLocked"
     );
+  });
+
+  it("uses currentWork for a preferred DRAFT batch deep link", async () => {
+    const draft = {
+      ...batches[0]!,
+      id: "batch-draft",
+      currentLockedRevisionId: null,
+      currentWorkRevisionId: "revision-draft"
+    };
+    const draftRevision = {
+      ...revision,
+      id: "revision-draft",
+      batchId: "batch-draft",
+      status: "DRAFT"
+    };
+    const fixture = fetcherFrom([{ body: draftRevision }, { body: { items: [] } }]);
+    const state = await fetchUphBatchState(
+      "project-1",
+      "batch-draft",
+      [draft],
+      fixture.fetcher,
+      "batch-draft"
+    );
+    expect(state.kind).toBe("no-analysis");
+    expect(fixture.calls[0]?.url).toContain("selection=currentWork");
   });
 });

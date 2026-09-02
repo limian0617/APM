@@ -1362,6 +1362,21 @@ a {
   color: #fff;
   cursor: pointer;
 }
+
+.uph-action-button {
+  border: 1px solid var(--uph-accent, #0f766e);
+  border-radius: 8px;
+  background: var(--uph-accent, #0f766e);
+  color: #fff;
+  padding: 0.55rem 0.85rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.uph-action-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--uph-accent, #0f766e) 35%, transparent);
+  outline-offset: 2px;
+}
 .uph-skeleton {
   border-radius: 8px;
   background: linear-gradient(90deg, #e2e9ee, #f1f4f6, #e2e9ee);

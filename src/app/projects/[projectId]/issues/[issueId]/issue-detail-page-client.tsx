@@ -31,24 +31,88 @@ export function IssueDetailPageClient({
 }) {
   const [status, setStatus] = useState<"loading" | "ready" | "denied" | "error">("loading");
   const [issue, setIssue] = useState<IssueDetail | null>(null);
+  const [retestOpen, setRetestOpen] = useState(false);
+  const [retestMessage, setRetestMessage] = useState<string | null>(null);
+  const [retestBatchId, setRetestBatchId] = useState<string | null>(null);
+  const [retestBusy, setRetestBusy] = useState(false);
 
   const loadIssue = useCallback(async () => {
     setStatus("loading");
-    const response = await fetch(
-      `/api/projects/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(issueId)}`
-    );
-    const body = await response.json().catch(() => null);
-    if (response.status === 401 || response.status === 403 || response.status === 404) {
-      setStatus("denied");
-      return;
-    }
-    if (!response.ok || !isRecord(body) || !isRecord(body.issue)) {
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(issueId)}`
+      );
+      const body = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403 || response.status === 404) {
+        setStatus("denied");
+        return;
+      }
+      if (!response.ok || !isRecord(body) || !isRecord(body.issue)) {
+        setStatus("error");
+        return;
+      }
+      setIssue(body.issue);
+      setStatus("ready");
+    } catch {
       setStatus("error");
-      return;
     }
-    setIssue(body.issue);
-    setStatus("ready");
   }, [issueId, projectId]);
+
+  async function createRetest(form: HTMLFormElement) {
+    if (!issue) return;
+    const data = new FormData(form);
+    const body = {
+      issueVersion: Number(issue.version),
+      batchNumber: String(data.get("batchNumber") ?? "").trim(),
+      plannedProductionSeconds: Number(data.get("plannedProductionSeconds") ?? 0),
+      planDeclarationReason: String(data.get("planDeclarationReason") ?? "").trim(),
+      observationStartedAt: new Date(
+        `${String(data.get("observationStartedAt") ?? "")}:00+08:00`
+      ).toISOString(),
+      observationEndedAt: null,
+      timezone: String(data.get("timezone") ?? "Asia/Shanghai"),
+      reason: String(data.get("reason") ?? "").trim()
+    };
+    setRetestBusy(true);
+    setRetestMessage(null);
+    setRetestBatchId(null);
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(issueId)}/uph-retests`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": crypto.randomUUID(),
+            "if-match": String(issue.version)
+          },
+          body: JSON.stringify(body)
+        }
+      );
+      const payload = await response.json().catch(() => null);
+      setRetestBusy(false);
+      if (!response.ok) {
+        setRetestMessage(
+          text(
+            isRecord(payload) && payload.error && isRecord(payload.error)
+              ? payload.error.message
+              : null,
+            "复测批次创建失败。"
+          )
+        );
+        return;
+      }
+      const batchId =
+        isRecord(payload) && typeof payload.batchId === "string" ? payload.batchId : null;
+      setRetestBatchId(batchId);
+      setRetestMessage(batchId ? `复测批次已创建：${batchId}` : "复测批次已创建。");
+      await loadIssue();
+    } catch {
+      setRetestMessage("复测批次创建失败，请检查网络后重试。");
+    } finally {
+      setRetestBusy(false);
+    }
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadIssue(), 0);
@@ -106,6 +170,110 @@ export function IssueDetailPageClient({
           <section className="issue-detail-section">
             <h2>确认文字</h2>
             <p>{text(issue.confirmedText)}</p>
+          </section>
+          <section className="issue-detail-section" aria-labelledby="uph-evidence-title">
+            <h2 id="uph-evidence-title">UPH冻结证据</h2>
+            {Array.isArray(issue.relations) &&
+              issue.relations
+                .filter(
+                  (r) =>
+                    isRecord(r) &&
+                    ["UPH_SOURCE_BATCH", "UPH_ANALYSIS", "UPH_RETEST_BATCH"].includes(
+                      String(r.relationType)
+                    )
+                )
+                .map((relation, index) => (
+                  <details key={String(relation.id ?? index)}>
+                    <summary>
+                      {String(relation.relationType)} ·{" "}
+                      <span className="uph-breakable">{String(relation.targetId ?? "")}</span>
+                    </summary>
+                    <p className="uph-breakable">
+                      关联目标：{String(relation.targetId ?? "未提供")}
+                    </p>
+                  </details>
+                ))}
+            {Array.isArray(issue.history) &&
+            issue.history.some(
+              (entry) =>
+                isRecord(entry) && isRecord(entry.snapshot) && "sourceSnapshot" in entry.snapshot
+            ) ? (
+              <p>已保存源快照。</p>
+            ) : (
+              <p>暂无可读冻结快照。</p>
+            )}
+          </section>
+          <section className="issue-detail-section">
+            {issue.category === "PERFORMANCE" &&
+            issue.sourceType === "PROJECT" &&
+            issue.status !== "CLOSED" ? (
+              <button
+                type="button"
+                className="issue-capture-secondary"
+                onClick={() => setRetestOpen((value) => !value)}
+                aria-expanded={retestOpen}
+              >
+                创建复测批次
+              </button>
+            ) : null}
+            {retestOpen ? (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void createRetest(event.currentTarget);
+                }}
+              >
+                <label>
+                  批次号
+                  <input name="batchNumber" required maxLength={191} />
+                </label>
+                <label>
+                  计划秒数
+                  <input name="plannedProductionSeconds" type="number" min="1" required />
+                </label>
+                <label>
+                  计划说明
+                  <input name="planDeclarationReason" required maxLength={1024} />
+                </label>
+                <label>
+                  观察开始
+                  <input name="observationStartedAt" type="datetime-local" required />
+                </label>
+                <label>
+                  时区（固定）
+                  <input
+                    name="timezone"
+                    value="Asia/Shanghai"
+                    readOnly
+                    required
+                    aria-describedby="retest-timezone-help"
+                  />
+                  <small id="retest-timezone-help">复测时间按 Asia/Shanghai 解释。</small>
+                </label>
+                <label>
+                  复测原因
+                  <input name="reason" required maxLength={1024} />
+                </label>
+                <button type="submit" className="issue-capture-primary" disabled={retestBusy}>
+                  {retestBusy ? "创建中…" : "提交复测"}
+                </button>
+              </form>
+            ) : null}
+            {retestMessage ? (
+              <p role="status" className="issue-detail-state">
+                {retestMessage}
+                {retestBatchId ? (
+                  <>
+                    {" "}
+                    <a
+                      href={`/projects/${encodeURIComponent(projectId)}/uph?batchId=${encodeURIComponent(retestBatchId)}`}
+                    >
+                      返回UPH页面查看新DRAFT批次
+                    </a>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
           </section>
           <section className="issue-detail-section">
             <h2>现象描述</h2>
