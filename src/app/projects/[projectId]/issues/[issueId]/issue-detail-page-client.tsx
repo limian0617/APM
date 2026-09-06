@@ -22,6 +22,71 @@ function text(value: unknown, fallback = "未提供") {
   return typeof value === "string" && value.trim() ? value : fallback;
 }
 
+export function parseRetestObservationStart(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/u.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (!daysInMonth || day < 1 || day > daysInMonth || hour > 23 || minute > 59) return null;
+  const date = new Date(`${value.trim()}:00+08:00`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function frozenSourceSnapshot(issue: IssueDetail): Record<string, unknown> | null {
+  if (!Array.isArray(issue.history)) return null;
+  for (const entry of issue.history) {
+    if (!isRecord(entry) || !isRecord(entry.snapshot)) continue;
+    const snapshot = entry.snapshot;
+    if (isRecord(snapshot.sourceSnapshot)) return snapshot.sourceSnapshot;
+  }
+  return null;
+}
+
+function snapshotValue(value: unknown): string {
+  if (typeof value === "string" && value.trim()) return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    const items = value.map((item) => snapshotValue(item)).filter((item) => item !== "未提供");
+    return items.length ? items.join("、") : "无数据";
+  }
+  if (isRecord(value)) {
+    try {
+      return JSON.stringify(value) ?? "无数据";
+    } catch {
+      return "无数据";
+    }
+  }
+  return "无数据";
+}
+
+const FROZEN_SNAPSHOT_FIELDS = [
+  ["LOCKED checksum", "lockedChecksum"],
+  ["目标版本", "targetVersionId"],
+  ["目标 UPH", "targetUph"],
+  ["实际良品 UPH", "actualGoodUph"],
+  ["短缺 UPH", "shortfallUph"],
+  ["根实测能力 UPH", "rootMeasuredCapacityUph"],
+  ["A / 可用率", "utilizationA"],
+  ["公式版本", "formulaVersionId"],
+  ["公式 checksum", "formulaChecksum"],
+  ["引擎", "engineCode"],
+  ["警告", "warnings"],
+  ["瓶颈", "bottleneck"],
+  ["第二瓶颈", "secondBottleneck"],
+  ["模块 FPY", "moduleFpy"],
+  ["模块 CT", "moduleCt"],
+  ["并联组", "parallelGroups"],
+  ["归约层级", "reductionLevels"],
+  ["瓶颈转移", "bottleneckTransfer"],
+  ["分析创建时间", "analysisCreatedAt"]
+] as const;
+
 export function IssueDetailPageClient({
   projectId,
   issueId
@@ -66,9 +131,7 @@ export function IssueDetailPageClient({
       batchNumber: String(data.get("batchNumber") ?? "").trim(),
       plannedProductionSeconds: Number(data.get("plannedProductionSeconds") ?? 0),
       planDeclarationReason: String(data.get("planDeclarationReason") ?? "").trim(),
-      observationStartedAt: new Date(
-        `${String(data.get("observationStartedAt") ?? "")}:00+08:00`
-      ).toISOString(),
+      observationStartedAt: parseRetestObservationStart(data.get("observationStartedAt")),
       observationEndedAt: null,
       timezone: String(data.get("timezone") ?? "Asia/Shanghai"),
       reason: String(data.get("reason") ?? "").trim()
@@ -76,6 +139,11 @@ export function IssueDetailPageClient({
     setRetestBusy(true);
     setRetestMessage(null);
     setRetestBatchId(null);
+    if (!body.observationStartedAt) {
+      setRetestBusy(false);
+      setRetestMessage("观察开始时间无效，请重新选择有效时间。");
+      return;
+    }
     try {
       const response = await fetch(
         `/api/projects/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(issueId)}/uph-retests`,
@@ -173,6 +241,16 @@ export function IssueDetailPageClient({
           </section>
           <section className="issue-detail-section" aria-labelledby="uph-evidence-title">
             <h2 id="uph-evidence-title">UPH冻结证据</h2>
+            {frozenSourceSnapshot(issue) ? (
+              <dl className="issue-detail-snapshot" aria-label="UPH冻结证据明细">
+                {FROZEN_SNAPSHOT_FIELDS.map(([label, key]) => (
+                  <div key={key}>
+                    <dt>{label}</dt>
+                    <dd>{snapshotValue(frozenSourceSnapshot(issue)?.[key])}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
             {Array.isArray(issue.relations) &&
               issue.relations
                 .filter(

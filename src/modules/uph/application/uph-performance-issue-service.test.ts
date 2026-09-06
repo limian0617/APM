@@ -6,7 +6,8 @@ import type { AuthorizationActor } from "@/lib/auth/authorize";
 const state = vi.hoisted(() => ({
   query: [] as unknown[],
   executed: [] as string[],
-  events: [] as string[]
+  events: [] as string[],
+  outboxKeys: [] as string[]
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -17,7 +18,8 @@ vi.mock("@/lib/db", () => ({
 const client = vi.hoisted(() => ({
   $queryRaw: vi.fn(),
   $executeRaw: vi.fn(),
-  issueHistory: { create: vi.fn() }
+  issueHistory: { create: vi.fn() },
+  issue: { updateMany: vi.fn() }
 }));
 
 vi.mock("@/modules/audit/infrastructure/write-audit", () => ({
@@ -27,8 +29,9 @@ vi.mock("@/modules/audit/infrastructure/write-audit", () => ({
   })
 }));
 vi.mock("@/modules/governance/infrastructure/outbox", () => ({
-  appendOutboxEvent: vi.fn(async () => {
+  appendOutboxEvent: vi.fn(async (_client: unknown, input: { idempotencyKey?: string }) => {
     state.events.push("outbox");
+    if (input.idempotencyKey) state.outboxKeys.push(input.idempotencyKey);
     return { id: "outbox-1" };
   })
 }));
@@ -86,6 +89,9 @@ function configureQueue(
   options: {
     target?: unknown[];
     existingSource?: unknown[];
+    issueHistory?: unknown[];
+    analysisId?: string;
+    secondAnalysis?: { id: string; actualGoodUph: string };
     actualGoodUph?: string;
     memberRoles?: string[];
   } = {}
@@ -93,6 +99,7 @@ function configureQueue(
   state.query = [];
   state.executed = [];
   state.events = [];
+  state.outboxKeys = [];
   client.$queryRaw.mockImplementation(async (query: Prisma.Sql) => {
     const sql = sqlText(query);
     if (sql.includes("FROM project_members")) {
@@ -132,7 +139,7 @@ function configureQueue(
     if (sql.includes("FROM project_uph_analysis_snapshots")) {
       return [
         {
-          id: "analysis-1",
+          id: options.analysisId ?? "analysis-1",
           projectId: "project-1",
           batchId: "batch-1",
           revisionId: "revision-1",
@@ -145,7 +152,10 @@ function configureQueue(
           status: "COMPUTED",
           warningsJson: ["A_GT_ONE"],
           rootMeasuredCapacityUph: "120.000000",
-          actualGoodUph: options.actualGoodUph ?? "90.000000",
+          actualGoodUph:
+            options.secondAnalysis?.id === (options.analysisId ?? "analysis-1")
+              ? options.secondAnalysis.actualGoodUph
+              : (options.actualGoodUph ?? "90.000000"),
           utilizationA: "0.750000",
           createdAt: date
         }
@@ -221,7 +231,7 @@ function configureQueue(
         }
       ];
     }
-    if (sql.includes("FROM issue_histories")) return [];
+    if (sql.includes("FROM issue_histories")) return options.issueHistory ?? [];
     throw new Error(`unexpected query: ${sql}`);
   });
   client.$executeRaw.mockImplementation(async (query: Prisma.Sql) => {
@@ -229,6 +239,7 @@ function configureQueue(
     return 1;
   });
   client.issueHistory.create.mockResolvedValue({ id: "history-1" });
+  client.issue.updateMany.mockResolvedValue({ count: 1 });
 }
 
 describe("APM-084 performance issue application service", () => {
@@ -290,5 +301,50 @@ describe("APM-084 performance issue application service", () => {
       createUphPerformanceIssue(unauthorized, client as unknown as Prisma.TransactionClient)
     ).rejects.toMatchObject({ code: "AUTHORIZATION_DENIED", status: 403 });
     expect(state.executed).toEqual([]);
+  });
+
+  it("uses the current analysis snapshot when appending evidence to a deduplicated issue", async () => {
+    const frozen = { analysisId: "analysis-1", actualGoodUph: "90.000000" };
+    configureQueue({
+      existingSource: [
+        {
+          id: "relation-source",
+          issueId: "issue-1",
+          relationType: "UPH_SOURCE_BATCH",
+          targetId: "batch-1",
+          status: "ACTIVE",
+          reason: "first",
+          createdById: "user-1",
+          createdAt: date
+        }
+      ],
+      analysisId: "analysis-2",
+      secondAnalysis: { id: "analysis-2", actualGoodUph: "80.000000" },
+      issueHistory: [
+        {
+          id: "history-1",
+          sequence: 1,
+          eventType: "CREATED",
+          reason: "first",
+          snapshotJson: {
+            sourceSnapshot: { analysisId: frozen.analysisId, actualGoodUph: frozen.actualGoodUph }
+          },
+          actorId: "user-1",
+          createdAt: date
+        }
+      ]
+    });
+    const result = await createUphPerformanceIssue(
+      { ...context, analysisId: "analysis-2" },
+      client as unknown as Prisma.TransactionClient
+    );
+    expect(result.deduplicated).toBe(true);
+    expect(result.sourceSnapshot).toMatchObject({
+      analysisId: "analysis-1",
+      actualGoodUph: "90.000000"
+    });
+    expect(state.outboxKeys).toContain(
+      "uph-performance-issue:issue-1:UPH_ANALYSIS:analysis-2:deduplicated"
+    );
   });
 });

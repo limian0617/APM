@@ -18,7 +18,7 @@ describe("APM-084 performance issue migration contract", () => {
       'CREATE TABLE "project_uph_performance_target_versions"',
       'FOREIGN KEY ("topology_root_node_id", "project_id")',
       'CREATE UNIQUE INDEX "issue_relations_uph_historical_target_key"',
-      "\"relation_type\"::text IN ('UPH_SOURCE_BATCH', 'UPH_ANALYSIS', 'UPH_RETEST_BATCH')",
+      "\"relation_type\" IN ('UPH_SOURCE_BATCH', 'UPH_ANALYSIS', 'UPH_RETEST_BATCH')",
       "project_uph_performance_target_root_guard",
       "project_uph_performance_target_version_immutable_guard"
     ]) {

@@ -383,7 +383,7 @@ async function applicableTarget(
         AND version.published_at <= ${revision.lockedAt!}
         AND version.effective_at <= ${revision.lockedAt!}
       ORDER BY version.effective_at DESC, version.published_at DESC, version.revision DESC
-      LIMIT 1 FOR UPDATE`
+      LIMIT 1 FOR UPDATE OF version`
   );
   if (!result[0]) {
     throw new UphPerformanceIssueServiceError(
@@ -611,7 +611,8 @@ async function writePerformanceFacts(
   input: CreateUphPerformanceIssueInput,
   issueId: string,
   sourceSnapshot: Record<string, unknown>,
-  deduplicated: boolean
+  deduplicated: boolean,
+  relationType: "UPH_SOURCE_BATCH" | "UPH_ANALYSIS"
 ) {
   const payload = { projectId: input.projectId, issueId, sourceSnapshot, deduplicated };
   const audit = await writeAudit(client, {
@@ -636,7 +637,7 @@ async function writePerformanceFacts(
     eventType: "uph.performance-issue.created",
     aggregateType: AUDIT_OBJECT_TYPES.ISSUE,
     aggregateId: issueId,
-    idempotencyKey: `uph-performance-issue:${issueId}:${deduplicated ? "deduplicated" : "created"}`,
+    idempotencyKey: `uph-performance-issue:${issueId}:${relationType}:${input.analysisId}:${deduplicated ? "deduplicated" : "created"}`,
     payload: { ...payload, auditId: audit.id }
   });
   return { auditId: audit.id, outboxEventId: outbox.id };
@@ -764,9 +765,16 @@ export async function createUphPerformanceIssue(
           "UPH_ANALYSIS",
           normalized.analysisId,
           normalized.reason,
-          frozen
+          sourceSnapshot
         );
-        await writePerformanceFacts(client, normalized, existingIssueId, frozen, true);
+        await writePerformanceFacts(
+          client,
+          normalized,
+          existingIssueId,
+          sourceSnapshot,
+          true,
+          "UPH_ANALYSIS"
+        );
         existingIssue = await readIssue(client, normalized.projectId, existingIssueId);
       }
       return { issue: existingIssue, sourceSnapshot: frozen, deduplicated: true };
@@ -837,7 +845,14 @@ export async function createUphPerformanceIssue(
       normalized.reason,
       sourceSnapshot
     );
-    const facts = await writePerformanceFacts(client, normalized, issueId, sourceSnapshot, false);
+    const facts = await writePerformanceFacts(
+      client,
+      normalized,
+      issueId,
+      sourceSnapshot,
+      false,
+      "UPH_SOURCE_BATCH"
+    );
     const issue = await readIssue(client, normalized.projectId, issueId);
     return { issue, sourceSnapshot, deduplicated: false, ...facts };
   });

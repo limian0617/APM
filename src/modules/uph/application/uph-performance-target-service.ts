@@ -249,19 +249,85 @@ export async function publishUphPerformanceTarget(
       Prisma.sql`UPDATE project_uph_performance_target_versions SET status = 'SUPERSEDED' WHERE project_id = ${input.projectId} AND target_id = ${current.targetId} AND status = 'PUBLISHED'`
     );
     await client.$executeRaw(
-      Prisma.sql`UPDATE project_uph_performance_target_versions SET status = 'PUBLISHED', published_by_id = ${input.actorId}, published_at = CURRENT_TIMESTAMP WHERE id = ${current.id} AND project_id = ${input.projectId}`
+      Prisma.sql`UPDATE project_uph_performance_target_versions SET status = 'PUBLISHED', published_by_id = ${input.actorId}, published_at = CURRENT_TIMESTAMP, resource_version = resource_version + 1 WHERE id = ${current.id} AND project_id = ${input.projectId}`
     );
     await client.$executeRaw(
       Prisma.sql`UPDATE project_uph_performance_targets SET current_published_version_id = ${current.id}, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ${current.targetId} AND project_id = ${input.projectId}`
     );
+    const publishedRows = await client.$queryRaw<
+      Array<{
+        id: string;
+        targetId: string;
+        targetUph: string;
+        checksum: string;
+        revision: number;
+        resourceVersion: number;
+        status: string;
+        reason: string;
+        effectiveAt: Date;
+        publishedById: string | null;
+        publishedAt: Date | null;
+      }>
+    >(
+      Prisma.sql`SELECT id, target_id AS "targetId", target_uph::text AS "targetUph", checksum,
+        revision, resource_version AS "resourceVersion", status::text AS status, reason,
+        effective_at AS "effectiveAt",
+        published_by_id AS "publishedById", published_at AS "publishedAt"
+        FROM project_uph_performance_target_versions
+        WHERE id = ${current.id} AND project_id = ${input.projectId}`
+    );
+    const published = publishedRows[0];
+    if (
+      !published ||
+      published.status !== "PUBLISHED" ||
+      !published.publishedById ||
+      !published.publishedAt
+    ) {
+      throw new UphPerformanceTargetServiceError(
+        "UPH_TARGET_PUBLISH_CONFLICT",
+        "UPH目标发布后的规范事实读取失败。",
+        409
+      );
+    }
+    const publishedDto = {
+      id: published.id,
+      targetId: published.targetId,
+      targetUph: published.targetUph,
+      checksum: published.checksum,
+      revision: published.revision,
+      resourceVersion: published.resourceVersion,
+      status: published.status,
+      reason: published.reason,
+      effectiveAt: published.effectiveAt.toISOString(),
+      publishedById: published.publishedById,
+      publishedAt: published.publishedAt.toISOString()
+    };
     await writeAudit(client, {
       action: AUDIT_ACTIONS.UPH_PERFORMANCE_TARGET_PUBLISHED,
       objectType: AUDIT_OBJECT_TYPES.UPH_PERFORMANCE_TARGET_VERSION,
       objectId: current.id,
       context: input.auditContext,
       after: {
-        value: { ...current, reason: input.reason },
-        allowedFields: ["id", "targetId", "targetUph", "checksum", "revision", "status", "reason"]
+        value: {
+          ...publishedDto,
+          versionReason: publishedDto.reason,
+          operationReason: input.reason
+        },
+        allowedFields: [
+          "id",
+          "targetId",
+          "targetUph",
+          "checksum",
+          "revision",
+          "status",
+          "reason",
+          "versionReason",
+          "operationReason",
+          "effectiveAt",
+          "publishedById",
+          "publishedAt",
+          "resourceVersion"
+        ]
       }
     });
     await appendOutboxEvent(client, {
@@ -269,8 +335,16 @@ export async function publishUphPerformanceTarget(
       aggregateType: "UPH_PERFORMANCE_TARGET_VERSION",
       aggregateId: current.id,
       idempotencyKey: `uph-target-publish:${current.id}`,
-      payload: { ...current, reason: input.reason }
+      payload: {
+        ...publishedDto,
+        versionReason: publishedDto.reason,
+        operationReason: input.reason
+      }
     });
-    return { ...current, status: "PUBLISHED", publishedById: input.actorId };
+    return {
+      ...publishedDto,
+      versionReason: publishedDto.reason,
+      operationReason: input.reason
+    };
   });
 }

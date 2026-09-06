@@ -121,21 +121,19 @@ type SourceFacts = {
 };
 
 async function lockIssueSource(client: Client, input: CreateUphRetestInput): Promise<SourceFacts> {
-  const found = await rows<SourceFacts>(
+  const found = await rows<
+    Pick<SourceFacts, "issueId" | "sourceBatchId" | "currentLockedRevisionId">
+  >(
     client,
     Prisma.sql`SELECT relation.issue_id AS "issueId", relation.target_id AS "sourceBatchId",
-      revision.topology_root_node_id AS "topologyRootNodeId",
-      batch.current_locked_revision_id AS "currentLockedRevisionId",
-      revision.status::text AS "revisionStatus"
+      batch.current_locked_revision_id AS "currentLockedRevisionId"
       FROM issue_relations relation
       JOIN project_uph_test_batches batch
         ON batch.id = relation.target_id AND batch.project_id = relation.project_id
-      JOIN project_uph_test_batch_revisions revision
-        ON revision.id = batch.current_locked_revision_id AND revision.project_id = batch.project_id
       WHERE relation.project_id = ${input.projectId} AND relation.issue_id = ${input.issueId}
         AND relation.relation_type = 'UPH_SOURCE_BATCH'::"IssueRelationType"
         AND relation.status = 'ACTIVE'::"IssueRelationStatus"
-      ORDER BY relation.created_at, relation.id LIMIT 1 FOR UPDATE OF relation, batch, revision`
+      ORDER BY relation.created_at, relation.id LIMIT 1 FOR UPDATE OF relation, batch`
   );
   if (!found[0])
     throw new UphRetestServiceError(
@@ -143,18 +141,43 @@ async function lockIssueSource(client: Client, input: CreateUphRetestInput): Pro
       "性能问题缺少源UPH批次关联。",
       409
     );
-  if (
-    !found[0].topologyRootNodeId ||
-    !found[0].currentLockedRevisionId ||
-    found[0].revisionStatus !== "LOCKED"
-  ) {
+  if (!found[0].currentLockedRevisionId) {
     throw new UphRetestServiceError(
       "LOCKED_REVISION_REQUIRED",
       "源UPH批次必须存在当前LOCKED修订。",
       409
     );
   }
-  return found[0];
+  const revisions = await rows<{ topologyRootNodeId: string; revisionStatus: string }>(
+    client,
+    Prisma.sql`SELECT topology_root_node_id AS "topologyRootNodeId", status::text AS "revisionStatus"
+      FROM project_uph_test_batch_revisions
+      WHERE id = ${found[0].currentLockedRevisionId} AND project_id = ${input.projectId}
+        AND batch_id = ${found[0].sourceBatchId}
+      FOR UPDATE`
+  );
+  if (!revisions[0] || revisions[0].revisionStatus !== "LOCKED") {
+    throw new UphRetestServiceError(
+      "LOCKED_REVISION_REQUIRED",
+      "源UPH批次必须存在当前LOCKED修订。",
+      409
+    );
+  }
+  return {
+    ...found[0],
+    topologyRootNodeId: revisions[0].topologyRootNodeId,
+    revisionStatus: revisions[0].revisionStatus
+  };
+}
+
+async function assertIssuePath(client: Client, input: CreateUphRetestInput): Promise<void> {
+  const found = await rows<{ id: string }>(
+    client,
+    Prisma.sql`SELECT id FROM issues WHERE id = ${input.issueId} AND project_id = ${input.projectId}`
+  );
+  if (!found[0]) {
+    throw new UphRetestServiceError("ISSUE_NOT_FOUND", "问题不存在或不属于该项目。", 404);
+  }
 }
 
 type IssueFact = {
@@ -198,6 +221,7 @@ async function nextHistorySequence(client: Client, issueId: string): Promise<num
 export async function createUphRetest(input: CreateUphRetestInput, transaction?: Client) {
   return inTransaction(transaction, async (client) => {
     const roles = await authorize(client, input);
+    await assertIssuePath(client, input);
     await lockProject(client, input.projectId, true);
     const source = await lockIssueSource(client, input);
     const issue = await lockIssue(client, input);
