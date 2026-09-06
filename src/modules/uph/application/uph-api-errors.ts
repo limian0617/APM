@@ -7,6 +7,9 @@ import {
 
 import { UphDefinitionServiceError } from "./uph-definition-service";
 import { UphAnalysisServiceError } from "./uph-analysis-service";
+import { UphPerformanceTargetServiceError } from "./uph-performance-target-service";
+import { UphPerformanceIssueServiceError } from "./uph-performance-issue-service";
+import { UphRetestServiceError } from "./uph-retest-service";
 
 function isUphTestBatchServiceError(
   error: unknown
@@ -33,6 +36,15 @@ export function uphApiErrorResponse(error: unknown): Response | null {
     return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
   }
   if (error instanceof UphAnalysisServiceError) {
+    return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
+  }
+  if (error instanceof UphPerformanceTargetServiceError) {
+    return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
+  }
+  if (error instanceof UphPerformanceIssueServiceError) {
+    return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
+  }
+  if (error instanceof UphRetestServiceError) {
     return apiErrorResponse({ status: error.status, code: error.code, message: error.message });
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {

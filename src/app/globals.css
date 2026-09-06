@@ -1362,6 +1362,21 @@ a {
   color: #fff;
   cursor: pointer;
 }
+
+.uph-action-button {
+  border: 1px solid var(--uph-accent, #0f766e);
+  border-radius: 8px;
+  background: var(--uph-accent, #0f766e);
+  color: #fff;
+  padding: 0.55rem 0.85rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.uph-action-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--uph-accent, #0f766e) 35%, transparent);
+  outline-offset: 2px;
+}
 .uph-skeleton {
   border-radius: 8px;
   background: linear-gradient(90deg, #e2e9ee, #f1f4f6, #e2e9ee);
@@ -4022,6 +4037,38 @@ a {
   line-height: 1.6;
 }
 
+.issue-detail-snapshot {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 14px 0 0;
+  border: 1px solid #cfd9e2;
+  background: #cfd9e2;
+}
+
+.issue-detail-snapshot > div {
+  min-width: 0;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.issue-detail-snapshot dt,
+.issue-detail-snapshot dd {
+  overflow-wrap: anywhere;
+}
+
+.issue-detail-snapshot dt {
+  color: #667788;
+  font-size: 12px;
+}
+
+.issue-detail-snapshot dd {
+  margin: 4px 0 0;
+  color: #1f526d;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 600px) {
   .issue-detail-page {
     padding: 20px 16px 40px;
@@ -4039,6 +4086,10 @@ a {
 
   .issue-detail-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .issue-detail-snapshot {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

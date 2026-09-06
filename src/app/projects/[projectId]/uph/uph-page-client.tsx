@@ -13,6 +13,7 @@ import {
   type UphBatchSummary,
   type UphRevisionSummary
 } from "@/modules/uph/contracts/uph-analysis-page-state";
+import { decidePerformanceIssue } from "@/modules/uph/domain/uph-performance-issue";
 
 export type UphPageState =
   | { kind: "loading" }
@@ -41,6 +42,7 @@ export type UphPageState =
       analyses: UphAnalysisSnapshotDto[];
       selectedAnalysisId: string;
       analysis: AnalysisView;
+      target?: { targetUph: string; versionId: string } | null;
     };
 
 type UphPageClientProps = { projectId: string };
@@ -148,12 +150,20 @@ export async function fetchUphBatchState(
   projectId: string,
   batchId: string,
   batches: UphBatchSummary[],
-  fetcher: Fetcher = fetch
+  fetcher: Fetcher = fetch,
+  preferredBatchId?: string
 ): Promise<LoadedUphPageState> {
+  const selectedBatch = batches.find((batch) => batch.id === batchId);
+  const selection =
+    preferredBatchId === batchId &&
+    !selectedBatch?.currentLockedRevisionId &&
+    selectedBatch?.currentWorkRevisionId
+      ? "currentWork"
+      : "currentLocked";
   let revision: UphRevisionSummary;
   try {
     revision = await getJson<UphRevisionSummary>(
-      apiPath(projectId, `/test-batches/${encodeURIComponent(batchId)}?selection=currentLocked`),
+      apiPath(projectId, `/test-batches/${encodeURIComponent(batchId)}?selection=${selection}`),
       fetcher
     );
     if (!isRecord(revision) || typeof revision.id !== "string" || !revision.id.trim()) {
@@ -207,14 +217,18 @@ export async function fetchUphBatchState(
 
 export async function fetchUphPageState(
   projectId: string,
-  fetcher: Fetcher = fetch
+  fetcher: Fetcher = fetch,
+  preferredBatchId?: string
 ): Promise<LoadedUphPageState> {
   try {
     const payload = await getJson<unknown>(apiPath(projectId, "/test-batches?limit=100"), fetcher);
     const batches = normalizeBatches(payload);
     if (batches.length === 0) return { kind: "empty" };
-    const selected = batches.find((batch) => batch.currentLockedRevisionId) ?? batches[0]!;
-    return fetchUphBatchState(projectId, selected.id, batches, fetcher);
+    const selected =
+      (preferredBatchId && batches.find((batch) => batch.id === preferredBatchId)) ||
+      batches.find((batch) => batch.currentLockedRevisionId) ||
+      batches[0]!;
+    return fetchUphBatchState(projectId, selected.id, batches, fetcher, preferredBatchId);
   } catch (error) {
     return deniedOrError(error);
   }
@@ -380,7 +394,40 @@ function CapacityDrilldown({ analysis }: { analysis: AnalysisView }) {
   );
 }
 
-function AnalysisDetail({ analysis }: { analysis: AnalysisView }) {
+function AnalysisDetail({
+  analysis,
+  target,
+  projectId,
+  batchId,
+  revisionId
+}: {
+  analysis: AnalysisView;
+  target?: { targetUph: string; versionId: string } | null;
+  projectId: string;
+  batchId: string;
+  revisionId: string;
+}) {
+  const actual = String(analysis.actualGoodUph ?? "0");
+  const goal = target?.targetUph ?? null;
+  let decision: ReturnType<typeof decidePerformanceIssue> | null = null;
+  let decisionError = false;
+  if (goal) {
+    try {
+      decision = decidePerformanceIssue({
+        actualGoodUph: actual,
+        targetUph: goal,
+        status: analysis.status
+      });
+    } catch {
+      decisionError = true;
+    }
+  }
+  const underperforming = decision?.underperforming ?? false;
+  const shortfall = decision?.shortfallUph ?? "0.000000";
+  const [formOpen, setFormOpen] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [createdIssueId, setCreatedIssueId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   return (
     <>
       <section className="uph-metric-band" aria-label="UPH核心指标">
@@ -388,6 +435,119 @@ function AnalysisDetail({ analysis }: { analysis: AnalysisView }) {
         <Metric label="实测能力 UPH" value={analysis.rootMeasuredCapacityUph} />
         <Metric label="A / 可用率" value={analysis.a} />
         <Metric label="状态" value={statusLabel(analysis.status)} />
+      </section>
+
+      <section className="uph-card uph-performance-target" aria-labelledby="uph-target-title">
+        <div className="uph-section-heading">
+          <div>
+            <p className="uph-kicker">PERFORMANCE TARGET</p>
+            <h2 id="uph-target-title">性能目标与异常</h2>
+          </div>
+          <span className="uph-breakable">{target ? `版本 ${target.versionId}` : "未配置"}</span>
+        </div>
+        {decisionError ? (
+          <p className="uph-muted">指标无法判定，数据异常。</p>
+        ) : target ? (
+          <p className="uph-breakable">
+            目标 UPH：<strong>{target.targetUph}</strong>；短缺：<strong>{shortfall}</strong>
+          </p>
+        ) : (
+          <p className="uph-muted">当前拓扑根未配置适用目标。</p>
+        )}
+        {underperforming ? (
+          <>
+            <button
+              type="button"
+              className="uph-action-button"
+              onClick={() => setFormOpen((value) => !value)}
+              aria-expanded={formOpen}
+            >
+              创建性能问题
+            </button>
+            {formOpen ? (
+              <form
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const data = new FormData(event.currentTarget);
+                  setBusy(true);
+                  setMessage(null);
+                  setCreatedIssueId(null);
+                  try {
+                    const response = await fetch(
+                      `/api/projects/${encodeURIComponent(projectId)}/uph/test-batches/${encodeURIComponent(batchId)}/revisions/${encodeURIComponent(revisionId)}/analyses/${encodeURIComponent(analysis.id)}/performance-issue`,
+                      {
+                        method: "POST",
+                        headers: {
+                          "content-type": "application/json",
+                          "idempotency-key": crypto.randomUUID()
+                        },
+                        body: JSON.stringify({
+                          title: String(data.get("title") ?? "").trim(),
+                          confirmedText: String(data.get("confirmedText") ?? "").trim(),
+                          severity: String(data.get("severity") ?? "MEDIUM"),
+                          reason: String(data.get("reason") ?? "").trim()
+                        })
+                      }
+                    );
+                    const payload = await response.json().catch(() => null);
+                    setCreatedIssueId(payload?.issue?.id ?? null);
+                    setBusy(false);
+                    setMessage(
+                      response.ok
+                        ? payload?.deduplicated
+                          ? "已存在对应性能问题（已去重）。"
+                          : "性能问题已创建。"
+                        : "性能问题创建失败，请稍后重试。"
+                    );
+                  } catch {
+                    setMessage("性能问题创建失败，请检查网络后重试。");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <label>
+                  标题
+                  <input name="title" required maxLength={191} />
+                </label>
+                <label>
+                  确认文字
+                  <input name="confirmedText" required maxLength={10000} />
+                </label>
+                <label>
+                  严重度
+                  <select name="severity" defaultValue="MEDIUM">
+                    <option>LOW</option>
+                    <option>MEDIUM</option>
+                    <option>HIGH</option>
+                    <option>CRITICAL</option>
+                  </select>
+                </label>
+                <label>
+                  原因
+                  <input name="reason" required maxLength={1024} />
+                </label>
+                <button type="submit" className="uph-action-button" disabled={busy}>
+                  {busy ? "创建中…" : "提交"}
+                </button>
+              </form>
+            ) : null}
+            {message ? (
+              <p role="status" className="uph-muted">
+                {message}
+                {createdIssueId ? (
+                  <a
+                    href={`/projects/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(createdIssueId)}`}
+                  >
+                    查看问题详情
+                  </a>
+                ) : null}
+              </p>
+            ) : null}
+          </>
+        ) : target ? (
+          <p className="uph-muted">实际良品 UPH 已达标。</p>
+        ) : null}
       </section>
 
       <div className="uph-analysis-grid">
@@ -569,6 +729,43 @@ export function UphAnalysisDashboardContent({
   onSelectBatch?: (batchId: string) => void;
   onSelectAnalysis?: (analysisId: string) => void;
 }) {
+  const [loadedTarget, setLoadedTarget] = useState<{ targetUph: string; versionId: string } | null>(
+    null
+  );
+  const [loadedTargetRoot, setLoadedTargetRoot] = useState<string | null>(null);
+  const [targetError, setTargetError] = useState<string | null>(null);
+  const [targetErrorRoot, setTargetErrorRoot] = useState<string | null>(null);
+  useEffect(() => {
+    if (state.kind !== "populated") return;
+    let active = true;
+    void getJson<{ items?: Array<{ targetUph?: string; versionId?: string }> }>(
+      apiPath(
+        projectId,
+        `/targets?topologyRootNodeId=${encodeURIComponent(state.revision.topologyRootNodeId)}&revisionId=${encodeURIComponent(state.revision.id)}`
+      )
+    )
+      .then((payload) => {
+        if (!active) return;
+        const item = payload.items?.[0];
+        setLoadedTarget(
+          item?.targetUph && item.versionId
+            ? { targetUph: item.targetUph, versionId: item.versionId }
+            : null
+        );
+        setLoadedTargetRoot(state.revision.topologyRootNodeId);
+        setTargetError(null);
+      })
+      .catch(() => {
+        if (active) {
+          setLoadedTarget(null);
+          setTargetError("性能目标暂不可用。");
+          setTargetErrorRoot(state.revision.topologyRootNodeId);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId, state]);
   if (state.kind === "loading") {
     return (
       <main className="uph-page uph-viewport-safe" aria-busy="true" aria-label="UPH数据加载中">
@@ -627,7 +824,7 @@ export function UphAnalysisDashboardContent({
         <div>
           <p className="uph-kicker">PROJECT UPH / READ ONLY</p>
           <h1>UPH 分析</h1>
-          <p className="uph-subtitle">仅展示当前 LOCKED 修订的确定性分析快照。</p>
+          <p className="uph-subtitle">仅展示只读修订与已生成的确定性分析快照。</p>
         </div>
         <span className="uph-readonly-badge">只读</span>
       </header>
@@ -709,7 +906,7 @@ export function UphAnalysisDashboardContent({
       {state.kind === "no-analysis" ? (
         <section className="uph-state-panel uph-inline-state">
           <h2>尚未生成分析</h2>
-          <p>当前 LOCKED 修订还没有分析快照。</p>
+          <p>该修订尚未生成分析快照。</p>
         </section>
       ) : null}
       {state.kind === "populated" ? (
@@ -738,7 +935,21 @@ export function UphAnalysisDashboardContent({
               ))}
             </div>
           </section>
-          <AnalysisDetail analysis={state.analysis} />
+          {targetError && targetErrorRoot === state.revision.topologyRootNodeId ? (
+            <p className="uph-muted" role="status">
+              {targetError}
+            </p>
+          ) : null}
+          <AnalysisDetail
+            analysis={state.analysis}
+            target={
+              (loadedTargetRoot === state.revision.topologyRootNodeId ? loadedTarget : null) ??
+              state.target
+            }
+            projectId={projectId}
+            batchId={state.selectedBatchId}
+            revisionId={state.revision.id}
+          />
         </>
       ) : null}
     </main>
@@ -757,7 +968,7 @@ export function UphPageClient({ projectId }: UphPageClientProps) {
         revision: null,
         analyses: []
       });
-      setState(await fetchUphBatchState(projectId, batchId, batches));
+      setState(await fetchUphBatchState(projectId, batchId, batches, fetch, batchId));
     },
     [projectId]
   );
@@ -765,7 +976,11 @@ export function UphPageClient({ projectId }: UphPageClientProps) {
   const load = useCallback(async () => {
     setState({ kind: "loading" });
     try {
-      setState(await fetchUphPageState(projectId));
+      const preferredBatchId =
+        typeof window !== "undefined"
+          ? (new URLSearchParams(window.location.search).get("batchId") ?? undefined)
+          : undefined;
+      setState(await fetchUphPageState(projectId, fetch, preferredBatchId));
     } catch (error) {
       setState(deniedOrError(error));
     }
