@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // 必须保留 types。本仓库的 node 全局类型不是靠默认 typeRoots 自动发现
+    // @types 包进来的，而是顺着 Next.js 的类型引用链传进来的：根
+    // tsconfig.json 的 include 含 next-env.d.ts → /// <reference types="next" />
+    // → node_modules/next/index.d.ts → next/types/global.d.ts →
+    // /// <reference types="node" />。本配置的 include 收窄到 prisma/**/*.ts，
+    // next-env.d.ts 不在编译范围内，这条链断掉，因此必须显式声明。
+    // 删除本行会让 seed.ts 及其 import 链上的 src/** 文件报出 20 处
+    // TS2591: Cannot find name 'process' / 'node:crypto' 等；连带出现的
+    // seed.ts:115 TS2454 'parsed' is used before being assigned 是假象
+    // （process.exit() 失去 never 返回类型所致），不要去改 seed.ts。
+    // 加 typeRoots 无效（已实测）；把 next-env.d.ts 加进本文件 include 也能
+    // 修好，但会为一个种子脚本拖进整套 Next 类型面，故不采用。见 APM-W7-6B/6C。
+    "types": ["node"],
+    "incremental": false
+  },
+  "include": ["prisma/**/*.ts"],
+  "exclude": ["node_modules"]
+}
