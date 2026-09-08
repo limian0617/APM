@@ -20,8 +20,8 @@
     "format:check": "prettier --check .",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",
-    "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev",
+    "db:push": "node -e \"console.error('[BLOCKED] prisma db push is disabled in this repository. Migrations are hand-written SQL; see CLAUDE.md.'); process.exit(1)\"",
+    "db:migrate": "node -e \"console.error('[BLOCKED] prisma migrate dev is disabled in this repository. It would rename 608 constraints and indexes and drop real foreign keys; see CLAUDE.md.'); process.exit(1)\"",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts"
   },
