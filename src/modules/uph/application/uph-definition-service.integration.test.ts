@@ -13,7 +13,7 @@ import {
 } from "./uph-definition-service";
 import { setDeliveryUnitEnabled } from "@/modules/projects/application/project-structure";
 
-const enabled = Boolean(process.env.DATABASE_URL);
+const enabled = process.env.RUN_DATABASE_INTEGRATION === "1" && Boolean(process.env.DATABASE_URL);
 const actor = {
   id: "u-proc",
   name: "Process",
