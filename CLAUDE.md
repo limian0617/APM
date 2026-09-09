@@ -63,11 +63,25 @@ index class but are preserved as-is.
 
 ## Local database
 
-Start PostgreSQL with `docker start apm-postgres`. Do not use `docker compose up` in this
-repository: Compose derives its project name from the directory name, which is non-ASCII here, so
-it sanitizes to an empty string and fails with `project name must not be empty`. Never run
-`docker compose down -v` or remove the `apm-postgres-data` volume — it holds the only copy of the
-development database.
+Start PostgreSQL with `docker compose up -d`, or `docker start apm-postgres` if the container
+already exists. `docker-compose.yml` pins `name: apm-083` at the top level, which is what makes
+Compose usable here at all: without it Compose derives the project name from the directory name,
+which is non-ASCII in this checkout, so it sanitizes to an empty string and Compose fails with
+`project name must not be empty`.
+
+Never override the project name with `-p`. The development database lives in the Docker volume
+`apm-083_apm-postgres-data`, created on 2026-09-06 and labelled
+`com.docker.compose.project=apm-083`. It is the only copy and holds 197 tables and 62 applied
+migrations. Compose builds a volume's real name from the project name plus the volume key, so
+`docker compose -p apm up -d` would mount a brand-new empty `apm_apm-postgres-data` instead and
+leave the real database stranded. The `apm-083` name is a leftover from the `worktrees/apm-083`
+directory the volume was first created in: meaningless, but load-bearing. Renaming it means
+abandoning the existing database.
+
+Recreating or removing the `apm-postgres` container is harmless: the data lives in the volume, not
+in the container. Changing this file makes the next `docker compose up -d` recreate the container
+once, which is expected. What is not recoverable is the volume, so never run
+`docker compose down -v` and never remove the `apm-083_apm-postgres-data` volume.
 
 If `npm run db:generate` fails with `EPERM ... rename query_engine-windows.dll.node`, the dev
 server is holding the engine DLL open. Stop it and retry.

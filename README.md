@@ -7,7 +7,8 @@ The product scope and delivery sequence are defined in the planning artifacts un
 ## Local development
 
 1. Copy `.env.example` to `.env` and set local values.
-2. Start PostgreSQL with `docker compose up -d`.
+2. Start PostgreSQL with `docker compose up -d`. Never override the project name with `-p`; the
+   development database is bound to the one pinned in `docker-compose.yml`. See `CLAUDE.md`.
 3. Install packages with `npm install`.
 4. Generate the Prisma client with `npm run db:generate`.
 5. Start the application with `npm run dev`.
