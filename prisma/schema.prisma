@@ -1672,6 +1672,10 @@ enum AuditAction {
   TASK_DEPENDENCY_UPDATED
   TASK_DEPENDENCY_CLOSED
   PLANNING_BASELINE_FROZEN
+  PLANNING_CHANGE_CREATED
+  PLANNING_CHANGE_SUBMITTED
+  PLANNING_CHANGE_DECIDED
+  PLANNING_BASELINE_V2_FROZEN
   PROJECT_MILESTONE_CREATED
   PROJECT_MILESTONE_UPDATED
   PROJECT_MILESTONE_TASK_LINKED
@@ -1855,6 +1859,8 @@ enum AuditObjectType {
   PROJECT_CALENDAR
   TASK_DEPENDENCY
   PLANNING_BASELINE
+  PLANNING_CHANGE
+  PLANNING_CHANGE_REVISION
   PROJECT_MILESTONE
   PROJECT_STAGE
   DELIVERY_UNIT_STAGE
@@ -2304,6 +2310,7 @@ model Project {
   scheduleRecalculations             ScheduleRecalculation[]
   scheduleTaskForecasts              ScheduleTaskForecast[]
   planningBaselines                  PlanningBaseline[]
+  planningChanges                    PlanningChange[]          @relation("PlanningChangeProject")
   cockpitProjections                 CockpitProjection[]
   cockpitExceptionProjections        CockpitExceptionProjection[]
   resourceLoadProjections            ResourceLoadProjection[]
@@ -6107,12 +6114,134 @@ model PlanningBaseline {
   milestoneSnapshots         PlanningBaselineMilestoneSnapshot[]
   milestoneTaskLinkSnapshots PlanningBaselineMilestoneTaskLinkSnapshot[]
   calendarSnapshot           PlanningBaselineCalendarSnapshot?
+  planningChanges            PlanningChange[]
 
   @@unique([projectId, version])
   @@unique([id, projectId])
   @@index([projectId, createdAt])
   @@index([sourceGateSubmissionId])
   @@map("planning_baselines")
+}
+
+enum PlanningChangeClassification {
+  FORECAST_ONLY
+  FORMAL
+}
+
+enum PlanningChangeStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum PlanningChangeApprovalMode {
+  ALL
+  ANY
+}
+
+enum PlanningChangeApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+/// 计划变更聚合根。正式变更（FORMAL）可产出基线 V2；普通延期（FORECAST_ONLY）只更新预测。
+/// created_by_id / submitted_by_id 在数据库中为真实外键，此处刻意建模为标量，
+/// 以避免在 User 上追加大量反向关系（详见 CLAUDE.md 中 schema.prisma 与迁移并行的说明）。
+model PlanningChange {
+  id                    String                        @id @default(cuid())
+  projectId             String                        @map("project_id")
+  code                  String
+  previousChangeId      String?                       @map("previous_change_id")
+  sequence              Int
+  classification        PlanningChangeClassification
+  status                PlanningChangeStatus          @default(DRAFT)
+  approvalMode          PlanningChangeApprovalMode?   @map("approval_mode")
+  approverRolesJson     Json?                         @map("approver_roles_json")
+  currentRevisionId     String?                       @map("current_revision_id")
+  resultingBaselineId   String?                       @map("resulting_baseline_id")
+  submittedReason       String?                       @map("submitted_reason")
+  submittedById         String?                       @map("submitted_by_id")
+  submittedAt           DateTime?                     @map("submitted_at")
+  decidedAt             DateTime?                     @map("decided_at")
+  version               Int                           @default(1)
+  createdById           String                        @map("created_by_id")
+  createdAt             DateTime                      @default(now()) @map("created_at")
+  updatedAt             DateTime                      @default(now()) @map("updated_at")
+  project               Project                       @relation("PlanningChangeProject", fields: [projectId], references: [id], onDelete: Restrict)
+  previousChange        PlanningChange?               @relation("PlanningChangePrevious", fields: [previousChangeId, projectId], references: [id, projectId], onDelete: Restrict)
+  previousChangeOf      PlanningChange[]              @relation("PlanningChangePrevious")
+  resultingBaseline     PlanningBaseline?             @relation(fields: [resultingBaselineId, projectId], references: [id, projectId], onDelete: Restrict)
+  revisions             PlanningChangeRevision[]
+  approvers             PlanningChangeApprover[]
+  approvals             PlanningChangeApproval[]      @relation("PlanningChangeApprovalChange")
+
+  @@unique([id, projectId])
+  @@unique([projectId, code])
+  @@index([projectId, createdAt])
+  @@index([projectId, status])
+  @@index([previousChangeId])
+  @@map("planning_changes")
+}
+
+/// 追加式变更修订：一经写入不可改写、不可删除。
+model PlanningChangeRevision {
+  id                             String                        @id @default(cuid())
+  projectId                      String                        @map("project_id")
+  planningChangeId               String                        @map("planning_change_id")
+  revision                       Int
+  classification                 PlanningChangeClassification
+  reason                         String
+  planningInputVersion           Int                           @map("planning_input_version")
+  resultingPlanningInputVersion  Int                           @map("resulting_planning_input_version")
+  deltaJson                      Json                          @map("delta_json")
+  checksum                       String
+  createdById                    String                        @map("created_by_id")
+  createdAt                      DateTime                      @default(now()) @map("created_at")
+  planningChange                 PlanningChange                @relation(fields: [planningChangeId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@unique([planningChangeId, revision])
+  @@index([projectId, createdAt])
+  @@map("planning_change_revisions")
+}
+
+/// 提交时冻结的审批人快照：成员后续变化不改写历史。
+model PlanningChangeApprover {
+  id                String                     @id @default(cuid())
+  projectId         String                     @map("project_id")
+  planningChangeId  String                     @map("planning_change_id")
+  userId            String                     @map("user_id")
+  membershipIdsJson Json                       @map("membership_ids_json")
+  projectRolesJson  Json                       @map("project_roles_json")
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  planningChange    PlanningChange             @relation(fields: [planningChangeId, projectId], references: [id, projectId], onDelete: Restrict)
+  approvals         PlanningChangeApproval[]
+
+  @@unique([id, projectId])
+  @@unique([planningChangeId, userId])
+  @@index([projectId, userId])
+  @@map("planning_change_approvers")
+}
+
+/// 审批决策：每位冻结审批人最多一条，写入即冻结。
+model PlanningChangeApproval {
+  id                       String                          @id @default(cuid())
+  projectId                String                          @map("project_id")
+  planningChangeId         String                          @map("planning_change_id")
+  planningChangeApproverId String                          @map("planning_change_approver_id")
+  decision                 PlanningChangeApprovalDecision
+  reason                   String
+  decidedById              String                          @map("decided_by_id")
+  decidedAt                DateTime                        @default(now()) @map("decided_at")
+  planningChange           PlanningChange                  @relation("PlanningChangeApprovalChange", fields: [planningChangeId, projectId], references: [id, projectId], onDelete: Restrict)
+  approver                 PlanningChangeApprover          @relation(fields: [planningChangeApproverId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  @@unique([id, projectId])
+  @@unique([planningChangeId, planningChangeApproverId])
+  @@index([projectId, planningChangeId, decidedAt])
+  @@index([decidedById, decidedAt])
+  @@map("planning_change_approvals")
 }
 
 model PlanningBaselineWbsSnapshot {

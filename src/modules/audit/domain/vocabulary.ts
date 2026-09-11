@@ -83,6 +83,10 @@ export const AUDIT_ACTIONS = {
   TASK_DEPENDENCY_UPDATED: "TASK_DEPENDENCY_UPDATED",
   TASK_DEPENDENCY_CLOSED: "TASK_DEPENDENCY_CLOSED",
   PLANNING_BASELINE_FROZEN: "PLANNING_BASELINE_FROZEN",
+  PLANNING_CHANGE_CREATED: "PLANNING_CHANGE_CREATED",
+  PLANNING_CHANGE_SUBMITTED: "PLANNING_CHANGE_SUBMITTED",
+  PLANNING_CHANGE_DECIDED: "PLANNING_CHANGE_DECIDED",
+  PLANNING_BASELINE_V2_FROZEN: "PLANNING_BASELINE_V2_FROZEN",
   PROJECT_MILESTONE_CREATED: "PROJECT_MILESTONE_CREATED",
   PROJECT_MILESTONE_UPDATED: "PROJECT_MILESTONE_UPDATED",
   PROJECT_MILESTONE_TASK_LINKED: "PROJECT_MILESTONE_TASK_LINKED",
@@ -277,6 +281,8 @@ export const AUDIT_OBJECT_TYPES = {
   PROJECT_CALENDAR: "PROJECT_CALENDAR",
   TASK_DEPENDENCY: "TASK_DEPENDENCY",
   PLANNING_BASELINE: "PLANNING_BASELINE",
+  PLANNING_CHANGE: "PLANNING_CHANGE",
+  PLANNING_CHANGE_REVISION: "PLANNING_CHANGE_REVISION",
   PROJECT_MILESTONE: "PROJECT_MILESTONE",
   PROJECT_STAGE: "PROJECT_STAGE",
   DELIVERY_UNIT_STAGE: "DELIVERY_UNIT_STAGE",
@@ -1250,6 +1256,49 @@ export const PLANNING_BASELINE_AUDIT_FIELDS = [
   "milestoneTaskLinkSnapshotCount",
   "calendarSourceCalendarId",
   "calendarSourceCalendarRevisionId"
+] as const;
+
+export const PLANNING_CHANGE_AUDIT_FIELDS = [
+  "projectId",
+  "planningChangeId",
+  "code",
+  "previousChangeId",
+  "sequence",
+  "classification",
+  "status",
+  "approvalMode",
+  "approverProjectRoles",
+  "currentRevisionId",
+  "resultingBaselineId",
+  "submittedById",
+  "submittedAt",
+  "decidedAt",
+  "version"
+] as const;
+
+export const PLANNING_CHANGE_REVISION_AUDIT_FIELDS = [
+  "projectId",
+  "planningChangeId",
+  "planningChangeRevisionId",
+  "revision",
+  "classification",
+  "reason",
+  "planningInputVersion",
+  "resultingPlanningInputVersion",
+  "checksum"
+] as const;
+
+export const PLANNING_CHANGE_APPROVAL_AUDIT_FIELDS = [
+  "projectId",
+  "planningChangeId",
+  "planningChangeApprovalId",
+  "planningChangeApproverId",
+  "userId",
+  "decision",
+  "reason",
+  "decidedAt",
+  "status",
+  "version"
 ] as const;
 
 export const PROJECT_MILESTONE_AUDIT_FIELDS = [
