@@ -38,7 +38,15 @@ is always: commit what exists, then start a fresh session and re-read the files.
 The permission allowlist only matches a call that parses as a **single simple command**. Compound
 forms — `cd X && …`, heredocs (`<<'EOF'`), pipes and redirects — are skipped by the parser and fall
 back to a prompt every time (the tell is `Parser skipped input between top-level statements`).
-This repo's shell is **PowerShell 5.1**, which does not support `&&` or heredocs at all.
+
+Two different shells are in play, and they do not have the same capabilities:
+
+- **Claude Code's tool calls run in its own bash.** `&&`, heredocs and pipes all work there, but the
+  allowlist parser still skips compound calls, so they prompt — that is the only reason to avoid them.
+- **The user's interactive terminal is PowerShell 7.6.6.** It supports `&&` and `||` (pipeline chain
+  operators, PS 7+) but has **no bash-style heredoc**; the equivalent is a here-string (`@"…"@`),
+  which is a different construct with different quoting and expansion rules. Do not hand the user a
+  bash heredoc.
 
 - **Write commit messages to a file, then `git commit -F <file>`.** Never build a commit message
   with a heredoc or a multi-line `-m`.
