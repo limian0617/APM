@@ -8,6 +8,18 @@ the job definition, not background reading. This applies to any dispatch / verif
 request whether or not it says the word "PM". Worker sessions (implementing a single work package)
 do not need it.
 
+## Progress tracking is one record in two files — keep them in sync
+
+Progress lives in `D:\GPT Prj\自动化设备项目管理\.tracker.txt` (plain text) and
+`D:\GPT Prj\自动化设备项目管理\规划\APM-开发进度跟踪.html` (the rendered page). Both are
+maintained **by hand — there is no generator**. Any backfill must update **both in the same pass**,
+never one of them alone: version number and update date, the three overview stat blocks, the
+Release table, the work-package table rows, the §8.5 navigation table, §8.9 follow-on ordering, and
+the §10.5 change log all have counterparts in the HTML. After editing, grep both files for the
+fields you touched and confirm they agree. Full rules: `docs/roles/PM-角色章程.md` §3.2.
+
+Both files sit **outside** this checkout, so they cannot be committed.
+
 ## Context discipline (read this first)
 
 Sessions in this repo routinely produce large amounts of text (mutations, verify output, diffs,
