@@ -1,5 +1,13 @@
 # APM repository guide
 
+## Role trigger (PM sessions)
+
+If this session's task is to dispatch work, verify a worker's delivery, or backfill progress,
+you are acting as PM. Read `docs/roles/PM-角色章程.md` in full before doing anything else — it is
+the job definition, not background reading. This applies to any dispatch / verify / backfill
+request whether or not it says the word "PM". Worker sessions (implementing a single work package)
+do not need it.
+
 ## Context discipline (read this first)
 
 Sessions in this repo routinely produce large amounts of text (mutations, verify output, diffs,
@@ -32,6 +40,24 @@ is always: commit what exists, then start a fresh session and re-read the files.
 
 5. **Do not restate what is already known.** Do not re-quote output the user has pasted or source
    already read; point at `file:line` instead.
+
+6. **Keep session-to-session traffic thin.** Measured on 2026-09-12 on `APM-024 / PLN-CHG`
+   (692 messages, 492 KB, session id `local_9f4ec085`): roughly half the transcript was
+   `user`-side content, and the single largest entries were 16–31 KB dispatch and report
+   messages. Every cross-session message forces a re-read of the whole session, so a PM that
+   reports after each sub-step pays for the entire history once per round.
+
+   - **PM → worker:** send the task as a file path plus a one-line summary, not pasted content.
+     The worker can read the file. A 30 KB dispatch costs 30 KB on every subsequent turn.
+   - **Worker → PM:** report **once, at the end of the task**, with conclusions only — what
+     changed, gate exit codes, `file:line` pointers. Do not narrate each sub-step back to the PM.
+   - If a task needs more than a couple of reporting rounds, it was scoped too large: split it
+     into separate tasks rather than keeping one session alive across all of them.
+
+7. **The prevention hook is installed at user level** (`~/.claude/hooks/block-unredirected-output.mjs`,
+   registered in `~/.claude/settings.json`). It blocks the quality-gate commands above when they
+   are run without output redirection or a truncating pipe. If a gate is blocked, redirect to
+   `.tmp/out/` — do not try to work around it.
 
 ## Command shape (avoid permission prompts)
 
