@@ -3,6 +3,7 @@ node_modules/
 coverage/
 .worktrees/
 .tmp/
+.claude/settings.local.json
 *.tsbuildinfo
 .env*
 !.env.example
