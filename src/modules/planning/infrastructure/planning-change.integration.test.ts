@@ -455,6 +455,67 @@ describeDatabase("APM-024 PostgreSQL planning change facts", () => {
     });
   });
 
+  // 自批规则：提交人自己可以是审批人，但资格来自冻结审批人快照（= 被声明的审批项目角色成员），
+  // 而不是「是否为提交人」。因此断言两侧：有审批权限的提交人可自批；无审批权限的提交人被拒。
+  it("allows the submitter to approve their own change when they hold an approval role", async () => {
+    const { projectId } = await seedReadyProject("SELF-APPROVE");
+    // FORECAST_ONLY 不绑定基线，避免为这条规则补一整套 V1/G1 前置。
+    const created = await createChange(projectId, "self-approve", "FORECAST_ONLY");
+    const submitted = await submitChange(created.change.id, projectId, "self-approve", 1);
+    expect(submitted.change).toMatchObject({
+      status: "SUBMITTED",
+      submittedById: ids.projectManager
+    });
+
+    // ALL 会签：提交人（PROJECT_MANAGER）先批，再由 QUALITY 批完。
+    await expect(
+      decidePlanningChange({
+        ...command(projectId, ids.projectManager, "self-approve-pm"),
+        changeId: created.change.id,
+        version: 2,
+        decision: "APPROVED",
+        reason: "项目经理自批"
+      })
+    ).resolves.toMatchObject({ change: { status: "SUBMITTED" } });
+
+    await expect(
+      decidePlanningChange({
+        ...command(projectId, ids.quality, "self-approve-quality"),
+        changeId: created.change.id,
+        version: 3,
+        decision: "APPROVED",
+        reason: "质量会签"
+      })
+    ).resolves.toMatchObject({ change: { status: "APPROVED" } });
+  });
+
+  it("rejects the submitter's own decision when they hold no approval role", async () => {
+    const { projectId } = await seedReadyProject("SELF-DENIED");
+    // admin 是提交人，但不在声明的审批角色（PROJECT_MANAGER / QUALITY）内。
+    const created = await createPlanningChange({
+      ...command(projectId, ids.admin, "create-self-denied"),
+      classification: "FORECAST_ONLY",
+      reason: "创建计划变更 self-denied",
+      planningInputVersion: 1,
+      resultingPlanningInputVersion: 2,
+      delta: { tasks: [{ code: "TASK.A", plannedFinishAt: "2026-09-20" }] }
+    });
+    await submitChange(created.change.id, projectId, "self-denied", 1);
+
+    await expect(
+      decidePlanningChange({
+        ...command(projectId, ids.admin, "decide-self-denied"),
+        changeId: created.change.id,
+        version: 2,
+        decision: "APPROVED",
+        reason: "提交人自批但无审批角色"
+      })
+    ).rejects.toSatisfy((error: unknown) => {
+      expectPlanningChangeError(error, "PLANNING_CHANGE_APPROVAL_FORBIDDEN");
+      return true;
+    });
+  });
+
   it("never binds a baseline for a FORECAST_ONLY change approved by everyone", async () => {
     const { projectId, planningInputVersion } = await seedReadyProject("FORECAST");
     const created = await createChange(
