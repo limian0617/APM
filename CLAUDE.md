@@ -1,5 +1,51 @@
 # APM repository guide
 
+## Context discipline (read this first)
+
+Sessions in this repo routinely produce large amounts of text (mutations, verify output, diffs,
+schema dumps). The failure mode is real and has happened: the context grows past the model window,
+automatic compaction fails, and the session dies mid-turn with `Prompt is too long · automatic
+compaction failed` — surfacing to the user as `Connection went idle`. Retrying does not help; the
+turn is stuck on the same oversized context. Work already written to disk survives, so the recovery
+is always: commit what exists, then start a fresh session and re-read the files.
+
+1. **Large output goes to disk, not into the conversation.** Redirect to `.tmp/out/` and report only
+   the conclusion: which tests are red, the failing case names, the exit code, the line range.
+   Never paste a full raw output block into the conversation.
+
+   ```powershell
+   npm run test > .tmp\out\<task>-test.txt 2>&1
+   npm run build > .tmp\out\<task>-build.txt 2>&1
+   ```
+
+   - Name files `<task>-<purpose>.txt`. `.tmp` is gitignored.
+   - Clear a task's output when the task is done: `Remove-Item -Recurse -Force .tmp\out`.
+
+2. **Read files with `offset` / `limit`.** Never read a whole file when a window will do —
+   especially under `tests/**` and `src/modules/**`, where files run to hundreds or thousands of lines.
+
+3. **Always scope `Grep` / `Glob` with an explicit `path`.** No bare repo-wide scans.
+
+4. **One task per session.** Finish it and close the session. If the context is already more than
+   half consumed, wrap up and start a new session now — do not wait for compaction to fail, because
+   at that point the session is unusable and the work is stranded.
+
+5. **Do not restate what is already known.** Do not re-quote output the user has pasted or source
+   already read; point at `file:line` instead.
+
+## Command shape (avoid permission prompts)
+
+The permission allowlist only matches a call that parses as a **single simple command**. Compound
+forms — `cd X && …`, heredocs (`<<'EOF'`), pipes and redirects — are skipped by the parser and fall
+back to a prompt every time (the tell is `Parser skipped input between top-level statements`).
+This repo's shell is **PowerShell 5.1**, which does not support `&&` or heredocs at all.
+
+- **Write commit messages to a file, then `git commit -F <file>`.** Never build a commit message
+  with a heredoc or a multi-line `-m`.
+- **Do not `cd`.** The working directory is already the current worktree; run `git` / `npm` directly.
+- **Do not compound.** Redirect to `.tmp/out/` when a record is needed; otherwise keep it one command.
+- `git push` stays on manual confirmation.
+
 ## Migrations are hand-written SQL only
 
 `prisma/schema.prisma` and `prisma/migrations/` are maintained as two independent lines. The
