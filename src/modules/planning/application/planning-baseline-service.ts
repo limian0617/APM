@@ -239,9 +239,10 @@ function mapDatabaseError(error: unknown): never {
   throw error;
 }
 
-export async function freezeG1PlanningBaseline(
+export async function freezePlanningBaseline(
   input: {
     projectId: string;
+    version: 1 | 2;
     planningInputVersion: number;
     reason: string;
     actorId: string;
@@ -268,11 +269,26 @@ export async function freezeG1PlanningBaseline(
         );
       }
       const existing = await client.planningBaseline.findFirst({
-        where: { projectId: input.projectId, version: 1 },
+        where: { projectId: input.projectId, version: input.version },
         select: { id: true }
       });
       if (existing) {
-        throw new PlanningBaselineError("PLANNING_BASELINE_V1_EXISTS", "项目已冻结计划基线 V1。");
+        throw new PlanningBaselineError(
+          input.version === 1 ? "PLANNING_BASELINE_V1_EXISTS" : "PLANNING_BASELINE_V2_EXISTS",
+          input.version === 1 ? "项目已冻结计划基线 V1。" : "项目已冻结计划基线 V2。"
+        );
+      }
+      if (input.version === 2) {
+        const v1 = await client.planningBaseline.findFirst({
+          where: { projectId: input.projectId, version: 1 },
+          select: { id: true }
+        });
+        if (!v1) {
+          throw new PlanningBaselineError(
+            "PLANNING_BASELINE_V1_REQUIRED",
+            "必须先冻结计划基线 V1 后才能生成 V2。"
+          );
+        }
       }
       const snapshot = buildPlanningBaselineSnapshot({
         approvedG1SubmissionId: source.approvedG1SubmissionId,
@@ -288,7 +304,7 @@ export async function freezeG1PlanningBaseline(
         data: {
           projectId: input.projectId,
           sourceGateSubmissionId: snapshot.approvedG1SubmissionId,
-          version: 1,
+          version: input.version,
           planningInputVersion: requestedInputVersion,
           reason,
           checksum: snapshot.checksum,
@@ -336,7 +352,10 @@ export async function freezeG1PlanningBaseline(
       const baseline = serializePlanningBaseline(created);
       const auditValue = baselineAuditValue(baseline);
       const audit = await writeAudit(client, {
-        action: AUDIT_ACTIONS.PLANNING_BASELINE_FROZEN,
+        action:
+          input.version === 2
+            ? AUDIT_ACTIONS.PLANNING_BASELINE_V2_FROZEN
+            : AUDIT_ACTIONS.PLANNING_BASELINE_FROZEN,
         objectType: AUDIT_OBJECT_TYPES.PLANNING_BASELINE,
         objectId: baseline.id,
         context: commandAuditContext(input, project, reason),
@@ -355,6 +374,19 @@ export async function freezeG1PlanningBaseline(
     if (error instanceof PlanningBaselineError) throw error;
     mapDatabaseError(error);
   }
+}
+
+export async function freezeG1PlanningBaseline(
+  input: {
+    projectId: string;
+    planningInputVersion: number;
+    reason: string;
+    actorId: string;
+    auditContext: AuditContext;
+  },
+  transaction?: Prisma.TransactionClient
+) {
+  return freezePlanningBaseline({ ...input, version: 1 }, transaction);
 }
 
 export async function listPlanningBaselines(input: { projectId: string }) {
