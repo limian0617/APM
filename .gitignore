@@ -2,6 +2,7 @@ node_modules/
 .next/
 coverage/
 .worktrees/
+.tmp/
 *.tsbuildinfo
 .env*
 !.env.example
