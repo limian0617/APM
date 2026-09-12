@@ -1259,6 +1259,7 @@ export const PLANNING_BASELINE_AUDIT_FIELDS = [
 ] as const;
 
 export const PLANNING_CHANGE_AUDIT_FIELDS = [
+  "id",
   "projectId",
   "planningChangeId",
   "code",

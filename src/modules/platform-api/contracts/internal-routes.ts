@@ -352,6 +352,31 @@ export const createPlanningBaselineBodySchema = z.strictObject({
   planningInputVersion: positiveVersionSchema,
   reason: reasonSchema
 });
+export const planningChangePathSchema = z.strictObject({
+  projectId: identifierSchema,
+  changeId: identifierSchema
+});
+const planningChangeClassificationSchema = z.enum(["FORECAST_ONLY", "FORMAL"]);
+const planningChangeApprovalModeSchema = z.enum(["ALL", "ANY"]);
+export const createPlanningChangeBodySchema = z.strictObject({
+  classification: planningChangeClassificationSchema,
+  planningInputVersion: positiveVersionSchema,
+  resultingPlanningInputVersion: positiveVersionSchema,
+  delta: z.record(z.string(), z.unknown()),
+  reason: reasonSchema
+});
+export const submitPlanningChangeBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  // 审批配置只能由请求体显式提供；缺省即 422，HTTP 层不提供默认值。
+  approvalMode: planningChangeApprovalModeSchema,
+  approverProjectRoles: z.array(z.enum(PROJECT_ROLE_VALUES)).min(1).max(20),
+  reason: reasonSchema
+});
+export const decidePlanningChangeBodySchema = z.strictObject({
+  version: positiveVersionSchema,
+  decision: z.enum(["APPROVED", "REJECTED"]),
+  reason: reasonSchema
+});
 export const createProjectBodySchema = z.strictObject({
   code: z
     .string()

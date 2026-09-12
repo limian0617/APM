@@ -146,6 +146,7 @@ function assertProjectWritable(project: {
 function changeAuditValue(change: PlanningChangeFact) {
   const current = change.revisions.find((revision) => revision.id === change.currentRevisionId);
   return {
+    id: change.id,
     projectId: change.projectId,
     planningChangeId: change.id,
     code: change.code,
